@@ -131,6 +131,8 @@
 #                       never changes and a new one is free.
 #   params_len_constant - on a variant, the constant holding its parameter
 #                       length. A variant ending in a string names none.
+#   non_exhaustive    - mark the Rust enum #[non_exhaustive] so a new variant
+#                       isn't a breaking change to the crate
 #
 # ---------------------------------------------------------------------------
 # Enum attributes
@@ -138,6 +140,7 @@
 #   ora_api           - also emit each value as ORA_<value name>, as for a
 #                       constant
 #   first_release     - as for a constant
+#   non_exhaustive    - as for a tagged FAM
 #
 # ---------------------------------------------------------------------------
 # Enum variant attributes
@@ -508,6 +511,12 @@ name = "OTP_COMMISSIONING_SIGNER_LEN"
 type = "usize"
 value = 2
 comment = "Length of an OTP_KEY_COMMISSIONING_SIGNER value."
+
+[[constants]]
+name = "OTP_COMMISSIONING_SIZE_LEN"
+type = "usize"
+value = 2
+comment = "Length of an OTP_KEY_COMMISSIONING_SIZE value."
 
 [[constants]]
 name = "OTP_BOOT_FLAGS0_ROW"
@@ -1222,6 +1231,7 @@ general store share this list, and a key keeps its number for good."""
 strip_prefix = "OTP_KEY_"
 ora_api = true
 first_release = "0.8.1"
+non_exhaustive = true
 
 [[enums.variants]]
 name = "OTP_KEY_NONE"
@@ -1254,6 +1264,21 @@ comment = "Commissioning date"
 name = "OTP_KEY_COMMISSIONING_SIGNER"
 value = 5
 comment = "ID of the signing key"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_REVISION"
+value = 6
+comment = "Board revision"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_BATCH"
+value = 7
+comment = "Manufacturing batch"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_SIZE"
+value = 8
+comment = "Size the board was commissioned as"
 
 [[enums.variants]]
 name = "OTP_KEY_RESERVED"
@@ -2699,6 +2724,7 @@ discriminant_type = "onerom_otp_key_t"
 param_len_field = "len"
 param_len_type = "u16"
 base_size = 4
+non_exhaustive = true
 
 [[tagged_fams.variants]]
 discriminant = "OTP_KEY_COMMISSIONING_BOARD"
@@ -2743,6 +2769,32 @@ params_len_constant = "OTP_COMMISSIONING_SIGNER_LEN"
 
 [[tagged_fams.variants.fields]]
 name = "id"
+kind = "scalar"
+type = "u16"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_REVISION"
+comment = "Board revision"
+
+[[tagged_fams.variants.fields]]
+name = "revision"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_BATCH"
+comment = "Manufacturing batch"
+
+[[tagged_fams.variants.fields]]
+name = "batch"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_SIZE"
+comment = "Size the board was commissioned as, an onerom_board_size_t value"
+params_len_constant = "OTP_COMMISSIONING_SIZE_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "size"
 kind = "scalar"
 type = "u16"
 

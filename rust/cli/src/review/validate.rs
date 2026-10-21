@@ -93,6 +93,23 @@ async fn a_commissioned_l_board() {
     both(&mut otp, "fire-40-a").await;
 }
 
+/// A board commissioned as M and later set to L.
+#[tokio::test]
+async fn an_m_board_set_to_l() {
+    validate(&mut super::m_board_set_to_l().await, "fire-40-a", false).await;
+}
+
+/// A board commissioned as L that OTP doesn't configure as L.
+#[tokio::test]
+async fn an_l_board_not_configured_as_l() {
+    validate(
+        &mut super::l_board_not_configured_as_l().await,
+        "fire-40-a",
+        false,
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn a_board_neither_m_nor_l() {
     validate(&mut neither_m_nor_l_board(), "fire-40-a", false).await;

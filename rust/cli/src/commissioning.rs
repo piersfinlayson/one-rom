@@ -12,7 +12,7 @@ use onerom_app::{
     FLASH_DEVINFO_CS1_SIZE_SHIFT, FLASH_DEVINFO_D8H_ERASE_SUPPORTED, FLASH_DEVINFO_SIZE_BITS,
     LOCK1_READ_ONLY, OtpReport, PageLock, SignerTable,
 };
-use onerom_cli::otp::{Commissioning, escape_controls, format_date};
+use onerom_cli::otp::{Commissioning, board_size_text, escape_controls, format_date};
 use onerom_config::hw::Board;
 use onerom_metadata::otp::pico_otp::whitelabel::{
     OTP_ROW_USB_BOOT_FLAGS, OTP_ROW_USB_BOOT_FLAGS_R1, OTP_ROW_USB_BOOT_FLAGS_R2,
@@ -22,7 +22,8 @@ use onerom_metadata::otp::{AreaIssue, CommissioningArea, CommissioningInstance, 
 use onerom_metadata::{
     MaybeKnown, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_R1_ROW,
     OTP_BOOT_FLAGS0_R2_ROW, OTP_BOOT_FLAGS0_ROW, OTP_COMMISSIONING_SIG_LEN, OTP_FLASH_DEVINFO_ROW,
-    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OneromFlashSize, OneromOtpEntry,
+    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OneromBoardSize, OneromFlashSize,
+    OneromOtpEntry,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,22 +33,39 @@ use onerom_metadata::{
 /// A label and its value, shown as a line.
 pub type Labelled = (String, String);
 
-/// `instance`'s board type, manufacturer and date with their labels. A value
-/// the instance doesn't have is left out. `contact` follows the manufacturer
-/// where it's `Some`.
+/// `instance`'s values with their labels, other than its size and signing key.
+/// A value the instance doesn't have is left out. `contact` follows the
+/// manufacturer where it's `Some`.
 pub fn instance_values(instance: &CommissioningInstance, contact: Option<&str>) -> Vec<Labelled> {
     [
         ("Board type:", instance.board().map(escape_controls)),
+        ("Revision:", instance.revision().map(escape_controls)),
         (
             "Manufacturer:",
             instance.manufacturer().map(escape_controls),
         ),
         ("Contact:", contact.map(str::to_string)),
         ("Date:", instance.date().map(format_date)),
+        ("Batch:", instance.batch().map(escape_controls)),
     ]
     .into_iter()
     .filter_map(|(label, value)| Some((label.to_string(), value?)))
     .collect()
+}
+
+/// The `Board size:` value for `size`, the size OTP configures. Where
+/// `current` was commissioned as another size, that size follows.
+pub fn board_size_value(
+    size: MaybeKnown<OneromBoardSize>,
+    current: Option<&CommissioningInstance>,
+) -> String {
+    let text = board_size_text(size);
+    match current.and_then(CommissioningInstance::size) {
+        Some(commissioned) if commissioned != size => {
+            format!("{text} (commissioned as {})", board_size_text(commissioned))
+        }
+        _ => text,
+    }
 }
 
 /// `values` a line each, indented two spaces, with the values lined up past
@@ -286,10 +304,11 @@ fn labelled(label: &str, value: impl std::fmt::Display) -> String {
 /// it.
 fn size_lines(report: &OtpReport, verbose: bool) -> Vec<String> {
     let size = match report.size {
-        Some(BoardSize::M) => "M",
-        Some(BoardSize::L) => "L",
-        None => "other",
+        Some(BoardSize::M) => OneromBoardSize::BoardSizeM,
+        Some(BoardSize::L) => OneromBoardSize::BoardSizeL,
+        None => OneromBoardSize::BoardSizeOther,
     };
+    let size = board_size_value(MaybeKnown::Known(size), report.commissioning.current());
     let mut lines = vec![labelled("Board size:", size)];
     if verbose {
         let enabled = majority(report.boot_flags0) & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE != 0;
@@ -652,9 +671,22 @@ fn entry_text(entry: &StoreEntry) -> String {
                 OneromOtpEntry::OtpKeyCommissioningSig { signature } => {
                     format!("COMMISSIONING_SIG {}", hex::encode(signature))
                 }
+                OneromOtpEntry::OtpKeyCommissioningRevision { revision } => {
+                    format!("COMMISSIONING_REVISION {}", escape_controls(revision))
+                }
+                OneromOtpEntry::OtpKeyCommissioningBatch { batch } => {
+                    format!("COMMISSIONING_BATCH {}", escape_controls(batch))
+                }
+                OneromOtpEntry::OtpKeyCommissioningSize { size } => {
+                    format!("COMMISSIONING_SIZE {size}")
+                }
                 OneromOtpEntry::Unknown { key, params } => {
                     format!("unknown key {key}, {} bytes", params.len())
                 }
+                // Every key in this build's onerom-metadata is listed above,
+                // so this arm is reached only when the CLI is built against a
+                // newer onerom-metadata.
+                other => format!("{other:?}"),
             };
             format!("Row {row:#05x}: {entry}")
         }
@@ -1000,7 +1032,8 @@ mod tests {
                     &["0x0c9", "COMMISSIONING_MANUFACTURER", "piers.rocks"],
                     &["0x0d1", "COMMISSIONING_DATE", "20260101"],
                     &["0x0d7", "COMMISSIONING_SIGNER", "1"],
-                    &["0x0da", "COMMISSIONING_SIG", &signature],
+                    &["0x0da", "COMMISSIONING_SIZE", "2"],
+                    &["0x0dd", "COMMISSIONING_SIG", &signature],
                 ]
             ),
             "{lines:?}"

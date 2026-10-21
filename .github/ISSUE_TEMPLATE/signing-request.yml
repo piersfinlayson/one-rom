@@ -29,3 +29,9 @@ body:
       value: onerom.org
     validations:
       required: true
+  - type: input
+    id: cli_version
+    attributes:
+      label: CLI version
+    validations:
+      required: true

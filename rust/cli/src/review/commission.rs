@@ -280,6 +280,24 @@ async fn an_l_board_set_by_set_size() {
     commission(&mut otp, line, "y\n").await;
 }
 
+/// An M board with a revision and batch. A dry run, then a real run
+/// answered yes, then a second run with another revision.
+#[tokio::test]
+async fn a_revision_and_batch() {
+    let line = "onerom hardware commission --board fire-24-f --manufacturer piers.rocks --key key.pem --date 20260101";
+    let mut otp = blank_board();
+    commission(
+        &mut otp,
+        &format!("{line} --rev A1 --batch Y1-2345 --dry-run"),
+        "",
+    )
+    .await;
+    println!();
+    commission(&mut otp, &format!("{line} --rev A1 --batch Y1-2345"), "y\n").await;
+    println!();
+    commission(&mut otp, &format!("{line} --rev A2 --batch Y1-2345"), "").await;
+}
+
 /// A second run on a board it commissioned, with today's date.
 #[tokio::test]
 async fn again_on_a_commissioned_board() {
@@ -880,18 +898,20 @@ fn replied(status: u16, message: &str) -> Error {
     }
 }
 
-/// A dry-run `/sign` request's body, as the CLI's `SignRequest` serializes it.
+/// A dry-run `/sign` request's body without a revision or batch, as the
+/// CLI's `SignRequest` serializes it.
 #[derive(Serialize)]
 struct DryRunBody<'a> {
     chip_id: String,
     board: &'a str,
+    size: Option<BoardSize>,
     manufacturer: &'a str,
     date: &'a str,
     dry_run: bool,
 }
 
-/// A `/sign` request's body as a server from before the dry-run option reads
-/// it. It refuses a field it doesn't know.
+/// A `/sign` request's body as a server without the `size` field reads it. It
+/// rejects an unknown field.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)]
@@ -900,16 +920,19 @@ struct OldSignRequest {
     board: String,
     manufacturer: String,
     date: String,
+    #[serde(default)]
+    dry_run: bool,
 }
 
-/// The error a server from before the dry-run option refuses the dry run of
-/// `to_sign` with.
+/// The error a server without the `size` field returns for the dry run of
+/// `to_sign`.
 fn too_old(to_sign: &ToSign<'_>) -> Error {
     let body = serde_json::to_vec(&DryRunBody {
         chip_id: format_chip_id(to_sign.chip_id),
-        board: to_sign.board.name(),
-        manufacturer: to_sign.manufacturer,
-        date: to_sign.date,
+        board: to_sign.values.board().name(),
+        size: to_sign.values.size(),
+        manufacturer: to_sign.values.manufacturer(),
+        date: to_sign.values.date(),
         dry_run: true,
     })
     .unwrap();
@@ -972,14 +995,14 @@ async fn signing_server() {
     public_key_fails(&replied(404, "the key doesn't exist"));
     println!();
 
-    println!("### the server refuses the request (400) because it's too old to know dry_run");
+    println!("### the server refuses the request (400) because it predates the size field");
     let server = fails_dry_run(too_old);
     commission_signed(&mut blank_board(), &with_pin, "", &server).await;
     println!();
 
     println!("### the server refuses the request (400) because it doesn't know the board");
     let server = fails_dry_run(|to_sign| {
-        let message = format!("unknown board {}", to_sign.board.name());
+        let message = format!("unknown board {}", to_sign.values.board().name());
         replied(400, &message)
     });
     commission_signed(&mut blank_board(), &with_pin, "", &server).await;

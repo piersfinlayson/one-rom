@@ -1010,6 +1010,9 @@ fn push_enum(out: &mut String, e: &Enum) {
         "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n",
     );
     out.push_str(&format!("#[repr({repr})]\n"));
+    if e.non_exhaustive {
+        out.push_str("#[non_exhaustive]\n");
+    }
     out.push_str(&format!("pub enum {tn} {{\n"));
     for v in e.variants.iter().filter(|v| !v.is_sentinel()) {
         if let Some(doc) = v.documentation() {
@@ -1992,6 +1995,9 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     };
     out.push_str(derives);
     out.push('\n');
+    if tf.non_exhaustive {
+        out.push_str("#[non_exhaustive]\n");
+    }
     out.push_str(&format!("pub enum {tn} {{\n"));
 
     for v in &tf.variants {

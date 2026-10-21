@@ -13,9 +13,10 @@ use onerom_app::{
 use onerom_config::hw::{Board, Model};
 use onerom_metadata::otp::pico_otp::ecc_encode;
 use onerom_metadata::otp::{
-    AreaIssue, BuildError, CommissioningValues, NewCommissioningInstance, RowWrite, white_label,
+    AreaIssue, BuildError, CommissioningInstance, CommissioningValues, NewCommissioningInstance,
+    RowWrite, white_label,
 };
-use onerom_metadata::{OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize};
+use onerom_metadata::{MaybeKnown, OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize};
 use serde_json::json;
 
 /// CHIPID from rows 0x000–0x003 of an RP2350 A4.
@@ -78,6 +79,8 @@ fn request(board: Board, size: BoardSize) -> Request {
         manufacturer: "piers.rocks".into(),
         date: RequestDate::Today(DATE.into()),
         signer: 1,
+        revision: None,
+        batch: None,
         force: false,
     }
 }
@@ -100,9 +103,16 @@ async fn commission<O: LocalOtpAccess>(
 /// The writes of `request`'s instance on `date` at `first_row`. [`key`] signs
 /// it.
 fn instance(request: &Request, date: &str, first_row: u16) -> Vec<RowWrite> {
-    let values =
-        CommissioningValues::new(request.board, &request.manufacturer, date, request.signer)
-            .unwrap();
+    let mut builder =
+        CommissioningValues::builder(request.board, &request.manufacturer, date, request.signer)
+            .size(request.size);
+    if let Some(revision) = &request.revision {
+        builder = builder.revision(revision);
+    }
+    if let Some(batch) = &request.batch {
+        builder = builder.batch(batch);
+    }
+    let values = builder.build().unwrap();
     let signature = key().sign(&values.message(CHIP_ID)).to_bytes();
     NewCommissioningInstance::new(&values, first_row)
         .unwrap()
@@ -124,6 +134,16 @@ async fn current_row(otp: &mut MemoryOtp) -> Option<u16> {
         .unwrap()
         .current()
         .map(|instance| instance.first_row())
+}
+
+/// The current instance.
+async fn current_instance(otp: &mut MemoryOtp) -> CommissioningInstance {
+    read_commissioning(otp)
+        .await
+        .unwrap()
+        .current()
+        .cloned()
+        .unwrap()
 }
 
 /// Row `row`'s raw value.
@@ -214,7 +234,10 @@ async fn an_m_board_is_commissioned() {
     assert_eq!(prepared.chip_id(), CHIP_ID);
     assert_eq!(prepared.date(), DATE);
     assert!(!prepared.date_from_current_instance());
-    let values = CommissioningValues::new(Board::Fire24F, "piers.rocks", DATE, 1).unwrap();
+    let values = CommissioningValues::builder(Board::Fire24F, "piers.rocks", DATE, 1)
+        .size(BoardSize::M)
+        .build()
+        .unwrap();
     assert_eq!(prepared.message(), values.message(CHIP_ID));
 
     let signature = key().sign(prepared.message()).to_bytes();
@@ -452,8 +475,10 @@ async fn a_forced_run_interrupted_at_any_write_finishes_the_second_time() {
     interrupt_every_write(copy(&otp), request).await;
 }
 
-/// The new date's instance can't take the rows the first run wrote so it goes
-/// on the next page.
+/// The new date's instance can't take the rows the first run wrote. The
+/// interrupted instance fills all but its page's last row, and the key and
+/// length rows after its last entry reach into page 4, so the new instance
+/// goes on page 5.
 #[tokio::test]
 async fn a_next_day_run_after_an_interrupted_instance_starts_a_new_one() {
     let request = request(Board::Fire24F, BoardSize::M);
@@ -478,11 +503,11 @@ async fn a_next_day_run_after_an_interrupted_instance_starts_a_new_one() {
         .iter()
         .map(|instance| instance.first_row())
         .collect();
-    assert_eq!(rows, [0x0c0, 0x100]);
+    assert_eq!(rows, [0x0c0, 0x140]);
     let current = area.current().unwrap();
-    assert_eq!(current.first_row(), 0x100);
+    assert_eq!(current.first_row(), 0x140);
     assert_eq!(current.date(), Some(NEXT_DAY));
-    assert_eq!(raw(&otp, lock1_row(4)), 0x15_1515);
+    assert_eq!(raw(&otp, lock1_row(5)), 0x15_1515);
 }
 
 /// The instance is complete so a run on the next day finishes it with the
@@ -500,6 +525,7 @@ async fn a_next_day_run_after_the_signature_finishes_with_the_instances_date() {
     commission(&mut otp, &request).await.unwrap_err();
     otp.reset();
     let unfinished = otp.rows().to_vec();
+    let current = current_instance(&mut otp).await;
 
     let given = Request {
         date: RequestDate::Given(NEXT_DAY.into()),
@@ -508,11 +534,7 @@ async fn a_next_day_run_after_the_signature_finishes_with_the_instances_date() {
     assert_eq!(
         commission(&mut otp, &given).await,
         Err(CommissionError::AlreadyCommissioned {
-            row: 0x0c0,
-            board: "fire-24-f".into(),
-            manufacturer: "piers.rocks".into(),
-            date: DATE.into(),
-            signer: 1,
+            current: Box::new(current.clone()),
             only_date_differs: true,
         })
     );
@@ -536,12 +558,92 @@ async fn a_next_day_run_after_the_signature_finishes_with_the_instances_date() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+async fn the_size_revision_and_batch_are_written() {
+    let mut otp = board();
+    let request = Request {
+        revision: Some("A1".into()),
+        batch: Some("Y1-2345".into()),
+        ..request(Board::Fire24F, BoardSize::M)
+    };
+    commission(&mut otp, &request).await.unwrap();
+    let area = read_commissioning(&mut otp).await.unwrap();
+    let current = area.current().unwrap();
+    assert_eq!(
+        current.size(),
+        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeM))
+    );
+    assert_eq!(current.revision(), Some("A1"));
+    assert_eq!(current.batch(), Some("Y1-2345"));
+}
+
+/// A run whose revision, batch or size differs from the current instance's is
+/// a new commissioning.
+#[tokio::test]
+async fn a_different_revision_batch_or_size_is_already_commissioned() {
+    let m = request(Board::Fire40A, BoardSize::M);
+    let mut otp = board();
+    commission(&mut otp, &m).await.unwrap();
+    otp.reset();
+    let current = current_instance(&mut otp).await;
+    let already = CommissionError::AlreadyCommissioned {
+        current: Box::new(current.clone()),
+        only_date_differs: false,
+    };
+    for request in [
+        Request {
+            revision: Some("A1".into()),
+            ..m.clone()
+        },
+        Request {
+            batch: Some("Y1-2345".into()),
+            ..m.clone()
+        },
+        Request {
+            size: BoardSize::L,
+            ..m.clone()
+        },
+    ] {
+        assert_eq!(
+            commission(&mut copy(&otp), &request).await,
+            Err(already.clone()),
+            "{request:?}"
+        );
+    }
+}
+
+/// An instance written before the CLI wrote a size doesn't have one,
+/// so the same values with a size are a new commissioning.
+#[tokio::test]
+async fn an_instance_without_a_size_is_already_commissioned() {
+    let request = request(Board::Fire24F, BoardSize::M);
+    let values = CommissioningValues::new(Board::Fire24F, "piers.rocks", DATE, 1).unwrap();
+    let signature = key().sign(&values.message(CHIP_ID)).to_bytes();
+    let mut otp = board();
+    put(
+        &mut otp,
+        &NewCommissioningInstance::new(&values, 0x0c0)
+            .unwrap()
+            .writes(&signature),
+    );
+    let current = current_instance(&mut otp).await;
+    assert_eq!(current.size(), None);
+    assert_eq!(
+        commission(&mut otp, &request).await,
+        Err(CommissionError::AlreadyCommissioned {
+            current: Box::new(current.clone()),
+            only_date_differs: false,
+        })
+    );
+}
+
+#[tokio::test]
 async fn force_makes_a_second_instance_current() {
     let mut otp = board();
     commission(&mut otp, &request(Board::Fire24F, BoardSize::M))
         .await
         .unwrap();
     otp.reset();
+    let current = current_instance(&mut otp).await;
     let acme = Request {
         manufacturer: "Acme".into(),
         ..request(Board::Fire24F, BoardSize::M)
@@ -549,11 +651,7 @@ async fn force_makes_a_second_instance_current() {
     assert_eq!(
         commission(&mut otp, &acme).await,
         Err(CommissionError::AlreadyCommissioned {
-            row: 0x0c0,
-            board: "fire-24-f".into(),
-            manufacturer: "piers.rocks".into(),
-            date: DATE.into(),
-            signer: 1,
+            current: Box::new(current.clone()),
             only_date_differs: false,
         })
     );
@@ -957,7 +1055,7 @@ async fn a_full_area_is_refused() {
     let mut full = board();
     for first_row in (0x0c0..0x4c0).step_by(64) {
         let manufacturer = if first_row == 0x480 {
-            "piers.rocks (sample)"
+            "Acme (sample)"
         } else {
             "piers.rocks"
         };

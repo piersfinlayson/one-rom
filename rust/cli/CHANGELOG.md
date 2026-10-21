@@ -16,6 +16,9 @@
 - `monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
 - `inspect peek memory` can also read USB DPRAM.
 - `hardware validate` displays the manufacturer's contact.
+- **Breaking** `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
+- `hardware validate`, `inspect otp` and `inspect info` display the size a One ROM was commissioned as where it differs from its current size. `hardware validate` fails where a One ROM was commissioned as L but its size isn't L.
+- `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
 
 ## v0.5.0 - 2026-10-06
 

@@ -13,7 +13,7 @@ use enum_dispatch::enum_dispatch;
 use onerom_app::BoardSize;
 use onerom_config::hw::{Board, Model};
 use onerom_gen::board_supports_size;
-use onerom_metadata::otp::{BuildError, check_manufacturer};
+use onerom_metadata::otp::{BuildError, check_batch, check_manufacturer, check_revision};
 use time::{Date, Month, OffsetDateTime};
 
 use crate::args::{CommandTrait, arg_error};
@@ -45,8 +45,8 @@ pub enum HardwareCommands {
     /// Commission a One ROM
     ///
     /// Writes to the RP2350's OTP (One Time Programmable memory):
-    /// - a signed and dated commissioning instance containing the board's type
-    ///   and its manufacturer
+    /// - a signed and dated commissioning instance containing the board's type,
+    ///   size and manufacturer, and its revision and batch where provided
     /// - the bootloader's USB info
     /// - the settings for a second flash chip if present
     ///
@@ -149,7 +149,8 @@ pub enum HardwareCommands {
     /// Checks the signature of each commissioning instance present on the One
     /// ROM against valid signing keys.
     ///
-    /// It fails unless the board's latest commissioning instance is valid.
+    /// It fails unless the board's latest commissioning instance is valid. It
+    /// also fails where the board was commissioned as L but its size isn't L.
     ///
     /// A One ROM that is running or in limp mode is stopped first and rebooted
     /// into running mode once complete.
@@ -183,6 +184,15 @@ pub struct HardwareCommissionArgs {
     /// The manufacturer's name. Written to OTP.
     #[arg(long, value_name = "NAME", value_parser = parse_manufacturer)]
     pub manufacturer: String,
+
+    /// The board's revision (e.g. A1). Written to OTP.
+    #[arg(long, visible_alias = "rev", value_name = "REVISION", value_parser = parse_revision)]
+    pub revision: Option<String>,
+
+    /// The board's manufacturing batch (e.g. a PCB order number). Written to
+    /// OTP.
+    #[arg(long, value_name = "BATCH", value_parser = parse_batch)]
+    pub batch: Option<String>,
 
     /// The address of a One ROM signing server (e.g. https://HOST).
     #[arg(long, value_name = "URL", value_parser = parse_signer, requires = "key_id")]
@@ -427,6 +437,14 @@ pub struct HardwareSignArgs {
     #[arg(long, value_name = "NAME", value_parser = parse_manufacturer)]
     pub manufacturer: String,
 
+    /// The board's revision (e.g. A1).
+    #[arg(long, visible_alias = "rev", value_name = "REVISION", value_parser = parse_revision)]
+    pub revision: Option<String>,
+
+    /// The board's manufacturing batch (e.g. a PCB order number).
+    #[arg(long, value_name = "BATCH", value_parser = parse_batch)]
+    pub batch: Option<String>,
+
     /// The commissioning date as YYYYMMDD. Defaults to today's UTC date.
     #[arg(long, value_name = "DATE", value_parser = parse_date)]
     pub date: Option<String>,
@@ -527,6 +545,30 @@ fn parse_manufacturer(text: &str) -> Result<String, String> {
         Err(BuildError::EmptyManufacturer) => Err("manufacturer is empty".to_string()),
         Err(_) => Err(
             "the manufacturer must be printable ASCII without '*' or a leading or trailing space"
+                .to_string(),
+        ),
+    }
+}
+
+/// Parse a board's revision. onerom-metadata's `check_revision` defines which
+/// revisions are valid.
+fn parse_revision(text: &str) -> Result<String, String> {
+    match check_revision(text) {
+        Ok(()) => Ok(text.to_string()),
+        Err(_) => Err(
+            "the revision must be non-empty printable ASCII without a leading or trailing space"
+                .to_string(),
+        ),
+    }
+}
+
+/// Parse a board's batch. onerom-metadata's `check_batch` defines which batches
+/// are valid.
+fn parse_batch(text: &str) -> Result<String, String> {
+    match check_batch(text) {
+        Ok(()) => Ok(text.to_string()),
+        Err(_) => Err(
+            "the batch must be non-empty printable ASCII without a leading or trailing space"
                 .to_string(),
         ),
     }
@@ -686,6 +728,8 @@ mod tests {
                 board,
                 size,
                 manufacturer: "piers.rocks".to_string(),
+                revision: None,
+                batch: None,
                 signer: None,
                 key_id: None,
                 pin: None,

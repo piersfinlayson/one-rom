@@ -318,6 +318,7 @@ _Static_assert((uint32_t)LED_MAX_HOLD * 100u <= ORA_LED_MAX_HOLD_MS,
 #define CMD_GET_METADATA_STR            0x02u
 #define CMD_GET_METADATA_UINT           0x03u
 #define CMD_GET_METADATA_ARRAY          0x04u
+#define CMD_GET_COMMISSIONING_INSTANCE  0x05u
 
 // NV Storage size supported by this RBCP implementation
 #define NV_STORAGE_SIZE 4096u
@@ -2778,8 +2779,9 @@ static bool exec_set_led(void) {
 // Command handlers — Device Info group (0x80), specified in EXTENSIONS.md
 // ---------------------------------------------------------------------------
 
-// ora_get_commissioning_value and ora_get_metadata_str are looked up each time
-// they're used, as the plugin's static RAM is full.
+// ora_get_commissioning_value, ora_get_commissioning_instance and
+// ora_get_metadata_str are looked up each time they're used, as the plugin's
+// static RAM is full.
 
 // Every response starts with a 4-byte field.
 #define DEVINFO_HDR_SIZE                4u
@@ -2875,6 +2877,35 @@ static bool __attribute__((noinline)) exec_get_commissioning_value(void) {
         return false;
     }
     return devinfo_value_write(value, len, offset, byte_count);
+}
+
+static bool __attribute__((noinline)) exec_get_commissioning_instance(void) {
+    uint8_t count   = ring_read_byte();
+    uint32_t offset = ring_read_le(2u);
+
+    s_log("GET_COMMISSIONING_INSTANCE: offset=%u ct=%u",
+          (unsigned)offset, (unsigned)count);
+
+    uint32_t byte_count = (count == 0u) ? 256u : (uint32_t)count;
+    if (s_state.cfg.data_size < DEVINFO_HDR_SIZE + byte_count) {
+        s_log("GET_COMMISSIONING_INSTANCE failed: data section too small");
+        return false;
+    }
+    if ((offset >> 8u) == 0xAAu) {
+        s_log("GET_COMMISSIONING_INSTANCE failed: offset MSB 0xAA is reserved");
+        return false;
+    }
+
+    ora_get_commissioning_instance_fn_t get =
+        s_lookup(ORA_ID_GET_COMMISSIONING_INSTANCE);
+    const uint8_t *instance;
+    uint16_t len;
+    ora_result_t rc = get(&instance, &len);
+    if (rc != ORA_RESULT_OK) {
+        s_log("GET_COMMISSIONING_INSTANCE failed: %d", rc);
+        return false;
+    }
+    return devinfo_value_write(instance, len, offset, byte_count);
 }
 
 static bool __attribute__((noinline)) exec_get_metadata_str(void) {
@@ -3057,11 +3088,12 @@ static uint8_t cmd_arg_count(uint8_t group, uint8_t cmd) {
     }
     if (group == GRP_DEVICE_INFO) {
         switch (cmd) {
-            case CMD_GET_COMMISSIONING_VALUE: return 5u;
-            case CMD_GET_METADATA_STR:        return 7u;
-            case CMD_GET_METADATA_UINT:       return 4u;
-            case CMD_GET_METADATA_ARRAY:      return 7u;
-            default:                          return 0u;
+            case CMD_GET_COMMISSIONING_VALUE:    return 5u;
+            case CMD_GET_METADATA_STR:           return 7u;
+            case CMD_GET_METADATA_UINT:          return 4u;
+            case CMD_GET_METADATA_ARRAY:         return 7u;
+            case CMD_GET_COMMISSIONING_INSTANCE: return 3u;
+            default:                             return 0u;
         }
     }
     return 0u;
@@ -3383,6 +3415,9 @@ static bool dispatch(
                     break;
                 case CMD_GET_METADATA_ARRAY:
                     ok = exec_get_metadata_array();
+                    break;
+                case CMD_GET_COMMISSIONING_INSTANCE:
+                    ok = exec_get_commissioning_instance();
                     break;
                 default:
                     ok = false;

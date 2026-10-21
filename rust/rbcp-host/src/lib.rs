@@ -309,6 +309,12 @@ impl<'b, B: Bus> Session<'b, B> {
         )
     }
 
+    /// Reads the current commissioning instance. Returns its length, which may
+    /// exceed `out.len()`.
+    pub fn get_commissioning_instance(&mut self, out: &mut [u8]) -> Result<usize, Error> {
+        self.value(device_info::GET_COMMISSIONING_INSTANCE, &[], out)
+    }
+
     /// Returns the string's length, which may exceed `out.len()`.
     pub fn get_metadata_str(&mut self, key: u32, out: &mut [u8]) -> Result<usize, Error> {
         self.value(device_info::GET_METADATA_STR, &key.to_le_bytes(), out)
@@ -621,6 +627,7 @@ pub mod device_info {
     pub const GET_METADATA_STR: u8 = 0x02;
     pub const GET_METADATA_UINT: u8 = 0x03;
     pub const GET_METADATA_ARRAY: u8 = 0x04;
+    pub const GET_COMMISSIONING_INSTANCE: u8 = 0x05;
 }
 
 pub mod reset {

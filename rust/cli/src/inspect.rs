@@ -10,7 +10,7 @@ use crate::args::inspect::{
     InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
     InspectSocketArgs, InspectTelemetryArgs,
 };
-use crate::commissioning::{device_lines, report_lines};
+use crate::commissioning::{board_size_value, device_lines, report_lines};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
@@ -21,7 +21,7 @@ use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::colour::RgbColour;
 use onerom_cli::gpio;
-use onerom_cli::otp::PicobootOtp;
+use onerom_cli::otp::{Commissioning, PicobootOtp};
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
@@ -42,8 +42,12 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     let device = options.device.as_ref().unwrap();
 
     println!("{device}");
-    if let Some(line) = device.board_size_line() {
-        println!("  {line}");
+    if let Some(size) = device.board_size() {
+        let current = match &device.commissioning {
+            Commissioning::Read(area) => area.current(),
+            Commissioning::Unreadable | Commissioning::LabRunning | Commissioning::NotRead => None,
+        };
+        println!("  Board size: {}", board_size_value(size, current));
     }
     for line in commissioning_lines(device, true, options.verbose) {
         println!("  {line}");

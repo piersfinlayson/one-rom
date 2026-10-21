@@ -26,7 +26,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use log::{debug, error, info, warn};
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_metadata::otp::{BuildError, CommissioningValues, parse_chip_id};
 use serde::Deserialize;
 use tokio::net::TcpListener;
@@ -53,9 +53,13 @@ struct SignRequest {
     /// The chip's CHIPID, as `format_chip_id` writes it.
     chip_id: String,
     board: String,
+    /// Omitted by a CLI before v0.6.0, and its instance doesn't have a size.
+    size: Option<BoardSize>,
+    revision: Option<String>,
     manufacturer: String,
     /// The UTC commissioning date, `YYYYMMDD`.
     date: String,
+    batch: Option<String>,
     /// Whether the signature is returned without being added to the public
     /// record. It's still added to the private record.
     #[serde(default)]
@@ -148,8 +152,18 @@ impl Server {
                 format!("unknown board {}", request.board),
             );
         };
-        let values = match CommissioningValues::new(board, &request.manufacturer, &request.date, id)
-        {
+        let mut builder =
+            CommissioningValues::builder(board, &request.manufacturer, &request.date, id);
+        if let Some(size) = request.size {
+            builder = builder.size(size);
+        }
+        if let Some(revision) = &request.revision {
+            builder = builder.revision(revision);
+        }
+        if let Some(batch) = &request.batch {
+            builder = builder.batch(batch);
+        }
+        let values = match builder.build() {
             Ok(values) => values,
             Err(BuildError::EmptyManufacturer) => {
                 return text(StatusCode::BAD_REQUEST, "manufacturer is empty");
@@ -163,14 +177,27 @@ impl Server {
             Err(BuildError::BadDate) => {
                 return text(StatusCode::BAD_REQUEST, "date isn't 8 digits, YYYYMMDD");
             }
+            Err(BuildError::BadRevision) => {
+                return text(
+                    StatusCode::BAD_REQUEST,
+                    "revision must be non-empty printable ASCII without a leading or trailing space",
+                );
+            }
+            Err(BuildError::BadBatch) => {
+                return text(
+                    StatusCode::BAD_REQUEST,
+                    "batch must be non-empty printable ASCII without a leading or trailing space",
+                );
+            }
             Err(BuildError::DoesNotFit) => {
                 return text(
                     StatusCode::BAD_REQUEST,
                     "the values don't fit the commissioning area",
                 );
             }
-            // An ID is never 0, and values have no first row.
-            Err(error @ (BuildError::BadSigner | BuildError::BadFirstRow)) => {
+            // An ID is never 0 and values have no first row. Every other error
+            // is handled above.
+            Err(error) => {
                 error!("key {id}: unexpected {error:?}");
                 return text(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
             }
@@ -215,8 +242,11 @@ impl Server {
             },
             chip_id,
             board,
+            size: request.size,
+            revision: request.revision.clone(),
             manufacturer: request.manufacturer.clone(),
             date: request.date.clone(),
+            batch: request.batch.clone(),
             signature,
         };
         if let Err(error) = self.private.add(id, &line).await {

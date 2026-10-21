@@ -821,6 +821,13 @@ typedef enum {
      */
     ORA_ID_GET_FLASH_SLOT_ADDR       = 0x00000043,
 
+    /**
+     * @brief Get the commissioning instance
+     * @sa ora_get_commissioning_instance_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_COMMISSIONING_INSTANCE = 0x00000044,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -3546,6 +3553,32 @@ typedef ora_result_t (*ora_reboot_fn_t)(const ora_reboot_request_t *req);
 typedef ora_result_t (*ora_get_commissioning_value_fn_t)(
     uint16_t key,
     const uint8_t **value_out,
+    uint16_t *len_out
+);
+
+/**
+ * @brief Get the commissioning instance
+ * @sa ORA_ID_GET_COMMISSIONING_INSTANCE
+ * @since firmware 0.8.1
+ *
+ * The instance is the last complete commissioning instance, including its
+ * magic row to the end of its signature entry, as described in docs/OTP.md.
+ *
+ * - The instance is read in place from OTP, two bytes per row, low byte first.
+ * - The firmware doesn't check the signature.
+ *
+ * @param instance_out  Set to the instance, which stays valid until the One
+ *                      ROM reboots. Must not be NULL.
+ * @param len_out       Set to the instance's length in bytes. Must not be
+ *                      NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if the commissioning area doesn't contain
+ *         a complete instance, contains an instance with a version this
+ *         firmware can't read or isn't laid out as docs/OTP.md specifies.
+ *         ORA_RESULT_INVALID_ARG if an output pointer is NULL.
+ */
+typedef ora_result_t (*ora_get_commissioning_instance_fn_t)(
+    const uint8_t **instance_out,
     uint16_t *len_out
 );
 

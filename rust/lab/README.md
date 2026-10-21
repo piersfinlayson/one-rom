@@ -196,18 +196,24 @@ Set the chip type and chip select polarities with `c` first.
 ```text
 Device:       One ROM
 Board type:   fire-24-usb-b
-Board size:   L
+Board size:   M
 Firmware:     v0.8.1
 RBCP:         0.1.4
 Boot:         flash slot 0, RAM slot 0
 Chip ID:      E126C9F97C10ADAC
 Commissioned: yes
   Board type:   fire-24-usb-b
+  Revision:     A1
   Manufacturer: piers.rocks
   Date:         2026-09-29
+  Batch:        Y1-2345
   Signing key:  piers.rocks Production (1)
   Signature:    verified
 ```
+
+Revision and batch are displayed where the One ROM was commissioned with them.
+Where a One ROM's size differs from the size it was commissioned as,
+`Board size` displays both, for example `L (commissioned as M)`.
 
 ## Releasing
 

@@ -16,6 +16,8 @@ In detail:
   - `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
   - `onerom monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
   - `onerom inspect peek memory` can also read USB DPRAM.
+  - Breaking: `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
+  - `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
   - The One ROM Builder tab's Load from Device and Load from File buttons copy the configuration and ROM images of a One ROM or firmware file into the One ROM Builder tab.
@@ -33,7 +35,7 @@ In detail:
   - host-control 0.1.7
     - Requires firmware 0.8.1.
     - Supports RBCP's `REBOOT` command.
-    - Adds Device Info extensions which expose One ROM's commissioning values and metadata.
+    - Adds Device Info extensions which expose One ROM's commissioning values, commissioning instance and metadata.
   - USB 0.3.3
     - With firmware 0.8.1, supports a plugin with exclusive use of the serial port.
     - USB DPRAM can be read over picobootx.
@@ -41,12 +43,14 @@ In detail:
   - New: `ora_reboot()` can be used to reboot One ROM.
   - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
   - New: `ora_get_commissioning_value()` reads a commissioning value from OTP.
+  - New: `ora_get_commissioning_instance()` reads the current commissioning instance from OTP.
   - New: `ORA_METADATA_KEY_CHIP_ID` reads the RP2350's chip ID with `ora_get_metadata_uint_at()`.
   - New: `ora_get_flash_slot_addr()` returns a flash slot's flash address and size.
   - New: a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the USB serial port.  One ROM's log moves to USB DPRAM in this case.
   - New: a plugin can choose the ROM slot One ROM boots with `ORA_OVERRIDE1_BOOT_SLOT` and ignore the image select jumpers with `ORA_OVERRIDE1_IGNORE_IMAGE_SELECT`.
 - Other:
   - Added manufacturer contact details to commissioning signing key tables.
+  - The signing server accepts a size, revision and batch.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
@@ -55,10 +59,12 @@ To test:
 To publish:
 - Rust crates (in dependency order):
   - onerom-metadata-gen 0.2.0
-  - onerom-metadata 0.3.1
-  - onerom-gen 0.9.1
-  - onerom-fw-parser 0.10.1
-  - onerom-app 0.4.1
+  - onerom-metadata 0.4.0
+  - onerom-lab-metadata 0.2.0
+  - onerom-gen 0.10.0
+  - onerom-fw-parser 0.11.0
+  - onerom-lab-parser 0.2.0
+  - onerom-app 0.5.0
   - onerom-fw 0.5.0
   - onerom-cli 0.6.0
 - CLI bin 0.6.0

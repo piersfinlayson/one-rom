@@ -544,6 +544,8 @@ async fn commission(otp: &mut MemoryOtp, board: Board, size: BoardSize) {
         manufacturer: "piers.rocks".into(),
         date: RequestDate::Today("20260926".into()),
         signer: 1,
+        revision: None,
+        batch: None,
         force: false,
     };
     let prepared = prepare(otp, &request).await.unwrap();

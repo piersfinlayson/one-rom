@@ -599,6 +599,11 @@ pub struct Enum {
     /// plugin.  Required of every `ora_api` enum and not allowed on any other,
     /// as for a constant.
     pub first_release: Option<String>,
+
+    /// Mark the Rust enum `#[non_exhaustive]` so adding a value isn't a
+    /// breaking change to the crate's API.
+    #[serde(default)]
+    pub non_exhaustive: bool,
 }
 
 impl Enum {
@@ -1183,6 +1188,10 @@ pub struct TaggedFam {
     /// rule of its own - see `layout::compare`.
     #[serde(default)]
     pub standalone: bool,
+    /// Mark the Rust enum `#[non_exhaustive]` so adding a variant isn't a
+    /// breaking change to the crate's API.
+    #[serde(default)]
+    pub non_exhaustive: bool,
     #[serde(default)]
     pub common_fields: Vec<Field>,
     #[serde(default)]

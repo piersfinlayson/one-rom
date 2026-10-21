@@ -237,8 +237,8 @@ pub enum Verdict {
     UnknownSigner,
     /// `COMMISSIONING_SIG` doesn't end the instance.
     Incomplete,
-    /// The instance doesn't have a value for each of the five commissioning
-    /// keys.
+    /// The instance doesn't have a value for each key every commissioning
+    /// instance requires.
     Invalid,
 }
 

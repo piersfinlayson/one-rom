@@ -2155,6 +2155,49 @@ impl Emulator {
         ))
     }
 
+    /// `ORA_ID_GET_COMMISSIONING_INSTANCE`, returning the result and a copy of
+    /// the instance where it succeeded.
+    pub fn get_commissioning_instance(&self) -> (OraResult, Option<Vec<u8>>) {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_INSTANCE,
+            ffi::ora_get_commissioning_instance_fn_t,
+            &mut ptr as *mut *const u8,
+            &mut len as *mut u16
+        ));
+        let instance = (r.is_ok() && !ptr.is_null())
+            .then(|| unsafe { std::slice::from_raw_parts(ptr, usize::from(len)) }.to_vec());
+        (r, instance)
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_INSTANCE` with a NULL instance pointer, a
+    /// NULL length pointer, or both.
+    pub fn get_commissioning_instance_null_out(
+        &self,
+        null_instance: bool,
+        null_len: bool,
+    ) -> OraResult {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let instance_out = if null_instance {
+            std::ptr::null_mut()
+        } else {
+            &mut ptr as *mut *const u8
+        };
+        let len_out = if null_len {
+            std::ptr::null_mut()
+        } else {
+            &mut len as *mut u16
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_INSTANCE,
+            ffi::ora_get_commissioning_instance_fn_t,
+            instance_out,
+            len_out
+        ))
+    }
+
     // ── Yield ────────────────────────────────────────────────────────────────
 
     /// `ORA_ID_YIELD`, returning the result and whether the core was paused.

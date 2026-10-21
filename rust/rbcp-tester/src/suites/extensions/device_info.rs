@@ -12,11 +12,12 @@
 //! set first and checked afterwards, so a device writing more than the
 //! response fails.
 
+use onerom_config::hw::BoardSize;
 use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_metadata::otp::{CommissioningValues, NewCommissioningInstance, RowWrite};
 use onerom_metadata::{
     COMMISSIONING_VERSION_KEY, OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_KEY_NONE, OTP_PAGE_ROWS,
-    OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromOtpKey,
+    OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize, OneromOtpKey,
 };
 
 use crate::driver::{Bus, HDR_SIZE, Session, control, group};
@@ -28,6 +29,7 @@ const GET_COMMISSIONING_VALUE: u8 = 0x01;
 const GET_METADATA_STR: u8 = 0x02;
 const GET_METADATA_UINT: u8 = 0x03;
 const GET_METADATA_ARRAY: u8 = 0x04;
+const GET_COMMISSIONING_INSTANCE: u8 = 0x05;
 
 /// Offset of the value in a Value Response and of the elements in a
 /// GET_METADATA_ARRAY response.
@@ -36,6 +38,8 @@ const RESP_HDR: u32 = 4;
 const DATE: &str = "20261015";
 const SIGNER: u16 = 2;
 const MANUFACTURER: &str = "piers.rocks";
+const REVISION: &str = "A1";
+const BATCH: &str = "Y1-2345";
 const SIG_BYTE: u8 = 0xa5;
 
 const BOARD_KEY: u16 = OneromOtpKey::OtpKeyCommissioningBoard as u16;
@@ -43,6 +47,9 @@ const SIG_KEY: u16 = OneromOtpKey::OtpKeyCommissioningSig as u16;
 const MANUFACTURER_KEY: u16 = OneromOtpKey::OtpKeyCommissioningManufacturer as u16;
 const DATE_KEY: u16 = OneromOtpKey::OtpKeyCommissioningDate as u16;
 const SIGNER_KEY: u16 = OneromOtpKey::OtpKeyCommissioningSigner as u16;
+const REVISION_KEY: u16 = OneromOtpKey::OtpKeyCommissioningRevision as u16;
+const BATCH_KEY: u16 = OneromOtpKey::OtpKeyCommissioningBatch as u16;
+const SIZE_KEY: u16 = OneromOtpKey::OtpKeyCommissioningSize as u16;
 
 /// A commissioning key the writer doesn't write.
 const UNWRITTEN_KEY: u16 = 0x1234;
@@ -97,6 +104,11 @@ fn value_args(count: u8, offset: u16, key: u16) -> [u8; 5] {
     [count, o0, o1, k0, k1]
 }
 
+fn instance_args(count: u8, offset: u16) -> [u8; 3] {
+    let [o0, o1] = offset.to_le_bytes();
+    [count, o0, o1]
+}
+
 fn str_args(count: u8, offset: u16, key: u32) -> [u8; 7] {
     let [o0, o1] = offset.to_le_bytes();
     let [k0, k1, k2, k3] = key.to_le_bytes();
@@ -111,7 +123,11 @@ fn array_args(count: u8, index: u8, width: u8, key: u32) -> [u8; 7] {
 /// Write a commissioning instance for `ctx`'s board and return the rows
 /// written.
 fn commission(ctx: &Ctx) -> Vec<RowWrite> {
-    let values = CommissioningValues::new(ctx.board, MANUFACTURER, DATE, SIGNER)
+    let values = CommissioningValues::builder(ctx.board, MANUFACTURER, DATE, SIGNER)
+        .size(BoardSize::M)
+        .revision(REVISION)
+        .batch(BATCH)
+        .build()
         .expect("valid commissioning values");
     let writes = NewCommissioningInstance::new(&values, OTP_COMMISSIONING_AREA_FIRST_ROW)
         .expect("an instance that fits")
@@ -134,6 +150,15 @@ fn expected_values(ctx: &Ctx) -> Vec<(u16, &'static str, Vec<u8>)> {
         ),
         (DATE_KEY, "DATE", DATE.as_bytes().to_vec()),
         (SIGNER_KEY, "SIGNER", SIGNER.to_le_bytes().to_vec()),
+        (REVISION_KEY, "REVISION", REVISION.as_bytes().to_vec()),
+        (BATCH_KEY, "BATCH", BATCH.as_bytes().to_vec()),
+        (
+            SIZE_KEY,
+            "SIZE",
+            u16::from(OneromBoardSize::BoardSizeM as u8)
+                .to_le_bytes()
+                .to_vec(),
+        ),
         (
             COMMISSIONING_VERSION_KEY,
             "version",
@@ -336,6 +361,102 @@ pub fn value_fails_on_an_unsupported_version(bus: &mut Bus, ctx: &Ctx) -> Result
             &format!("GET_COMMISSIONING_VALUE for {name} with version {unknown}"),
         )?;
     }
+    Ok(Outcome::Pass)
+}
+
+/// The bytes GET_COMMISSIONING_INSTANCE returns for the instance `writes`
+/// wrote: its rows in order, two bytes each, low byte first.
+fn instance_bytes(writes: &[RowWrite]) -> Vec<u8> {
+    let mut rows = writes.to_vec();
+    rows.sort_by_key(|w| w.row);
+    rows.iter().flat_map(|w| w.value.to_le_bytes()).collect()
+}
+
+/// GET_COMMISSIONING_INSTANCE reads the whole instance 256 bytes at a time
+/// with a count of zero.
+pub fn instance_reads_the_whole_instance(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let instance = instance_bytes(&commission(ctx));
+    let s = enter(bus, ctx)?;
+    for offset in (0..instance.len()).step_by(256) {
+        let end = instance.len().min(offset + 256);
+        expect_value(
+            bus,
+            ctx,
+            &s,
+            (GET_COMMISSIONING_INSTANCE, &instance_args(0, offset as u16)),
+            instance.len(),
+            &instance[offset..end],
+            &format!("GET_COMMISSIONING_INSTANCE at offset {offset}"),
+        )?;
+    }
+    Ok(Outcome::Pass)
+}
+
+/// GET_COMMISSIONING_INSTANCE returns the smaller of count and the bytes after
+/// offset. An offset at the end of the instance returns no bytes.
+pub fn instance_reads_from_an_offset(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let instance = instance_bytes(&commission(ctx));
+    let len = instance.len();
+    let s = enter(bus, ctx)?;
+    for (count, offset) in [(1u8, 0u16), (3, 2), (8, len as u16 - 2), (8, len as u16)] {
+        let from = usize::from(offset);
+        let n = usize::from(count).min(len - from);
+        expect_value(
+            bus,
+            ctx,
+            &s,
+            (GET_COMMISSIONING_INSTANCE, &instance_args(count, offset)),
+            len,
+            &instance[from..from + n],
+            &format!("GET_COMMISSIONING_INSTANCE, count {count}, offset {offset}"),
+        )?;
+    }
+    Ok(Outcome::Pass)
+}
+
+/// GET_COMMISSIONING_INSTANCE fails where One ROM isn't commissioned, where
+/// offset is beyond the end of the instance, where A2 is 0xAA and where the
+/// commissioning area contains an unsupported version.
+///
+/// An offset whose A2 is 0xAA is beyond the end of any instance, so the
+/// command fails with or without the plugin's own check for it.
+pub fn instance_fails(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = enter(bus, ctx)?;
+    expect_rejected(
+        bus,
+        &s,
+        GET_COMMISSIONING_INSTANCE,
+        &instance_args(0, 0),
+        "GET_COMMISSIONING_INSTANCE uncommissioned",
+    )?;
+
+    let first = commission(ctx);
+    let past = instance_bytes(&first).len() as u16 + 1;
+    expect_rejected(
+        bus,
+        &s,
+        GET_COMMISSIONING_INSTANCE,
+        &instance_args(1, past),
+        "GET_COMMISSIONING_INSTANCE at an offset beyond the end",
+    )?;
+    expect_rejected(
+        bus,
+        &s,
+        GET_COMMISSIONING_INSTANCE,
+        &instance_args(1, 0xAA00),
+        "GET_COMMISSIONING_INSTANCE with A2 0xAA",
+    )?;
+
+    let last = first.iter().map(|w| w.row).max().expect("writes");
+    let next = (last / OTP_PAGE_ROWS + 1) * OTP_PAGE_ROWS;
+    Emulator::set_otp_ecc(next, &[first[0].value, OTP_STORE_VERSION + 1]);
+    expect_rejected(
+        bus,
+        &s,
+        GET_COMMISSIONING_INSTANCE,
+        &instance_args(0, 0),
+        "GET_COMMISSIONING_INSTANCE with an unsupported version",
+    )?;
     Ok(Outcome::Pass)
 }
 
@@ -611,7 +732,7 @@ pub fn commands_fail_without_room_for_the_response(
     ctx: &Ctx,
 ) -> Result<Outcome, String> {
     commission(ctx);
-    let cases: [(u8, Vec<u8>, u32, &str); 5] = [
+    let cases: [(u8, Vec<u8>, u32, &str); 6] = [
         (
             GET_COMMISSIONING_VERSION,
             vec![],
@@ -641,6 +762,12 @@ pub fn commands_fail_without_room_for_the_response(
             array_args(4, 0, 2, CHIP_ID).to_vec(),
             4 + 4 * 2,
             "GET_METADATA_ARRAY with count 4 and width 2",
+        ),
+        (
+            GET_COMMISSIONING_INSTANCE,
+            instance_args(8, 0).to_vec(),
+            4 + 8,
+            "GET_COMMISSIONING_INSTANCE with count 8",
         ),
     ];
     for (cmd, args, need, what) in cases {
@@ -721,7 +848,7 @@ pub fn reserved_key_byte_is_rejected(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome
 }
 
 /// Each command with valid arguments.
-fn every_command() -> [(u8, Vec<u8>); 5] {
+fn every_command() -> [(u8, Vec<u8>); 6] {
     [
         (GET_COMMISSIONING_VERSION, vec![]),
         (
@@ -731,6 +858,7 @@ fn every_command() -> [(u8, Vec<u8>); 5] {
         (GET_METADATA_STR, str_args(0, 0, HW_REV).to_vec()),
         (GET_METADATA_UINT, BOARD_SIZE.to_le_bytes().to_vec()),
         (GET_METADATA_ARRAY, array_args(8, 0, 1, CHIP_ID).to_vec()),
+        (GET_COMMISSIONING_INSTANCE, instance_args(0, 0).to_vec()),
     ]
 }
 

@@ -83,6 +83,7 @@ void otp_lock(void);
 
 // otp.c
 uint8_t otp_commissioning_value(uint16_t key, uint16_t *row_out, uint16_t *len_out);
+uint8_t otp_commissioning_instance(uint16_t *row_out, uint16_t *len_out);
 uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out);
 uint8_t otp_chip_id_byte(uint32_t index, uint8_t *byte_out);
 uint8_t otp_board_mismatch(const char *hw_rev);

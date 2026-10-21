@@ -44,6 +44,21 @@ pub static SCENARIOS: &[Scenario] = &[
         run: device_info::value_fails_on_an_unsupported_version,
     },
     Scenario {
+        name: "extensions.device_info.instance_reads_the_whole_instance",
+        spec_ref: "EXTENSIONS.md: GET_COMMISSIONING_INSTANCE",
+        run: device_info::instance_reads_the_whole_instance,
+    },
+    Scenario {
+        name: "extensions.device_info.instance_reads_from_an_offset",
+        spec_ref: "EXTENSIONS.md: GET_COMMISSIONING_INSTANCE",
+        run: device_info::instance_reads_from_an_offset,
+    },
+    Scenario {
+        name: "extensions.device_info.instance_fails",
+        spec_ref: "EXTENSIONS.md: GET_COMMISSIONING_INSTANCE",
+        run: device_info::instance_fails,
+    },
+    Scenario {
         name: "extensions.device_info.metadata_str_reads_a_string",
         spec_ref: "EXTENSIONS.md: GET_METADATA_STR",
         run: device_info::metadata_str_reads_a_string,

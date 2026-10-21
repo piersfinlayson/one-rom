@@ -34,6 +34,7 @@ Key numbers are permanent.
 | 0x02 | GET_METADATA_STR | 0.1.7 | 7: A0=count, A1/A2=offset, A3–A6=key | Writes up to count bytes of key's metadata string from offset into the response data section. A count of zero indicates 256 bytes. An unset string has length 0. See [Value Response Format](#value-response-format). Fails if key is unknown or isn't a string, if offset is beyond the end of the string, or if the response data section is smaller than 4 bytes plus count. An A6 value of 0xAA is invalid and rejected. |
 | 0x03 | GET_METADATA_UINT | 0.1.7 | 4: A0–A3=key | Writes key's metadata number into the response data section. See [GET_METADATA_UINT Response Format](#get_metadata_uint-response-format). Fails if key is unknown or isn't a number, or if the response data section is smaller than 4 bytes. An A3 value of 0xAA is invalid and rejected. |
 | 0x04 | GET_METADATA_ARRAY | 0.1.7 | 7: A0=count, A1=index, A2=width, A3–A6=key | Writes up to count elements of key's metadata array from element index into the response data section. Each element is width bytes. Width is 1, 2 or 4. A count of zero indicates 256 elements. See [GET_METADATA_ARRAY Response Format](#get_metadata_array-response-format). Fails if key is unknown or isn't an array, if index is beyond the last element, if width isn't 1, 2 or 4, if an element is too large for width, or if the response data section is smaller than 4 bytes plus count × width. An A6 value of 0xAA is invalid and rejected. |
+| 0x05 | GET_COMMISSIONING_INSTANCE | 0.1.7 | 3: A0=count, A1/A2=offset | Writes up to count bytes of One ROM's current commissioning instance from offset into the response data section. The instance is the OTP rows from its magic row to the end of its signature entry, two bytes per row, low byte first, as [OTP.md](/docs/OTP.md) specifies. A count of zero indicates 256 bytes. See [Value Response Format](#value-response-format). Fails if One ROM isn't commissioned or its commissioning version is unsupported, if offset is beyond the end of the instance, or if the response data section is smaller than 4 bytes plus count. An A2 value of 0xAA is invalid and rejected. |
 
 CMD 0xAA is reserved and must never be assigned.
 
@@ -46,7 +47,7 @@ CMD 0xAA is reserved and must never be assigned.
 
 ### Value Response Format
 
-For GET_COMMISSIONING_VALUE and GET_METADATA_STR.
+For GET_COMMISSIONING_VALUE, GET_COMMISSIONING_INSTANCE and GET_METADATA_STR.
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|

@@ -999,9 +999,13 @@ impl Report {
                         escape_controls(&board)
                     ));
                 }
+                let commissioned = match &info.commissioning {
+                    Commissioning::Yes(instance) => instance.size(),
+                    Commissioning::No | Commissioning::UnknownVersion(_) => None,
+                };
                 Some(InfoText {
                     board_type: escape_controls(&info.board_type),
-                    board_size: board_size(info.board_size),
+                    board_size: board_size(info.board_size, commissioned),
                     chip_id: hex::encode_upper(info.chip_id),
                     commissioned: text,
                 })
@@ -1090,7 +1094,7 @@ async fn commissioned_text(
     info: &crate::rbcp::DeviceInfo,
     table: &SignerTable,
 ) -> (CommissionedText, Option<String>) {
-    let values = match &info.commissioning {
+    let instance = match &info.commissioning {
         Commissioning::No => return (CommissionedText::Bare("no".to_string()), None),
         Commissioning::UnknownVersion(version) => {
             return (
@@ -1098,28 +1102,34 @@ async fn commissioned_text(
                 None,
             );
         }
-        Commissioning::Yes(values) => values,
+        Commissioning::Yes(instance) => instance,
     };
     let chip_id = parse_chip_id(&hex::encode_upper(info.chip_id));
     let signature = match chip_id {
-        Some(chip_id) => match crate::commissioning::check(values, chip_id, table).await {
+        Some(chip_id) => match crate::commissioning::check(instance, chip_id, table).await {
             Check::Verdict(verdict) => verdict_text(verdict),
             Check::Retired => "verified, key retired",
         },
         None => verdict_text(Verdict::BadSignature),
     };
-    let manufacturer = values.manufacturer.as_deref().map(escape_controls);
+    let manufacturer = instance.manufacturer().map(escape_controls);
     let mut lines = Vec::new();
-    if let Some(board) = &values.board {
+    if let Some(board) = instance.board() {
         lines.push(("Board type:", escape_controls(board)));
+    }
+    if let Some(revision) = instance.revision() {
+        lines.push(("Revision:", escape_controls(revision)));
     }
     if let Some(manufacturer) = &manufacturer {
         lines.push(("Manufacturer:", manufacturer.clone()));
     }
-    if let Some(date) = &values.date {
+    if let Some(date) = instance.date() {
         lines.push(("Date:", format_date(date)));
     }
-    if let Some(id) = values.signer {
+    if let Some(batch) = instance.batch() {
+        lines.push(("Batch:", escape_controls(batch)));
+    }
+    if let Some(id) = instance.signer() {
         let name = match table.get(id) {
             Some(signer) => format!("{} ({id})", escape_controls(signer.name())),
             None => format!("signer {id}"),
@@ -1132,17 +1142,24 @@ async fn commissioned_text(
             values: lines,
             signature,
         },
-        values.board.clone(),
+        instance.board().map(Into::into),
     )
 }
 
-/// `raw` is an `onerom_board_size_t`.
-fn board_size(raw: u32) -> String {
+/// `raw` is an `onerom_board_size_t`. Where the board was commissioned as
+/// another size, that size follows.
+fn board_size(raw: u32, commissioned: Option<MaybeKnown<OneromBoardSize>>) -> String {
     let size = u8::try_from(raw)
         .ok()
         .and_then(|raw| OneromBoardSize::try_from(raw).ok())
         .map_or(MaybeKnown::Unknown(raw), MaybeKnown::Known);
-    board_size_text(size)
+    let text = board_size_text(size);
+    match commissioned {
+        Some(commissioned) if commissioned != size => {
+            format!("{text} (commissioned as {})", board_size_text(commissioned))
+        }
+        _ => text,
+    }
 }
 
 /// Lines up the values past the longest label.

@@ -824,6 +824,11 @@ fn signing_server_text(url: &str, status: &u16, message: &str) -> String {
 /// What to do about a One ROM commissioned with other values.
 const RE_COMMISSION: &str = "Use --force to re-commission it.";
 
+/// The commissioning values are too long for OTP. The manufacturer, revision
+/// and batch are the only values whose lengths the user chooses.
+pub const VALUES_TOO_LONG: &str =
+    "The manufacturer, revision and batch together are too long to fit in OTP.";
+
 /// Who may have written commissioning data this CLI doesn't know.
 pub const NEWER_DATA: &str = "It may have been written by a newer version of the CLI.";
 
@@ -910,11 +915,7 @@ fn refusal(error: &onerom_app::CommissionError, command: Refusing) -> String {
         E::NewerData { .. } | E::UnknownKey { .. } => {
             format!("{}\n  {NEWER_DATA}", sentence(error))
         }
-        // The manufacturer's name is the only value whose length the user
-        // chooses.
-        E::Build(BuildError::DoesNotFit) => {
-            "The manufacturer's name is too long to fit in OTP.".to_string()
-        }
+        E::Build(BuildError::DoesNotFit) => VALUES_TOO_LONG.to_string(),
         E::Otp { .. }
         | E::AreaFull
         | E::Build(_)
@@ -1190,6 +1191,9 @@ impl From<onerom_app::CommissionError> for Error {
 mod tests {
     use super::*;
 
+    use onerom_metadata::OTP_COMMISSIONING_AREA_FIRST_ROW;
+    use onerom_metadata::otp::{CommissioningArea, CommissioningValues, NewCommissioningInstance};
+
     /// An image file refusal and its warning contain the byte counts.
     #[test]
     fn an_image_file_refusal_contains_the_byte_counts() {
@@ -1290,12 +1294,23 @@ mod tests {
         assert!(commission_l.contains("--force"), "{commission_l}");
         assert!(commission_m.contains("--force"), "{commission_m}");
 
+        let values = CommissioningValues::new(
+            onerom_config::hw::Board::Fire24F,
+            "piers.rocks",
+            "20260101",
+            1,
+        )
+        .unwrap();
+        let mut rows = vec![0; 64];
+        for write in NewCommissioningInstance::new(&values, OTP_COMMISSIONING_AREA_FIRST_ROW)
+            .unwrap()
+            .writes(&[0; 64])
+        {
+            rows[usize::from(write.row - OTP_COMMISSIONING_AREA_FIRST_ROW)] = write.value;
+        }
+        let current = CommissioningArea::parse(&rows).current().cloned().unwrap();
         let already = CommissionError::AlreadyCommissioned {
-            row: 0x0c0,
-            board: "fire-24-f".to_string(),
-            manufacturer: "piers.rocks".to_string(),
-            date: "20260101".to_string(),
-            signer: 1,
+            current: Box::new(current),
             only_date_differs: false,
         };
         let request = Error::RequestSignature(already.clone()).to_string();

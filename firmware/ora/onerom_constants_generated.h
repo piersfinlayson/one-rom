@@ -206,6 +206,18 @@
 // @since firmware 0.8.1
 #define ORA_OTP_KEY_COMMISSIONING_SIGNER ((uint16_t)5)
 
+// Board revision
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_REVISION ((uint16_t)6)
+
+// Manufacturing batch
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_BATCH ((uint16_t)7)
+
+// Size the board was commissioned as
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_SIZE ((uint16_t)8)
+
 // 0xFFFF is never written to OTP as a key. It makes the C enum
 // onerom_otp_key_t 2 bytes wide.
 // @since firmware 0.8.1

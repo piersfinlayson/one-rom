@@ -1092,6 +1092,18 @@ ora_result_t ora_get_commissioning_value(
     return ORA_RESULT_OK;
 }
 
+ora_result_t ora_get_commissioning_instance(const uint8_t **instance_out, uint16_t *len_out) {
+    if ((instance_out == NULL) || (len_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint16_t row;
+    if (!otp_commissioning_instance(&row, len_out)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    *instance_out = (const uint8_t *)otp_ecc_bytes(row);
+    return ORA_RESULT_OK;
+}
+
 ora_result_t ora_demangle_data(uint8_t physical_data, uint8_t *logical_data_out) {
     if (logical_data_out == NULL) {
         return ORA_RESULT_INVALID_ARG;
@@ -2116,6 +2128,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_reboot;
         case ORA_ID_GET_FLASH_SLOT_ADDR:
             return ora_get_flash_slot_addr;
+        case ORA_ID_GET_COMMISSIONING_INSTANCE:
+            return ora_get_commissioning_instance;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

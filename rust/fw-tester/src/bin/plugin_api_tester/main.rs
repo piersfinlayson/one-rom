@@ -294,6 +294,10 @@ fn run_slot(
         tests::commissioning::test_commissioning_value(&emulator),
     );
     report.add(
+        "commissioning_instance",
+        tests::commissioning::test_commissioning_instance(&emulator),
+    );
+    report.add(
         "metadata_uint_at",
         tests::info::test_metadata_uint_at(&emulator, config, board, fw_version, base_dir),
     );

@@ -99,6 +99,8 @@ pub async fn plan(otp: &mut MemoryOtp, board: &str, size: BoardSize) -> Plan {
         manufacturer: "piers.rocks".to_string(),
         date: RequestDate::Given(DATE.to_string()),
         signer: 1,
+        revision: None,
+        batch: None,
         force: false,
     };
     let prepared = prepare(otp, &request).await.unwrap();
@@ -453,6 +455,8 @@ pub async fn acme_board() -> MemoryOtp {
         manufacturer: ACME.to_string(),
         date: RequestDate::Today(today()),
         signer: ACME_ID,
+        revision: None,
+        batch: None,
         force: false,
     };
     let prepared = prepare(&mut otp, &request).await.unwrap();
@@ -551,6 +555,8 @@ pub fn args(board: &str, size: BoardSize, key: PathBuf) -> HardwareCommissionArg
         board: Board::try_from_str(board).unwrap(),
         size: Some(size),
         manufacturer: "piers.rocks".to_string(),
+        revision: None,
+        batch: None,
         signer: None,
         key_id: None,
         pin: None,

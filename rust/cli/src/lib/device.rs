@@ -21,7 +21,7 @@ use wildmatch::WildMatch;
 
 use crate::Options;
 use crate::error::Error;
-use crate::otp::{Commissioning, board_size_text};
+use crate::otp::Commissioning;
 use crate::usb::{enumerate_devices, enumerate_devices_and_skipped, serial_not_found};
 
 pub use onerom_app::known_board_size;
@@ -348,13 +348,6 @@ impl Device {
             Some(variant) => format!("MCU: {variant} Chip ID: {id}"),
             None => format!("Chip ID: {id}"),
         })
-    }
-
-    /// The line shown beneath the device's line giving its board size, e.g.
-    /// `Board size: L`. `None` where the size isn't known.
-    pub fn board_size_line(&self) -> Option<String> {
-        let size = self.board_size?;
-        Some(format!("Board size: {}", board_size_text(size)))
     }
 
     /// The board's size, from runtime info while One ROM runs and from OTP

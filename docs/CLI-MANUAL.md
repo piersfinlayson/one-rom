@@ -78,6 +78,9 @@ release, and never in a minor or a patch.
 - `program` and `firmware build` automatically add the USB plugin when a system
   plugin isn't specified (or a config file doesn't define a plugin). Use
   `--no-plugin` to build without plugins.
+- An unused signature from an earlier CLI fails with
+  `hardware commission --signature`. One ROMs already commissioned aren't
+  affected. Raise a new signing request, or sign again with `hardware sign`.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -2125,7 +2128,7 @@ describes how each size is recorded.
 
 Write to the RP2350's OTP:
 
-- the signed board type, manufacturer and date
+- the signed board details
 - the USB info that white labels the RP2350's bootloader as One ROM
 - the external flash settings for a [size](#board-sizes) other than M
 
@@ -2145,6 +2148,8 @@ onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro
 | `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B). Required. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
 | `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--revision <REVISION>` (alias `--rev`) | The board's revision, for example `A1`. Printable ASCII without a leading or trailing space. |
+| `--batch <BATCH>` | The board's manufacturing batch, for example a PCB order number. Printable ASCII without a leading or trailing space. |
 | `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
 | `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
 | `--pin <PIN>` | PIN of the signing server's key or of an encrypted key file. Asked for in a terminal if omitted. Conflicts with `--signature`. |
@@ -2163,7 +2168,8 @@ The signature comes from one of:
 - a signing server, with `--signer` and `--key-id` — see
   [Signing Server](/docs/COMMISSIONING.md#signing-server)
 - a [signing request](/docs/COMMISSIONING.md#submitting-a-signing-request) or
-  [`hardware sign`](#hardware-sign), with `--signature`, `--key-id` and `--date`
+  [`hardware sign`](#hardware-sign), with `--signature`, `--key-id`, `--date`
+  and any `--revision` and `--batch` it was signed with
 
 The signing key must be
 [authorised](/docs/COMMISSIONING.md#requesting-an-authorised-signing-key) for
@@ -2171,8 +2177,7 @@ the manufacturer being signed.
 
 `--force` is required to:
 
-- re-commission a One ROM with a different board type, manufacturer, date or
-  signing key — see
+- re-commission a One ROM with different details — see
   [Correcting Commissioning Errors](/docs/COMMISSIONING.md#correcting-commissioning-errors)
 - commission a One ROM whose firmware is for another board type
 - commission a One ROM as M when another size is partly programmed
@@ -2198,15 +2203,15 @@ Commissioning:
   Date:         2026-09-29
   Signing key:  Acme Retro (256)
 To write:
-  Commissioning instance at row 0x0c0   59 rows
+  Commissioning instance at row 0x0c0   62 rows
   Lock for page 3                        1 row
   Bootloader USB strings                41 rows
   White label table                      9 rows
   USB_WHITE_LABEL_ADDR                   1 row
   USB_BOOT_FLAGS and its copies          3 rows
-  Total                                114 rows
+  Total                                117 rows
 WARNING: OTP writes cannot be undone.
-Write 114 rows? (y/N): y
+Write 117 rows? (y/N): y
 Writing OTP - DO NOT DISCONNECT
 Commissioning instance: written
 Lock for page 3: written
@@ -2247,7 +2252,7 @@ Signing request:
   Board size:   M
   Manufacturer: onerom.org
 Open this link to raise a signing request for this One ROM on GitHub:
-  https://github.com/piersfinlayson/one-rom/issues/new?template=signing-request.yml&title=%5Bsigning%20request%5D%20DE3F9C232F655B6B&chip_id=DE3F9C232F655B6B&board=fire-40-b&size=M&manufacturer=onerom.org
+  https://github.com/piersfinlayson/one-rom/issues/new?template=signing-request.yml&title=%5Bsigning%20request%5D%20DE3F9C232F655B6B&chip_id=DE3F9C232F655B6B&board=fire-40-b&size=M&manufacturer=onerom.org&cli_version=0.6.0
 ```
 
 ### hardware sign
@@ -2272,6 +2277,8 @@ onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size L \
 | `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
 | `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--revision <REVISION>` (alias `--rev`) | The board's revision, for example `A1`. Printable ASCII without a leading or trailing space. |
+| `--batch <BATCH>` | The board's manufacturing batch, for example a PCB order number. Printable ASCII without a leading or trailing space. |
 | `--date <DATE>` | Commissioning date as `YYYYMMDD`, for example `20260929`. Defaults to today's UTC date. Cannot be in the future. |
 | `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
 | `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
@@ -2304,9 +2311,9 @@ Signing:
   Date:         2026-09-29
   Signing key:  Acme Retro (256)
 Sign? (y/N): y
-Signature: 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+Signature: ff0179e1256e4cd83c69939e9dc52182d2f4d974d532c227c10226038d3ba7504521496c649884133c86445b512fce27e80bcc1118668354f2885e02d1c80a0c
 Command to commission the One ROM:
-  onerom hardware commission --board fire-40-b --size M --manufacturer 'Acme Retro' --date 20260929 --key-id 256 --signature 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+  onerom hardware commission --board fire-40-b --size M --manufacturer 'Acme Retro' --date 20260929 --key-id 256 --signature ff0179e1256e4cd83c69939e9dc52182d2f4d974d532c227c10226038d3ba7504521496c649884133c86445b512fce27e80bcc1118668354f2885e02d1c80a0c
 ```
 
 ### hardware set-size
@@ -3390,6 +3397,9 @@ release. Newest release first.
 - `program` and `firmware build` automatically add the USB plugin when a system
   plugin isn't specified (or a config file doesn't define a plugin). Use
   `--no-plugin` to build without plugins.
+- An unused signature from an earlier CLI fails with
+  `hardware commission --signature`. One ROMs already commissioned aren't
+  affected. Raise a new signing request, or sign again with `hardware sign`.
 
 ### v0.5.0
 

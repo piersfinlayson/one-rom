@@ -8,12 +8,22 @@
 //! reading the ROM the One ROM serves.
 
 use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use onerom_config::hw::Board;
-use onerom_metadata::{OTP_STORE_VERSION, OneromOtpKey, metadata_key};
+use onerom_metadata::otp::{CommissioningArea, CommissioningInstance};
+use onerom_metadata::{
+    OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_STORE_VERSION,
+    metadata_key,
+};
 use onerom_rbcp_host::{AsciiField, BootSlot, Bus, Config, Error, ProtocolVersion, Session};
 
 use crate::rom::RomReader;
+
+/// The longest commissioning instance, the whole commissioning area.
+const MAX_INSTANCE_BYTES: usize =
+    2 * (OTP_COMMISSIONING_AREA_LAST_ROW - OTP_COMMISSIONING_AREA_FIRST_ROW + 1) as usize;
 
 /// How many times Lab polls the One ROM before it fails.
 ///
@@ -43,16 +53,7 @@ pub enum Commissioning {
     No,
     /// A commissioning data version this Lab can't read.
     UnknownVersion(u16),
-    Yes(Values),
-}
-
-/// A missing value is `None`.
-pub struct Values {
-    pub board: Option<String>,
-    pub manufacturer: Option<String>,
-    pub date: Option<String>,
-    pub signer: Option<u16>,
-    pub signature: Option<[u8; 64]>,
+    Yes(CommissioningInstance),
 }
 
 /// The RBCP step that failed, and why.
@@ -121,7 +122,7 @@ fn device_info<B: Bus>(session: &mut Session<'_, B>) -> Result<Option<DeviceInfo
     }
     let commissioning = match version {
         0 => Commissioning::No,
-        OTP_STORE_VERSION => Commissioning::Yes(values(session)?),
+        OTP_STORE_VERSION => Commissioning::Yes(instance(session)?),
         version => Commissioning::UnknownVersion(version),
     };
     Ok(Some(DeviceInfo {
@@ -132,40 +133,22 @@ fn device_info<B: Bus>(session: &mut Session<'_, B>) -> Result<Option<DeviceInfo
     }))
 }
 
-fn values<B: Bus>(session: &mut Session<'_, B>) -> Result<Values, Failure> {
-    let mut buf = [0u8; 256];
-    let board = value(session, OneromOtpKey::OtpKeyCommissioningBoard, &mut buf)?.map(text);
-    let manufacturer = value(
-        session,
-        OneromOtpKey::OtpKeyCommissioningManufacturer,
-        &mut buf,
-    )?
-    .map(text);
-    let date = value(session, OneromOtpKey::OtpKeyCommissioningDate, &mut buf)?.map(text);
-    let signer = value(session, OneromOtpKey::OtpKeyCommissioningSigner, &mut buf)?
-        .and_then(|v| Some(u16::from_le_bytes(v.try_into().ok()?)));
-    let signature = value(session, OneromOtpKey::OtpKeyCommissioningSig, &mut buf)?
-        .and_then(|v| v.try_into().ok());
-    Ok(Values {
-        board,
-        manufacturer,
-        date,
-        signer,
-        signature,
-    })
-}
-
-fn value<'b, B: Bus>(
-    session: &mut Session<'_, B>,
-    key: OneromOtpKey,
-    buf: &'b mut [u8],
-) -> Result<Option<&'b [u8]>, Failure> {
-    match session.get_commissioning_value(key as u16, buf) {
-        Ok(len) => Ok(Some(&buf[..len.min(buf.len())])),
-        // A missing key fails.
-        Err(Error::Failed) => Ok(None),
-        Err(e) => Err(("GET_COMMISSIONING_VALUE", e)),
+/// The current commissioning instance, parsed from its OTP rows.
+fn instance<B: Bus>(session: &mut Session<'_, B>) -> Result<CommissioningInstance, Failure> {
+    let failed = ("GET_COMMISSIONING_INSTANCE", Error::Failed);
+    let mut bytes = vec![0u8; MAX_INSTANCE_BYTES];
+    let len = session
+        .get_commissioning_instance(&mut bytes)
+        .map_err(|e| ("GET_COMMISSIONING_INSTANCE", e))?;
+    if len > bytes.len() || len % 2 != 0 {
+        return Err(failed);
     }
+    let (rows, _) = bytes[..len].as_chunks::<2>();
+    let rows: Vec<u16> = rows.iter().map(|&row| u16::from_le_bytes(row)).collect();
+    CommissioningArea::parse(&rows)
+        .current()
+        .cloned()
+        .ok_or(failed)
 }
 
 fn text(bytes: &[u8]) -> String {
