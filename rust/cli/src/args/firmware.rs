@@ -6,7 +6,9 @@
 
 use std::str::FromStr;
 
-use crate::args::{CommandTrait, program::ProgramArgs};
+use crate::args::CommandTrait;
+use crate::args::program::{HELP_MIN_CS_ACT, LONG_HELP_MIN_CS_ACT, ProgramArgs};
+use crate::utils::parse_addr_mon_min_cs_act_ns;
 use clap::builder::{PossibleValue, TypedValueParser};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
@@ -147,7 +149,7 @@ pub struct FirmwareBuildArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>][,addr-mon-min-cs-act-ns=<ns>]
     ///
     /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
     /// snake_case config spellings are also accepted.
@@ -172,6 +174,9 @@ pub struct FirmwareBuildArgs {
     /// standby=on boots One ROM into standby mode when this slot is selected.
     /// In standby mode One ROM doesn't serve the ROM. With standby=on, file is
     /// optional. Requires firmware v0.8.0 or later.
+    ///
+    /// addr-mon-min-cs-act-ns overrides --addr-mon-min-cs-act-ns when this slot
+    /// is selected. Requires firmware v0.8.1 or later.
     ///
     /// Examples:
     ///
@@ -298,7 +303,7 @@ pub struct FirmwareBuildArgs {
     /// Mutually exclusive with --config and --slot.
     #[arg(
         long,
-        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin"]
+        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin", "addr_mon_min_cs_act_ns"]
     )]
     pub no_config: bool,
 
@@ -339,6 +344,18 @@ pub struct FirmwareBuildArgs {
     /// Example: --reserve-pin sel_c --reserve-pin x1
     #[arg(long, visible_aliases = ["reserved-pin", "reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
     pub reserve_pin: Vec<Pin>,
+
+    // `help` and `long_help` rather than a doc comment: see HELP_MIN_CS_ACT.
+    #[arg(
+        long,
+        visible_aliases = ["addr_mon_min_cs_act_ns"],
+        value_name = "NS",
+        value_parser = parse_addr_mon_min_cs_act_ns,
+        conflicts_with_all = ["no_config"],
+        help = HELP_MIN_CS_ACT,
+        long_help = LONG_HELP_MIN_CS_ACT
+    )]
+    pub addr_mon_min_cs_act_ns: Option<u16>,
 }
 
 impl CommandTrait for FirmwareBuildArgs {

@@ -17,7 +17,7 @@ use log::{debug, error, info, trace, warn};
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
-use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE, num_excess_addr_lines};
+use onerom_gen::{ChipConfig, CsLogic, MAX_IMAGE_SIZE, num_excess_addr_lines, socket_pin_offset};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -267,18 +267,24 @@ impl PinCache {
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
-/// Socket-pin offset to add to chip physical pin numbers.
+/// Socket-pin offset to add to chip physical pin numbers, from
+/// [`socket_pin_offset`].
 ///
-/// A 24-pin chip in a 28-pin board socket is mechanically shifted by 2
-/// positions (chip pin 1 aligns with socket pin 3, because pin 12 of a
-/// 24-pin chip occupies the same physical slot as pin 14 of the 28-pin
-/// socket, both being ground).  All other board/chip combinations are 1:1.
+/// # Panics
+/// Panics where the chip doesn't sit wholly in the board's socket, for example
+/// a chip on fly-leads.
 fn socket_offset(chip_type: ChipType, board: Board) -> u8 {
-    if chip_type.chip_pins() == 24 && board.chip_pins() == 28 {
-        2
-    } else {
-        0
-    }
+    socket_pin_offset(chip_type.chip_pins(), board.chip_pins())
+        .and_then(|offset| u8::try_from(offset).ok())
+        .unwrap_or_else(|| {
+            panic!(
+                "chip {} ({} pins) doesn't fit board {}'s {} pin socket",
+                chip_type.name(),
+                chip_type.chip_pins(),
+                board.name(),
+                board.chip_pins(),
+            )
+        })
 }
 
 /// Return all GPIOs mapped to `socket_pin` in the board's socket pin map.

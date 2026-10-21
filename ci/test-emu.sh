@@ -453,6 +453,8 @@ test_family_24_part_2() {
     run_boards run_config_api onerom-config/test/24-multi-2316.json $FIRE_24_LATE_BOARDS
     run_boards run_config_api onerom-config/test/24-multi-27xx.json $FIRE_24_LATE_BOARDS
     test_24_config_api onerom-config/pet-4-40-50.json
+    test_24_config_api onerom-config/test/24-min-cs-act.json
+    run_boards run_config_api onerom-config/test/24-min-cs-act-multi.json $FIRE_24_LATE_BOARDS
 
     # Reserved pins.  The firmware does not read a reserved image select pin,
     # which the tester drives as closed, and the plugin API reports both
@@ -477,6 +479,8 @@ test_family_24_part_2() {
     test_24_config_monitor onerom-config/test/24-random-23xx.json
     test_24_config_monitor onerom-config/test/24-random-27xx.json
     test_24_config_monitor onerom-config/test/24-random-28xx.json
+    test_24_config_monitor onerom-config/test/24-min-cs-act.json
+    run_boards run_config_monitor onerom-config/test/24-min-cs-act-multi.json $FIRE_24_LATE_BOARDS
 
     # USB plugin.  The whole suite runs on every board of the family, and the
     # logical ROM scenarios run again for each config.  Board coverage is not a
@@ -548,6 +552,8 @@ test_family_28_part_2() {
     run_boards run_config_api onerom-config/test/28-multi-27xxx.json $FIRE_28_LATE_BOARDS
     test_28_config_api onerom-config/28-c64c.json
     test_28_config_api onerom-config/28-1541ii.json
+    test_28_config_api onerom-config/test/28-min-cs-act.json
+    run_boards run_config_api onerom-config/test/28-min-cs-act-hm7641.json $FIRE_28_LATE_BOARDS
 
     # X1 and X2 are each wired to two GPIOs on these boards, and a banked set
     # reads them through one.  The plugin API reports the other as in use too.
@@ -568,6 +574,9 @@ test_family_28_part_2() {
     test_28_config_monitor onerom-config/test/28-random-23qlxxx.json
     test_28_config_monitor onerom-config/test/28-random-27xxx.json
     test_28_config_monitor onerom-config/test/28-random-28xxx.json
+    test_28_config_monitor onerom-config/test/28-min-cs-act.json
+    # fire-28-a and b can't serve an HM7641 with every chip select monitored.
+    run_boards run_config_monitor onerom-config/test/28-min-cs-act-hm7641.json $FIRE_28_LATE_BOARDS
 
     # RBCP board coverage — see the note in test_family_40.
     test_28_usb_all onerom-config/test/28-random-27xxx.json
@@ -615,12 +624,20 @@ test_family_32() {
     test_config_api fire-32-b onerom-config/test/32-random-extra.json
     test_config_api fire-32-c onerom-config/test/32-random-23c1001.json
     test_config_api fire-32-c onerom-config/test/32-random-extra.json
+    test_config_api fire-32-a onerom-config/test/32-min-cs-act-hm7641.json
+    test_config_api fire-32-b onerom-config/test/32-min-cs-act.json
+    test_config_api fire-32-c onerom-config/test/32-min-cs-act.json
 
     # Address-monitor tests — see the note in test_family_40 for what these
     # cover.
     test_32_config_monitor onerom-config/test/32-random-27c080.json
     test_32_config_monitor onerom-config/test/32-random-27c301.json
     test_32_config_monitor onerom-config/test/32-random-27c0x0.json
+    # fire-32-a can't serve a 23C1001, and fire-32-b and c can't serve an
+    # HM7641.
+    test_config_monitor fire-32-a onerom-config/test/32-min-cs-act-hm7641.json
+    test_config_monitor fire-32-b onerom-config/test/32-min-cs-act.json
+    test_config_monitor fire-32-c onerom-config/test/32-min-cs-act.json
 
     # RBCP board coverage — see the note in test_family_40.
     test_32_usb_all onerom-config/test/32-random-27c080.json
@@ -654,6 +671,7 @@ test_family_40() {
     test_40_config_api onerom-config/test/40-random.json
     test_40_config_api onerom-config/test/40-random-force-16bit.json
     test_40_config_api onerom-config/test/40-random-27c200.json
+    test_40_config_api onerom-config/test/40-min-cs-act.json
 
     # Address-monitor tests: drive the address-monitor plugin API (capture
     # pipeline and knock detection, the foundation an RBCP plugin builds on)
@@ -665,6 +683,7 @@ test_family_40() {
     # (see monitor_skip_reason).
     test_40_config_monitor onerom-config/test/40-random.json
     test_40_config_monitor onerom-config/test/40-random-force-16bit.json
+    test_40_config_monitor onerom-config/test/40-min-cs-act.json
 
     # RBCP tests: drive the host-control plugin's own C source over emulated ROM
     # bus cycles as a host would, asserting what the RBCP specification

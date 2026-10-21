@@ -212,3 +212,35 @@ async fn reserved_pins() {
         println!();
     }
 }
+
+/// The address monitor's minimum CS-active time set globally and for slot 0.
+/// The scan, device and chip lines don't come from running the code.
+#[tokio::test]
+async fn addr_mon_min_cs_act_ns() {
+    use crate::inspect::{addr_mon_min_cs_act_line, override_lines, slot_count_line, slot_heading};
+    use crate::test_board::image_addr_mon;
+    use onerom_cli::image::parse_firmware;
+
+    let slots = [Some(300), None];
+    let image = parse_firmware(&image_addr_mon(Some(140), &slots)).await;
+    let metadata = image
+        .as_schema()
+        .and_then(|onerom| onerom.metadata())
+        .unwrap();
+    println!("$ onerom scan --slots");
+    println!("~ Scanning ... ");
+    println!("~ found 1 connected device:");
+    println!("~ ---");
+    println!("~ One ROM Fire 24 F - Firmware: v0.8.1 State: Running Serial: DE3F9C232F655B6B");
+    println!("  {}", slot_count_line(slots.len(), Some(0), false));
+    if let Some(line) = addr_mon_min_cs_act_line(&image) {
+        println!("  {line}");
+    }
+    for (n, slot) in metadata.rom_slots.iter().enumerate() {
+        println!("  {}", slot_heading(n, n == 0, false));
+        for line in slot.firmware_overrides.iter().flat_map(override_lines) {
+            println!("{line}");
+        }
+        println!("~     Chip 0: 2364");
+    }
+}

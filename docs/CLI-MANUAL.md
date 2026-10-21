@@ -56,7 +56,7 @@ This One ROM CLI manual covers:
 - **Problems** — symptoms and their fixes, including [recovering a bricked One
   ROM](#recovering-a-bricked-one-rom).
 
-> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.5.1<!--[/]-->. Board,
+> This manual documents the `onerom` CLI as of release v<!--[version:cli]-->0.6.0<!--[/]-->. Board,
 > chip and plugin lists shown in examples are illustrative — the set your build
 > supports may differ. Run `onerom --version` to check your version, and
 > `onerom board list` / `onerom chips` for the definitive lists your build knows
@@ -851,6 +851,7 @@ These are rejected with `--no-config`.
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
 | `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is given. Optional boolean; bare flag means `true`. |
 | `--reserve-pin <PIN>` (aliases `--reserved-pin`, `--reserved_pins`) | Reserve a pin for another use, for example a pin connected to a host's reset line. Repeat for each reserved pin. Requires firmware v0.8.0 or later. See [Reserve a pin for another use](#reserve-a-pin-for-another-use). |
+| `--addr-mon-min-cs-act-ns <NS>` (alias `--addr_mon_min_cs_act_ns`) | Set the minimum time in nanoseconds chip select has to stay active for the address monitor to capture an access. A pulse slightly longer than this may also not be captured. Unset, a pulse of <!--[const:ADDR_MON_UNSET_MIN_CS_ACT_NS]-->40<!--[/]-->ns or less isn't captured, or <!--[const:ADDR_MON_UNSET_MIN_CS_ACT_NS_ALG_CS_2]-->20<!--[/]-->ns or less for a 23QL384, at the default CPU frequency of <!--[const:TARGET_FREQ_MHZ]-->150<!--[/]-->MHz. With a lower value, shorter pulses can be captured. The value may need tuning for a particular host. A per-slot value overrides it. The range is 0 to <!--[gen:MAX_ADDR_MON_MIN_CS_ACT_NS]-->2540<!--[/]-->. Requires firmware v0.8.1 or later. |
 
 ### Board, version and output
 
@@ -2381,7 +2382,8 @@ The configuration options mirror [`program`](#program): `--config` (`-j`),
 `--slot`, `--plugin`, `--config-name`, `--config-description`, `--save-config`,
 `--no-config`, and the per-device overrides `--instance-name`,
 `--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot`,
-`--reserve-pin` (all rejected with `--no-config`). Build-specific options:
+`--reserve-pin`, `--addr-mon-min-cs-act-ns` (all rejected with `--no-config`).
+Build-specific options:
 
 | Option | Description |
 |---|---|
@@ -2419,7 +2421,7 @@ Slots: 2
     ROM 0: 2364 basic.bin
 ```
 
-From v0.7.0, release firmware is board agnostics firmware. It runs on any board
+From v0.7.0, release firmware is board-agnostic firmware. It runs on all boards
 and doesn't contain ROM images. Inspecting it prints
 `Board:    any (base firmware)`.
 
@@ -2890,7 +2892,7 @@ file=<path_or_url>,type=<romtype>[,label=<text>]
     [,size-handling=<handling>][,format=<binary|ihex|srec>][,load-address=<addr>]
     [,transform=<list>]
     [,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>]
-    [,standby=<bool>]
+    [,standby=<bool>][,addr-mon-min-cs-act-ns=<ns>]
 ```
 
 | Key | Values / notes |
@@ -2908,6 +2910,7 @@ file=<path_or_url>,type=<romtype>[,label=<text>]
 | `led` | Boolean: `on`/`off`, `true`/`false`, `1`/`0`. |
 | `force-16-bit` (alias `force_16bit`) | Boolean (as above). Valid only on 40-pin boards. |
 | `standby` | Boolean (as above). Controls whether One ROM boots into standby mode when this slot is selected. In standby mode One ROM doesn't serve the ROM. With `standby=on`, `file` is optional. Requires firmware v0.8.0 or later. See [`control standby`](#control-standby). |
+| `addr-mon-min-cs-act-ns` (alias `addr_mon_min_cs_act_ns`) | A number of nanoseconds without a unit. Overrides [`--addr-mon-min-cs-act-ns`](#program) when this slot is selected. Requires firmware v0.8.1 or later. |
 
 Examples:
 
@@ -2924,6 +2927,7 @@ Examples:
 --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high,led=off
 --slot file=amiga.bin,type=27C400,force-16-bit=true
 --slot type=2364,cs1=active-low,standby=on
+--slot file=kernal.bin,type=2364,cs1=active-low,addr-mon-min-cs-act-ns=140
 --slot file=undersized.bin,type=2732,size=pad
 --slot file=oversized.bin,type=2732,size=trunc
 --slot file=halfsized.bin,type=2732,size=dup

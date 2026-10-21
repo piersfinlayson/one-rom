@@ -48,20 +48,14 @@ use core::fmt;
 
 use onerom_config::chip::ChipType as OraChipType;
 use onerom_config::fw::FirmwareVersion;
+pub use onerom_gen::plugin::PluginVersion;
+use onerom_gen::plugin::{PLUGIN_SITE_BASE, file_stem, official_plugin, plugin_chip_type};
 use onerom_gen::{Builder, ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, SizeHandling};
 use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, PluginError};
 use crate::fetch::LocalFetch;
-
-/// Base URL for plugin manifests and binaries on the images server.
-///
-/// All plugin resources live beneath this path: the top-level catalogue at
-/// `{BASE}/plugins.json`, a plugin's releases at
-/// `{BASE}/{type}/{name}/releases.json`, and a release's binary at
-/// `{BASE}/{type}/{name}/{version_path}/{filename}`.
-const PLUGIN_SITE_BASE: &str = "https://images.onerom.org/plugins";
 
 /// Canonical plugin-type string for system plugins, as used in JSON configs.
 const PLUGIN_TYPE_SYSTEM: &str = "system_plugin";
@@ -71,86 +65,6 @@ const PLUGIN_TYPE_USER: &str = "user_plugin";
 
 /// Recognised `key=value` options in a named plugin specification.
 const PLUGIN_SPEC_KEYS: &[&str] = &["version"];
-
-// ============================================================
-// PluginVersion
-// ============================================================
-
-/// A plugin version with four components, as recorded in a plugin binary
-/// header.
-///
-/// Manifest version strings use three components (for example `0.1.0`); when a
-/// three-component string is parsed the `build` component defaults to 0. The
-/// [`Display`](fmt::Display) implementation omits a zero `build` so it
-/// round-trips such strings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-pub struct PluginVersion {
-    /// Major version component.
-    pub major: u16,
-    /// Minor version component.
-    pub minor: u16,
-    /// Patch version component.
-    pub patch: u16,
-    /// Build version component; 0 when absent from a three-component string.
-    pub build: u16,
-}
-
-impl PluginVersion {
-    /// Construct a version from its four components.
-    pub fn new(major: u16, minor: u16, patch: u16, build: u16) -> Self {
-        Self {
-            major,
-            minor,
-            patch,
-            build,
-        }
-    }
-
-    /// Parse a version from a dotted string of three or four components.
-    ///
-    /// Returns `None` if the string does not have three or four dot-separated
-    /// numeric components. A three-component string yields a `build` of 0.
-    pub fn try_from_str(s: &str) -> Option<Self> {
-        let parts: Vec<&str> = s.split('.').collect();
-        match parts.as_slice() {
-            [major, minor, patch] => Some(Self {
-                major: major.parse().ok()?,
-                minor: minor.parse().ok()?,
-                patch: patch.parse().ok()?,
-                build: 0,
-            }),
-            [major, minor, patch, build] => Some(Self {
-                major: major.parse().ok()?,
-                minor: minor.parse().ok()?,
-                patch: patch.parse().ok()?,
-                build: build.parse().ok()?,
-            }),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for PluginVersion {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.build == 0 {
-            write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
-        } else {
-            write!(
-                f,
-                "{}.{}.{}.{}",
-                self.major, self.minor, self.patch, self.build
-            )
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for PluginVersion {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(d)?;
-        PluginVersion::try_from_str(&s)
-            .ok_or_else(|| serde::de::Error::custom(alloc::format!("invalid plugin version '{s}'")))
-    }
-}
 
 // ============================================================
 // PluginType
@@ -170,14 +84,10 @@ pub enum PluginType {
 }
 
 impl PluginType {
-    /// Parse a plugin type from either its short form (`system`, `user`) or its
-    /// canonical config form (`system_plugin`, `user_plugin`).
+    /// Parse a plugin type from its short form or its config form. See
+    /// [`plugin_chip_type`].
     pub fn try_from_str(s: &str) -> Option<Self> {
-        match s {
-            "system" | "system_plugin" => Some(PluginType::System),
-            "user" | "user_plugin" => Some(PluginType::User),
-            _ => None,
-        }
+        plugin_type_of_chip(plugin_chip_type(s)?)
     }
 
     /// The canonical type string used in One ROM JSON configurations.
@@ -656,35 +566,16 @@ pub(crate) fn binary_url(plugin_type: PluginType, name: &str, release: &Release)
 /// Recover the `(type, name, version)` encoded in an official plugin image
 /// source, or `None` if the source is not an official plugin URL.
 ///
-/// This is the inverse of [`binary_url`], which builds
-/// `{PLUGIN_SITE_BASE}/{type}/{name}/{version_path}/{filename}`. A source is
-/// official only if it begins with [`PLUGIN_SITE_BASE`] and has exactly those
-/// four segments, the type is recognised, and the version path parses. Anything
-/// else - a local build path, a non-official URL - yields `None` and is treated
-/// as a user/sideloaded plugin by the caller.
+/// This is the inverse of [`binary_url`]. Anything [`official_plugin`]
+/// doesn't match - a local build path, a non-official URL - yields `None` and
+/// is treated as a user/sideloaded plugin by the caller.
 fn official_plugin_from_source(source: &str) -> Option<(PluginType, String, PluginVersion)> {
-    let rest = source.strip_prefix(PLUGIN_SITE_BASE)?.strip_prefix('/')?;
-
-    // Exactly {type}/{name}/{version_path}/{filename}.
-    let mut segs = rest.split('/');
-    let type_str = segs.next()?;
-    let name = segs.next()?;
-    let version_path = segs.next()?;
-    let _filename = segs.next()?;
-    if segs.next().is_some() {
-        return None; // more than four segments: not our URL shape
-    }
-
-    if name.is_empty() {
-        return None;
-    }
-
-    let plugin_type = PluginType::try_from_str(type_str)?;
-    // The version directory is `v0.1.2`; drop the leading `v` before parsing.
-    let version =
-        PluginVersion::try_from_str(version_path.strip_prefix('v').unwrap_or(version_path))?;
-
-    Some((plugin_type, name.to_string(), version))
+    let official = official_plugin(source)?;
+    Some((
+        PluginType::try_from_str(official.plugin_type)?,
+        official.name.to_string(),
+        PluginVersion::try_from_str(official.version)?,
+    ))
 }
 
 /// The URL of the top-level plugins catalogue (`plugins.json`).
@@ -844,7 +735,7 @@ impl PluginDisplay {
             PluginOrigin::Manifest { plugin, .. } => {
                 plugin.display_name.as_deref().unwrap_or(&plugin.name)
             }
-            PluginOrigin::Local { source } => file_stem_str(source),
+            PluginOrigin::Local { source } => file_stem(source),
         }
     }
 }
@@ -1529,30 +1420,11 @@ async fn resolve_file<F: LocalFetch>(
 
     Ok(ResolvedPlugin {
         plugin_type: verification.plugin_type,
-        name: file_stem(path),
+        name: file_stem(path).to_string(),
         version: verification.version,
         size: verification.size,
         source: ResolvedSource::File { path: path.into() },
     })
-}
-
-/// The final path segment of `path` with any extension removed, borrowed from
-/// `path`.
-///
-/// A leading-dot name (for example `.bin`) is returned whole rather than
-/// becoming empty.
-fn file_stem_str(path: &str) -> &str {
-    let last = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    match last.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => stem,
-        _ => last,
-    }
-}
-
-/// Extract a plugin name from a file path or URL: the final path segment with
-/// any extension removed.
-fn file_stem(path: &str) -> String {
-    file_stem_str(path).to_string()
 }
 
 // ------------------------------------------------------------
@@ -1876,31 +1748,6 @@ mod tests {
 
     fn sha_of(data: &[u8]) -> String {
         sha256_hex(data)
-    }
-
-    // --- PluginVersion ----------------------------------------------------
-
-    #[test]
-    fn plugin_version_parses_three_and_four_components() {
-        assert_eq!(PluginVersion::try_from_str("0.1.2"), Some(pv(0, 1, 2)));
-        assert_eq!(
-            PluginVersion::try_from_str("1.2.3.4"),
-            Some(PluginVersion::new(1, 2, 3, 4))
-        );
-        assert_eq!(PluginVersion::try_from_str("1.2"), None);
-        assert_eq!(PluginVersion::try_from_str("1.2.x"), None);
-    }
-
-    #[test]
-    fn plugin_version_display_omits_zero_build() {
-        assert_eq!(pv(0, 1, 2).to_string(), "0.1.2");
-        assert_eq!(PluginVersion::new(0, 1, 2, 5).to_string(), "0.1.2.5");
-    }
-
-    #[test]
-    fn plugin_version_orders_correctly() {
-        assert!(pv(0, 1, 0) < pv(0, 2, 0));
-        assert!(pv(1, 0, 0) > pv(0, 9, 9));
     }
 
     // --- PluginType -------------------------------------------------------
@@ -2256,7 +2103,7 @@ mod tests {
         assert!(matches!(user.chips[0].size_handling, SizeHandling::None));
     }
 
-    // --- URL building / file_stem ----------------------------------------
+    // --- URL building -----------------------------------------------------
 
     #[test]
     fn urls_are_built_from_type_name_and_release() {
@@ -2277,16 +2124,6 @@ mod tests {
             plugins_manifest_url(),
             "https://images.onerom.org/plugins/plugins.json"
         );
-    }
-
-    #[test]
-    fn file_stem_strips_directory_and_extension() {
-        assert_eq!(file_stem("/tmp/foo.bin"), "foo");
-        assert_eq!(file_stem("https://x/y/rgb.bin"), "rgb");
-        assert_eq!(file_stem("plain"), "plain");
-        assert_eq!(file_stem("a\\b\\c.rom"), "c");
-        // Leading-dot names keep their name rather than becoming empty.
-        assert_eq!(file_stem(".bin"), ".bin");
     }
 
     // --- ResolvedPlugin ---------------------------------------------------
@@ -2351,48 +2188,9 @@ mod tests {
     }
 
     #[test]
-    fn official_source_rejects_non_official_and_malformed() {
-        // Local build path (the shape seen on test firmware).
+    fn official_source_rejects_a_local_path() {
         assert_eq!(
             official_plugin_from_source("../../plugins/system/usb/build/usb_system_plugin.bin"),
-            None
-        );
-        // Wrong host.
-        assert_eq!(
-            official_plugin_from_source("https://example.com/plugins/system/usb/v0.1.2/plugin.bin"),
-            None
-        );
-        // Too few segments (missing filename).
-        assert_eq!(
-            official_plugin_from_source("https://images.onerom.org/plugins/system/usb/v0.1.2"),
-            None
-        );
-        // Too many segments.
-        assert_eq!(
-            official_plugin_from_source(
-                "https://images.onerom.org/plugins/system/usb/v0.1.2/sub/plugin.bin"
-            ),
-            None
-        );
-        // Unrecognised type.
-        assert_eq!(
-            official_plugin_from_source(
-                "https://images.onerom.org/plugins/pio/usb/v0.1.2/plugin.bin"
-            ),
-            None
-        );
-        // Unparseable version.
-        assert_eq!(
-            official_plugin_from_source(
-                "https://images.onerom.org/plugins/system/usb/vX/plugin.bin"
-            ),
-            None
-        );
-        // Empty name.
-        assert_eq!(
-            official_plugin_from_source(
-                "https://images.onerom.org/plugins/system//v0.1.2/plugin.bin"
-            ),
             None
         );
     }

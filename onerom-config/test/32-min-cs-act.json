@@ -1,0 +1,54 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "32-min-cs-act",
+    "description": "Address monitor minimum CS-active time test with slot values alone",
+    "categories": [
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "27C301 with its own minimum",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "27C301"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "addr_mon_min_cs_act_ns": 200
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "23C1001 with its own minimum at 300MHz",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "23C1001",
+                    "cs1": "ignore",
+                    "cs2": "active_high"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "300MHz",
+                    "overclock": true,
+                    "addr_mon_min_cs_act_ns": 330
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "27C301 without a minimum",
+                    "file": "images/test/rand_128KB.rom",
+                    "type": "27C301"
+                }
+            ]
+        }
+    ]
+}

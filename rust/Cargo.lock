@@ -1865,6 +1865,7 @@ checksum = "0688c2a7f92e427f44895cd63841bff7b29f8d7a1648b9e7e07a4a365b2e1257"
 name = "doc-gen"
 version = "0.1.0"
 dependencies = [
+ "onerom-gen",
  "onerom-metadata",
  "tempfile",
  "toml",
@@ -4856,7 +4857,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-cli"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "built",
@@ -6621,6 +6622,7 @@ name = "schema-gen"
 version = "0.1.10"
 dependencies = [
  "onerom-gen",
+ "onerom-metadata",
  "schemars",
  "serde",
  "serde_json",

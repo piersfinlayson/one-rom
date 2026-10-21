@@ -121,6 +121,9 @@ fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<
             .map_err(|e| Error::Other(format!("Failed to serialize reserved pins: {e}")))?;
         obj.insert("reserved_pins".to_string(), pins);
     }
+    if let Some(v) = global_config.addr_mon_min_cs_act_ns {
+        obj.insert("addr_mon_min_cs_act_ns".to_string(), v.into());
+    }
 
     serde_json::to_string(&value)
         .map_err(|e| Error::Other(format!("Failed to re-serialize config JSON: {e}")))
@@ -585,6 +588,7 @@ pub async fn cmd_build(
             disable_swd: args.disable_swd,
             turbo_boot: args.turbo_boot,
             reserved_pins: args.reserve_pin.clone(),
+            addr_mon_min_cs_act_ns: args.addr_mon_min_cs_act_ns,
         })
     };
     let config_json = resolve_config_json(
@@ -967,6 +971,9 @@ fn schema_summary(
     if let Some(line) = crate::inspect::reserved_pins_line(parsed) {
         lines.push(format!("  {line}"));
     }
+    if let Some(line) = crate::inspect::addr_mon_min_cs_act_line(parsed) {
+        lines.push(format!("  {line}"));
+    }
     for slot in &rom_slots {
         // A ROM slot always has a user_index.
         let user_index = slot.user_index.unwrap_or(0);
@@ -1302,7 +1309,8 @@ fn parse_plugin_specs(raw: &[String]) -> Result<Vec<PluginSpec>, Error> {
 mod tests {
     use super::*;
     use crate::test_board::{
-        IMAGE_27C400, base_firmware, image_file, in_turn, move_slot, original_image, shows,
+        IMAGE_27C400, base_firmware, image_addr_mon, image_file, in_turn, move_slot,
+        original_image, shows,
     };
     use onerom_metadata::FLASH_CS1_BASE_ADDR;
 
@@ -1541,6 +1549,14 @@ mod tests {
         assert!(shows(&lines, &["RP2350"]), "{lines:#?}");
     }
 
+    #[tokio::test]
+    async fn a_summary_contains_the_global_addr_mon_min_cs_act_ns() {
+        let file = image_addr_mon(Some(140), &[None]);
+        let image = parse_firmware(&file).await;
+        let lines = firmware_summary(false, &image, &file).await.unwrap();
+        assert!(shows(&lines, &["140ns"]), "{lines:#?}");
+    }
+
     // -- reserved_pins -----------------------------------------------------
 
     fn build_args(words: &[&str]) -> args::firmware::FirmwareBuildArgs {
@@ -1632,6 +1648,7 @@ mod tests {
             disable_swd: None,
             turbo_boot: None,
             reserved_pins,
+            addr_mon_min_cs_act_ns: None,
         };
         let reserved = |json: String| -> serde_json::Value {
             serde_json::from_str::<serde_json::Value>(&json).unwrap()["reserved_pins"].clone()
@@ -1717,6 +1734,143 @@ mod tests {
             image.reserved_pins(),
             Some(ReservedPins::from_bits(0b1000, 0b10))
         );
+    }
+
+    // -- addr_mon_min_cs_act_ns --------------------------------------------
+
+    #[test]
+    fn addr_mon_min_cs_act_ns_parses_under_either_name() {
+        use onerom_gen::MAX_ADDR_MON_MIN_CS_ACT_NS;
+        for (name, ns) in [
+            ("--addr-mon-min-cs-act-ns", 0),
+            ("--addr_mon_min_cs_act_ns", MAX_ADDR_MON_MIN_CS_ACT_NS),
+        ] {
+            let value = ns.to_string();
+            let args = build_args(&[
+                "onerom",
+                "firmware",
+                "build",
+                "--board",
+                "fire-24-f",
+                "--slot",
+                "file=a.bin,type=2364,cs1=active-low",
+                name,
+                &value,
+            ]);
+            assert_eq!(args.addr_mon_min_cs_act_ns, Some(ns), "{name} {value}");
+        }
+    }
+
+    /// A value above the maximum or with a unit fails, and the option
+    /// conflicts with `--no-config`.
+    #[test]
+    fn addr_mon_min_cs_act_ns_fails_where_it_cant_apply() {
+        use clap::Parser;
+        use onerom_gen::MAX_ADDR_MON_MIN_CS_ACT_NS;
+        let above = (MAX_ADDR_MON_MIN_CS_ACT_NS + 1).to_string();
+        let line = |value: &str| {
+            [
+                "onerom",
+                "firmware",
+                "build",
+                "--board",
+                "fire-24-f",
+                "--slot",
+                "file=a.bin,type=2364,cs1=active-low",
+                "--addr-mon-min-cs-act-ns",
+            ]
+            .into_iter()
+            .chain([value])
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        };
+        let no_config = [
+            "onerom",
+            "firmware",
+            "build",
+            "--board",
+            "fire-24-f",
+            "--no-config",
+            "--addr-mon-min-cs-act-ns",
+            "140",
+        ]
+        .map(str::to_string)
+        .to_vec();
+        for words in [line(&above), line("140ns"), no_config] {
+            assert!(
+                crate::args::Cli::try_parse_from(&words).is_err(),
+                "{words:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn addr_mon_min_cs_act_ns_replaces_the_configs_value() {
+        let json = r#"{ "version": 1, "description": "d", "addr_mon_min_cs_act_ns": 140, "chip_sets": [] }"#;
+        let global = |addr_mon_min_cs_act_ns: Option<u16>| GlobalConfig {
+            config_name: None,
+            config_description: None,
+            instance_name: None,
+            serial_override: None,
+            boot_logging: None,
+            disable_swd: None,
+            turbo_boot: None,
+            reserved_pins: Vec::new(),
+            addr_mon_min_cs_act_ns,
+        };
+        let value = |json: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&json).unwrap()["addr_mon_min_cs_act_ns"]
+                .clone()
+        };
+
+        let replaced = apply_global_overrides(json.to_string(), &global(Some(300))).unwrap();
+        assert_eq!(value(replaced), serde_json::json!(300));
+        let kept = apply_global_overrides(json.to_string(), &global(None)).unwrap();
+        assert_eq!(value(kept), serde_json::json!(140));
+    }
+
+    /// The option and a per-slot value reach the image, in the metadata's
+    /// units.
+    #[tokio::test]
+    async fn addr_mon_min_cs_act_ns_reaches_the_image() {
+        use crate::test_board::{IMAGE_2364, base_firmware_patch};
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.bin");
+        let rom = dir.path().join("0.bin");
+        let out = dir.path().join("out.bin");
+        std::fs::write(&base, base_firmware_patch(8, 1)).unwrap();
+        std::fs::write(&rom, vec![0; IMAGE_2364]).unwrap();
+        let slot = format!(
+            "file={},type=2364,cs1=active-low,addr-mon-min-cs-act-ns=300",
+            rom.display()
+        );
+
+        let args = build_args(&[
+            "onerom",
+            "firmware",
+            "build",
+            "--board",
+            "fire-24-f",
+            "--slot",
+            &slot,
+            "--base-firmware",
+            base.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--addr-mon-min-cs-act-ns",
+            "140",
+        ]);
+        cmd_build(&options(), &args).await.unwrap();
+
+        let image = onerom_cli::image::parse_firmware(&std::fs::read(&out).unwrap()).await;
+        let metadata = image
+            .as_schema()
+            .and_then(|onerom| onerom.metadata())
+            .unwrap();
+        assert_eq!(metadata.addr_mon_min_cs_act, 14);
+        let overrides = metadata.rom_slots[0].firmware_overrides.as_ref().unwrap();
+        assert_eq!(overrides.addr_mon_min_cs_act, 30);
     }
 
     // -- config URL --------------------------------------------------------

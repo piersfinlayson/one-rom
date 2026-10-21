@@ -10,7 +10,9 @@ use super::{command_of, failed};
 use crate::args::Commands;
 use crate::args::firmware::FirmwareCommands;
 use crate::firmware::cmd_build;
-use crate::test_board::{IMAGE_27C400, IMAGE_2364, base_firmware, config_27c400, config_2364};
+use crate::test_board::{
+    IMAGE_27C400, IMAGE_2364, base_firmware, base_firmware_patch, config_27c400, config_2364,
+};
 
 /// The files a `firmware build` line refers to, in a temporary directory:
 /// - `base.bin`, base firmware
@@ -393,5 +395,129 @@ async fn a_plugin_by_name_that_isnt_published() {
     );
     println!(r#"~ sets.json has {{ "type": "system_plugin", "plugin": "usbb" }}"#);
     let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// Edits sets.json with `edit`.
+fn edit_config(files: &Files, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = files.dir.path().join("sets.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    edit(&mut config);
+    std::fs::write(&path, config.to_string()).unwrap();
+}
+
+/// Base firmware for v0.8.1 and a config of one 2364 chip set.
+fn files_for_0_8_1() -> Files {
+    let files = Files::with_2364(8, &["single"], &[]);
+    std::fs::write(files.dir.path().join("base.bin"), base_firmware_patch(8, 1)).unwrap();
+    files
+}
+
+#[tokio::test]
+async fn a_global_addr_mon_min_cs_act_ns_above_the_maximum() {
+    let files = files_for_0_8_1();
+    edit_config(&files, |config| {
+        config["addr_mon_min_cs_act_ns"] = serde_json::json!(3000);
+    });
+    println!(r#"~ sets.json has "addr_mon_min_cs_act_ns": 3000"#);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
+async fn a_slot_addr_mon_min_cs_act_ns_above_the_maximum() {
+    let files = files_for_0_8_1();
+    edit_config(&files, |config| {
+        config["chip_sets"][0]["firmware_overrides"] =
+            serde_json::json!({ "fire": { "addr_mon_min_cs_act_ns": 3000 } });
+    });
+    println!(
+        r#"~ slot 0 in sets.json has "firmware_overrides": {{ "fire": {{ "addr_mon_min_cs_act_ns": 3000 }} }}"#
+    );
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
+async fn a_plugin_slot_with_addr_mon_min_cs_act_ns() {
+    let files = files_for_0_8_1();
+    let plugin = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../images/test/stub-system-plugin.bin"
+    );
+    add_plugin(
+        &files,
+        serde_json::json!({ "type": "system_plugin", "file": plugin }),
+    );
+    edit_config(&files, |config| {
+        config["chip_sets"][0]["firmware_overrides"] =
+            serde_json::json!({ "fire": { "addr_mon_min_cs_act_ns": 140 } });
+    });
+    println!(r#"~ sets.json has {{ "type": "system_plugin", "file": "stub-system-plugin.bin" }}"#);
+    println!(
+        r#"~ the stub-system-plugin plugin in sets.json has "firmware_overrides": {{ "fire": {{ "addr_mon_min_cs_act_ns": 140 }} }}"#
+    );
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+#[tokio::test]
+async fn addr_mon_min_cs_act_ns_with_firmware_before_0_8_1() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    edit_config(&files, |config| {
+        config["addr_mon_min_cs_act_ns"] = serde_json::json!(140);
+    });
+    println!(r#"~ sets.json has "addr_mon_min_cs_act_ns": 140"#);
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin";
+    build(line, &files).await;
+}
+
+/// The option over a config, then with a `--slot` setting the slot's own
+/// value.
+#[tokio::test]
+async fn addr_mon_min_cs_act_ns() {
+    let files = files_for_0_8_1();
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --addr-mon-min-cs-act-ns 140";
+    build(line, &files).await;
+    println!();
+    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --output out.bin --addr-mon-min-cs-act-ns 140 --slot file=0.bin,type=2364,cs1=active-low,addr-mon-min-cs-act-ns=300";
+    build(line, &files).await;
+}
+
+/// Each of these fails to parse:
+/// - a value above the maximum
+/// - a value with a unit
+/// - the option with `--no-config`
+#[test]
+fn an_addr_mon_min_cs_act_ns_that_fails_to_parse() {
+    super::refused_lines(&[
+        "onerom firmware build --board fire-24-f --config sets.json --addr-mon-min-cs-act-ns 2541",
+        "onerom firmware build --board fire-24-f --config sets.json --addr-mon-min-cs-act-ns 140ns",
+        "onerom firmware build --board fire-24-f --no-config --addr-mon-min-cs-act-ns 140",
+    ]);
+}
+
+/// The `--slot` key above the maximum.
+#[tokio::test]
+async fn an_addr_mon_min_cs_act_ns_slot_key_above_the_maximum() {
+    let files = files_for_0_8_1();
+    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --output out.bin --slot file=0.bin,type=2364,cs1=active-low,addr-mon-min-cs-act-ns=2541";
+    build(line, &files).await;
+}
+
+/// The `--slot` key with a unit.
+#[tokio::test]
+async fn an_addr_mon_min_cs_act_ns_slot_key_with_a_unit() {
+    let files = files_for_0_8_1();
+    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --output out.bin --slot file=0.bin,type=2364,cs1=active-low,addr-mon-min-cs-act-ns=140ns";
+    build(line, &files).await;
+}
+
+/// A `--slot` key that isn't recognised. The error contains the supported keys.
+#[tokio::test]
+async fn an_unrecognised_slot_key() {
+    let files = Files::with_2364(8, &["single"], &[]);
+    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --output out.bin --slot file=0.bin,type=2364,cs1=active-low,addr-mon-min-cs-act=140";
     build(line, &files).await;
 }

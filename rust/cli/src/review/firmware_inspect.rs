@@ -11,7 +11,7 @@ use super::{command_of, failed};
 use crate::args::Commands;
 use crate::args::firmware::FirmwareCommands;
 use crate::firmware::cmd_inspect;
-use crate::test_board::{base_firmware, image_2364, image_file, original_image};
+use crate::test_board::{base_firmware, image_2364, image_addr_mon, image_file, original_image};
 
 /// Prints the transcript of `line`, which starts `onerom firmware inspect` and
 /// refers to `image.bin`, with `image` in `image.bin`. There isn't a One ROM
@@ -69,6 +69,24 @@ async fn a_built_image() {
 #[tokio::test]
 async fn an_image_with_reserved_pins() {
     inspect_both(&image_2364(1, &["sel_c", "x1"])).await;
+}
+
+/// A fire-24-f image with v0.8.1 firmware whose address monitor minimum
+/// CS-active time is set globally and for slot 0.
+#[tokio::test]
+async fn an_image_with_addr_mon_min_cs_act_ns() {
+    inspect_both(&image_addr_mon(Some(140), &[Some(300), None])).await;
+}
+
+/// A fire-24-f image with v0.8.1 firmware whose address monitor minimum
+/// CS-active time is set globally to 141ns. It's stored rounded up to 150ns.
+#[tokio::test]
+async fn an_image_with_addr_mon_min_cs_act_ns_rounded_up() {
+    inspect(
+        "onerom firmware inspect --firmware image.bin",
+        &image_addr_mon(Some(141), &[None]),
+    )
+    .await;
 }
 
 /// v0.8.0 base firmware, which doesn't contain metadata.

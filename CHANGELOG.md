@@ -7,8 +7,11 @@ All notable changes between versions are documented in this file.
 Headline changes in this release:
 
 In detail:
+- RBCP can now be tuned for machines with glitchy chip select lines, using the `addr_mon_min_cs_act_ns` firmware override.
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
+- Fixes:
+  - A slot overclocked to 800MHz now attempts to run at 800Mhz not 150MHz.
 
 To publish:
 - Rust crates (in dependency order):
@@ -16,8 +19,9 @@ To publish:
   - onerom-gen 0.9.1
   - onerom-fw-parser 0.10.1
   - onerom-app 0.4.1
-  - onerom-cli 0.5.1
-- CLI bin 0.5.1
+  - onerom-cli 0.6.0
+- Config schema
+- CLI bin 0.6.0
 
 ## v0.8.0 - 2026-10-06
 

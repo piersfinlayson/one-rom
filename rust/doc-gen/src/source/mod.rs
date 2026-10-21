@@ -11,6 +11,7 @@
 //! be smuggled in under a false name.
 
 mod constants;
+mod generator;
 mod version;
 
 /// Resolve one name against one source.
@@ -21,9 +22,10 @@ mod version;
 pub fn resolve(source: &str, name: &str) -> Result<String, String> {
     match source {
         "const" => constants::resolve(name),
+        "gen" => generator::resolve(name),
         "version" => version::resolve(name),
         other => Err(format!(
-            "unknown source '{other}' - known sources are const and version"
+            "unknown source '{other}' - known sources are const, gen and version"
         )),
     }
 }
@@ -35,6 +37,10 @@ mod tests {
     #[test]
     fn each_source_answers_for_its_own_names() {
         assert_eq!(resolve("const", "GPIO_MAX_HOLD_MS").unwrap(), "60000");
+        assert_eq!(
+            resolve("gen", "MAX_ADDR_MON_MIN_CS_ACT_NS").unwrap(),
+            onerom_gen::MAX_ADDR_MON_MIN_CS_ACT_NS.to_string()
+        );
         assert!(resolve("version", "cli").unwrap().starts_with('0'));
     }
 

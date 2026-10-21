@@ -248,3 +248,16 @@ fn a_reset_host_pin_the_board_uses() {
 fn help() {
     super::help(&["onerom", "program", "--help"]);
 }
+
+/// Each of these fails to parse:
+/// - a value above the maximum
+/// - a value with a unit
+/// - the option with `--no-config`
+#[test]
+fn an_addr_mon_min_cs_act_ns_that_fails_to_parse() {
+    super::refused_lines(&[
+        "onerom program --config sets.json --addr-mon-min-cs-act-ns 2541",
+        "onerom program --config sets.json --addr-mon-min-cs-act-ns 140ns",
+        "onerom program --no-config --addr-mon-min-cs-act-ns 140",
+    ]);
+}

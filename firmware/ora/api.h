@@ -1762,6 +1762,10 @@ typedef uint8_t (*ora_get_data_pin_nums_fn_t)(uint8_t *data_pins_out, uint8_t nu
  * internal knowledge of pin assignments to configure the PIO correctly for
  * the current hardware variant.
  *
+ * From firmware 0.8.1, a chip select pulse shorter than the config's
+ * addr_mon_min_cs_act_ns isn't captured.  A slightly longer one may not be
+ * captured either.
+ *
  * The ring buffer must be allocated by the caller, aligned to its own size
  * in bytes (i.e. aligned to 2^ring_size_log2 * sizeof(uint32_t) bytes), and
  * remain valid for the lifetime of the monitor. Each entry is a uint32_t

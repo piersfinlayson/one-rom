@@ -17,6 +17,7 @@ pub mod hexfile;
 pub mod ihex;
 pub mod image;
 pub mod meta;
+pub mod plugin;
 pub mod srec;
 pub mod transform;
 pub mod v1;
@@ -52,6 +53,7 @@ use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
 use onerom_config::hw::{Board, BoardSize};
 use onerom_config::pin::{Pin, ReservedPins};
+use onerom_metadata::{ADDR_MON_MIN_CS_ACT_NOT_SET, ADDR_MON_MIN_CS_ACT_UNIT_NS};
 pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
@@ -102,6 +104,16 @@ pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new
 ///
 /// A config that reserves pins fails to build for older firmware.
 pub const MIN_RESERVED_PINS_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
+
+/// The oldest firmware that supports [`Config::addr_mon_min_cs_act_ns`] and
+/// [`FireConfig::addr_mon_min_cs_act_ns`].
+///
+/// A config that sets either fails to build for older firmware.
+pub const MIN_ADDR_MON_MIN_CS_ACT_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 1, 0);
+
+/// The highest `addr_mon_min_cs_act_ns` a config can set.
+pub const MAX_ADDR_MON_MIN_CS_ACT_NS: u16 =
+    (ADDR_MON_MIN_CS_ACT_NOT_SET as u16 - 1) * ADDR_MON_MIN_CS_ACT_UNIT_NS as u16;
 
 const RESERVED_PINS_RULE: &str = "Only image select pins and X pins can be reserved.";
 
@@ -366,6 +378,19 @@ pub enum Error {
         slot: usize,
         /// The pin, as on the silkscreen.
         pin: String,
+    },
+    /// An `addr_mon_min_cs_act_ns` is above [`MAX_ADDR_MON_MIN_CS_ACT_NS`].
+    AddrMonMinCsActOutOfRange {
+        /// The slot's index among ROM slots, as numbered by `inspect slots`,
+        /// or `None` for the global key.
+        slot: Option<usize>,
+        /// The value.
+        ns: u16,
+    },
+    /// A plugin has its own `addr_mon_min_cs_act_ns`.
+    AddrMonMinCsActOnPlugin {
+        /// The plugin's name from the config, or else from its URL or file name.
+        plugin: String,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -678,6 +703,20 @@ impl core::fmt::Display for Error {
                 f,
                 "Slot {slot} uses reserved pin {pin}.\n  Do not reserve {pin} or remove slot {slot}."
             ),
+            Error::AddrMonMinCsActOutOfRange { slot, ns } => {
+                match slot {
+                    Some(slot) => write!(f, "Slot {slot}'s ")?,
+                    None => write!(f, "The global ")?,
+                }
+                write!(
+                    f,
+                    "addr_mon_min_cs_act_ns of {ns}ns is above the maximum of {MAX_ADDR_MON_MIN_CS_ACT_NS}ns."
+                )
+            }
+            Error::AddrMonMinCsActOnPlugin { plugin } => write!(
+                f,
+                "Cannot set addr_mon_min_cs_act_ns on the {plugin} plugin."
+            ),
         }
     }
 }
@@ -855,6 +894,20 @@ pub struct Config {
         deserialize_with = "deserialize_reserved_pins"
     )]
     pub reserved_pins: Vec<Pin>,
+
+    /// Minimum time in nanoseconds chip select has to stay active for the
+    /// address monitor to capture an access.  A pulse slightly longer than
+    /// this may also not be captured.  Unset, a pulse of 40ns or less isn't
+    /// captured, or 20ns or less for a 23QL384, at the default CPU frequency
+    /// of 150MHz.  With a lower value, shorter pulses can be captured.  The
+    /// value may need tuning for a particular host.  A per-slot value overrides
+    /// it.  Requires firmware v0.8.1 or later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(range(max = MAX_ADDR_MON_MIN_CS_ACT_NS))
+    )]
+    pub addr_mon_min_cs_act_ns: Option<u16>,
 }
 
 impl Config {
@@ -880,6 +933,7 @@ impl Config {
             swd_enabled: default_swd_enabled(),
             turbo_boot: default_turbo_boot(),
             reserved_pins: Vec::new(),
+            addr_mon_min_cs_act_ns: None,
         }
     }
 

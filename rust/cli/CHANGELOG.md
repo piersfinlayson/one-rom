@@ -1,9 +1,10 @@
 # CLI Changelog
 
-## v0.5.1 - unreleased
+## v0.6.0 - unreleased
 
 - Reword several error messages and `board` output.
 - `--config` on `program` and `firmware build` can be an http(s) URL.
+- Add the address monitor's minimum CS-active time to `program` and `firmware build` as `--addr-mon-min-cs-act-ns` and the `--slot` key `addr-mon-min-cs-act-ns`. `scan --slots` and `inspect slots` now display it, and `firmware inspect` displays the global value.
 
 ## v0.5.0 - 2026-10-06
 

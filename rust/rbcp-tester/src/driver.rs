@@ -165,7 +165,7 @@ pub const DEFAULT_STATUS_OK: u8 = 0xCC;
 /// so it only has to be larger than any legitimate response.
 const POLL_LIMIT: u32 = 512;
 
-/// Cycles from asserting CS to sampling the data pins.
+/// The fewest cycles from asserting CS to sampling the data pins.
 ///
 /// The serving pipeline is: the address state machine latches the GPIO word,
 /// the DMA reads SRAM at that offset, the data state machine drives the pins.
@@ -174,24 +174,21 @@ const POLL_LIMIT: u32 = 512;
 /// offset from the one this cycle is asking for.  Sample too early and the
 /// pins still carry that earlier byte.
 ///
-/// Measured minimum on fire-24-a / 2316: 10 cycles.  Twelve is used, matching
-/// `CYCLES_CS_TO_DATA_MULTI`, which the core tester already applies to the
-/// case where "the address is only sampled after CS goes active".
-///
-/// The core tester's single-set value of 6 is not wrong for what it tests: the
-/// firmware stores the image replicated across the chip-select encodings, so
-/// the early fetch returns the same byte and nothing is amiss.  They stop
-/// being the same byte the moment a test writes one offset and reads it back
-/// over the bus — which is exactly what RBCP's back-channel does.
+/// A read waits the longer of this and `runner::cs_to_data_cycles`, the core
+/// tester's figure for the chip and mode.  That figure allows for the earlier
+/// fetch and is the longer except for a 27C400 or 27C200 in byte mode.  Their
+/// chip selects are outside the address window, so the fetch in flight is
+/// already for the right offset.
 const CS_TO_DATA_CYCLES: u32 = 12;
 
 // The two constants below set the fastest bus timing the firmware can serve.
 
-/// Cycles CS is held active for one host read.
+/// Cycles CS is held active for one host read, where the served slot doesn't
+/// have a minimum CS-active time.
 ///
-/// The data takes 12 or 13 cycles depending on the chip, and CS stays active
-/// for the rest so the device's CS monitor sees it.
-const CS_ACTIVE_CYCLES: u32 = 17;
+/// CS stays active after the data is sampled so the device's CS monitor sees
+/// it.
+pub(crate) const CS_ACTIVE_CYCLES: u32 = 17;
 
 /// Cycles CS is inactive after the read, before the address moves on.
 ///
@@ -359,6 +356,8 @@ pub struct Bus<'a> {
     addr_lo: usize,
     addr_before_cs: u32,
     cs_to_data: u32,
+    /// Cycles CS is held active for one read.
+    cs_active: u32,
     /// Every read performed, for diagnostics when a scenario fails.
     pub reads: u64,
 }
@@ -371,6 +370,7 @@ impl<'a> Bus<'a> {
         chip_type: ChipType,
         unobserved: u8,
         mode: u8,
+        cs_active: u32,
     ) -> Self {
         let background = match cache.byte_n_gpio {
             Some(g) if mode != 0 => gpio::byte_n_mask(g, mode),
@@ -387,6 +387,7 @@ impl<'a> Bus<'a> {
             addr_lo: usize::from(word_mode && chip_type.bit_modes().contains(&8)),
             addr_before_cs: runner::addr_before_cs_cycles(chip_type),
             cs_to_data: CS_TO_DATA_CYCLES.max(runner::cs_to_data_cycles(chip_type, mode)),
+            cs_active,
             reads: 0,
         }
     }
@@ -467,7 +468,7 @@ impl<'a> Bus<'a> {
 
         // Hold CS for the rest of the window — see CS_ACTIVE_CYCLES.
         self.emu
-            .step_cycles(CS_ACTIVE_CYCLES.saturating_sub(self.cs_to_data));
+            .step_cycles(self.cs_active.saturating_sub(self.cs_to_data));
 
         self.emu.drive_gpios(settle.0, settle.1);
         self.emu.step_cycles(CYCLES_AFTER_READ);

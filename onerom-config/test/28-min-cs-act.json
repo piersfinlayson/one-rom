@@ -1,0 +1,74 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28-min-cs-act",
+    "description": "Address monitor minimum CS-active time test",
+    "categories": [
+    ],
+    "addr_mon_min_cs_act_ns": 100,
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "23QL384 with the global minimum",
+                    "file": "images/test/rand_48KB.rom",
+                    "type": "23QL384",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "23QL384 with its own minimum at 300MHz",
+                    "file": "images/test/rand_48KB.rom",
+                    "type": "23QL384",
+                    "cs1": "active_low"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "300MHz",
+                    "overclock": true,
+                    "addr_mon_min_cs_act_ns": 300
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "23QL512 with its own minimum at 400MHz",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23QL512",
+                    "cs1": "active_low"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "400MHz",
+                    "overclock": true,
+                    "addr_mon_min_cs_act_ns": 2540
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "23QL512 with its own minimum of 0",
+                    "file": "images/test/rand_64KB.rom",
+                    "type": "23QL512",
+                    "cs1": "active_low"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "addr_mon_min_cs_act_ns": 0
+                }
+            }
+        }
+    ]
+}

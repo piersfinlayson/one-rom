@@ -218,6 +218,15 @@ pub struct FireConfig {
     /// on, a ROM image is optional.  Requires firmware v0.8.0 or later.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standby: Option<bool>,
+
+    /// Overrides the global `addr_mon_min_cs_act_ns` when this slot is
+    /// selected.  Requires firmware v0.8.1 or later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(range(max = crate::MAX_ADDR_MON_MIN_CS_ACT_NS))
+    )]
+    pub addr_mon_min_cs_act_ns: Option<u16>,
 }
 
 fn is_true(v: &bool) -> bool {
@@ -237,6 +246,7 @@ impl Default for FireConfig {
             rom_dma_preload: true,
             force_16_bit: false,
             standby: None,
+            addr_mon_min_cs_act_ns: None,
         }
     }
 }
@@ -449,7 +459,7 @@ impl FireCpuFreq {
     pub const NONE: u16 = 0;
     pub const STOCK: u16 = 0xFFFF;
     pub const MIN_MHZ: u16 = 16;
-    pub const MAX_MHZ: u16 = 800;
+    pub const MAX_MHZ: u16 = onerom_metadata::RP235X_MAX_CONFIGURABLE_MHZ;
 
     pub fn none() -> Self {
         Self(Self::NONE)
@@ -480,7 +490,7 @@ impl FireCpuFreq {
     }
 
     pub fn stock_value() -> Self {
-        Self(150u16)
+        Self(onerom_metadata::RP235X_STOCK_CLOCK_SPEED_MHZ)
     }
 }
 

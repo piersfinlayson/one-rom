@@ -5,9 +5,30 @@
 //! Argument definitions for `onerom program`.
 
 use crate::args::CommandTrait;
+use crate::utils::parse_addr_mon_min_cs_act_ns;
 use clap::Args;
 use onerom_cli::pin::{Pin, parse_pin, parse_reserve_pin};
 use onerom_cli::usb::RebootArgs;
+
+// See the `const_str!` macro in this module's parent.
+pub(crate) const HELP_MIN_CS_ACT: &str = "Set the minimum time in nanoseconds chip select \
+     has to stay active for the address monitor to capture an access. A pulse \
+     slightly longer than this may also not be captured";
+
+pub(crate) const LONG_HELP_MIN_CS_ACT: &str = concat!(
+    "Set the minimum time in nanoseconds chip select has to stay active for the \
+     address monitor to capture an access. A pulse slightly longer than this may \
+     also not be captured.\n\n\
+     Unset, a pulse of ",
+    const_str!("ADDR_MON_UNSET_MIN_CS_ACT_NS"),
+    "ns or less isn't captured, or ",
+    const_str!("ADDR_MON_UNSET_MIN_CS_ACT_NS_ALG_CS_2"),
+    "ns or less for a 23QL384, at the default CPU frequency of ",
+    const_str!("TARGET_FREQ_MHZ"),
+    "MHz. With a lower value, shorter pulses can be captured. The value may need \
+     tuning for a particular host. A per-slot value overrides it.\n\n\
+     Requires firmware v0.8.1 or later."
+);
 
 const HELP_RESET_HOST: &str = "After programming, pulse this pin low to reset \
      the host system the One ROM is installed in, so it boots the ROM image just \
@@ -50,7 +71,7 @@ pub struct ProgramArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>][,addr-mon-min-cs-act-ns=<ns>]
     ///
     /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
     /// snake_case config spellings are also accepted.
@@ -75,6 +96,9 @@ pub struct ProgramArgs {
     /// standby=on boots One ROM into standby mode when this slot is selected.
     /// In standby mode One ROM doesn't serve the ROM. With standby=on, file is
     /// optional. Requires firmware v0.8.0 or later.
+    ///
+    /// addr-mon-min-cs-act-ns overrides --addr-mon-min-cs-act-ns when this slot
+    /// is selected. Requires firmware v0.8.1 or later.
     ///
     /// Examples:
     ///
@@ -198,7 +222,7 @@ pub struct ProgramArgs {
     /// Mutually exclusive with --config, --slot, and --firmware.
     #[arg(
         long,
-        conflicts_with_all = ["config_file", "slot", "firmware", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin"]
+        conflicts_with_all = ["config_file", "slot", "firmware", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin", "addr_mon_min_cs_act_ns"]
     )]
     pub no_config: bool,
 
@@ -325,6 +349,18 @@ pub struct ProgramArgs {
     /// Example: --reserve-pin sel_c --reserve-pin x1
     #[arg(long, visible_aliases = ["reserved-pin", "reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
     pub reserve_pin: Vec<Pin>,
+
+    // `help` and `long_help` rather than a doc comment: see HELP_MIN_CS_ACT.
+    #[arg(
+        long,
+        visible_aliases = ["addr_mon_min_cs_act_ns"],
+        value_name = "NS",
+        value_parser = parse_addr_mon_min_cs_act_ns,
+        conflicts_with_all = ["no_config"],
+        help = HELP_MIN_CS_ACT,
+        long_help = LONG_HELP_MIN_CS_ACT
+    )]
+    pub addr_mon_min_cs_act_ns: Option<u16>,
 }
 
 impl CommandTrait for ProgramArgs {

@@ -30,6 +30,23 @@ fire-32-b    onerom-config/test/32-random-23c1001.json
 fire-40-b    onerom-config/test/40-random.json
 fire-40-b    onerom-config/test/40-random-force-16bit.json
 
+# The address monitor's minimum CS-active time:
+#   - fire-24-a and fire-24-f put AlgCs1's lone select pin on opposite sides of
+#     its ignored pin
+#   - multi a monitor reading the first chip's select alone
+#   - 28-min-cs-act AlgCs2's counted arming loop
+#   - hm7641 the read shuffled through OSR
+#   - 32-min-cs-act slot values without a global value
+#   - 40-min-cs-act a 16-bit set and a global value rounded up
+fire-24-a    onerom-config/test/24-min-cs-act.json
+fire-24-f    onerom-config/test/24-min-cs-act.json
+fire-24-f    onerom-config/test/24-min-cs-act-multi.json
+fire-28-a    onerom-config/test/28-min-cs-act.json
+fire-28-c    onerom-config/test/28-min-cs-act-hm7641.json
+fire-32-a    onerom-config/test/32-min-cs-act-hm7641.json
+fire-32-b    onerom-config/test/32-min-cs-act.json
+fire-40-b    onerom-config/test/40-min-cs-act.json
+
 # One build with the logging options off.  A log category cannot be turned off
 # at runtime - ORA_ID_LOG_CATEGORY_ENABLED only reports - so this build is the
 # only thing that reaches the code that runs when one is.

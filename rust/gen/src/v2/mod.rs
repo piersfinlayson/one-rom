@@ -21,6 +21,7 @@
 // Removal of gpio_x * causes pioplugin compile problems
 
 pub(crate) mod addr_layout;
+pub(crate) mod addr_mon;
 pub(crate) mod alg_config;
 mod alg_cs;
 pub(crate) mod alg_preference;

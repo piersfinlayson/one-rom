@@ -4,6 +4,16 @@
     "description": "One ROM chip configuration format.\n\nUsed to indicate:\n- What ROM chips, RAM chips and any other devices to emulate\n- What ROM images to include\n- Any overrides for the firmware build-time setting",
     "type": "object",
     "properties": {
+        "addr_mon_min_cs_act_ns": {
+            "description": "Minimum time in nanoseconds chip select has to stay active for the\naddress monitor to capture an access.  A pulse slightly longer than\nthis may also not be captured.  Unset, a pulse of 40ns or less isn't\ncaptured, or 20ns or less for a 23QL384, at the default CPU frequency\nof 150MHz.  With a lower value, shorter pulses can be captured.  The\nvalue may need tuning for a particular host.  A per-slot value overrides\nit.  Requires firmware v0.8.1 or later.",
+            "type": [
+                "integer",
+                "null"
+            ],
+            "format": "uint16",
+            "maximum": 2540,
+            "minimum": 0
+        },
         "boot_logging": {
             "description": "Whether to enable One ROM firmware logging. The log can be read over\nUSB (if the USB plugin is installed) or RTT using a debug probe.",
             "type": "boolean",
@@ -572,6 +582,16 @@
             "description": "Fire configuration structure",
             "type": "object",
             "properties": {
+                "addr_mon_min_cs_act_ns": {
+                    "description": "Overrides the global `addr_mon_min_cs_act_ns` when this slot is\nselected.  Requires firmware v0.8.1 or later.",
+                    "type": [
+                        "integer",
+                        "null"
+                    ],
+                    "format": "uint16",
+                    "maximum": 2540,
+                    "minimum": 0
+                },
                 "cpu_freq": {
                     "description": "CPU frequency.  Only specific frequencies are supported",
                     "anyOf": [

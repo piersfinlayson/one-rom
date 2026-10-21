@@ -20,9 +20,9 @@
 //! * the address state machine free-runs, so the requirement depends on where
 //!   CS assertion lands in its loop.  A fixed-cadence pass only ever visits
 //!   some of those phases, and can sit below the real requirement for years
-//!   without failing — `CYCLES_CS_TO_DATA_MULTI` was 12 against a measured 13,
-//!   and inserting a single extra cycle before a multi-ROM pass turned it from
-//!   clean to ~16k failures.
+//!   without failing — `CYCLES_CS_TO_DATA_MULTI` was a cycle below the measured
+//!   requirement, and inserting a single extra cycle before a multi-ROM pass
+//!   turned it from clean to ~16k failures.
 //!
 //! At 150 MHz, one cycle ≈ 6.67 ns.  ns figures in comments are approximate.
 //! Raise a value if a measurement says to; do not lower one to make a pass go
@@ -41,10 +41,10 @@ pub const CYCLES_ADDR_BEFORE_CS: u32 = 6; // ~40 ns
 /// Covers the worst case, which is a chip whose selects the address state
 /// machine samples: asserting CS changes the SRAM index, so the fetch already
 /// in flight is discarded and the loop has to come round again.  Chips whose
-/// selects sit outside that window need only 7, but which case applies depends
+/// selects sit outside that window need only 8, but which case applies depends
 /// on the board's routing as much as the chip, so the pass uses the larger
 /// figure throughout rather than deciding per chip.
-pub const CYCLES_CS_TO_DATA: u32 = 13; // ~87 ns
+pub const CYCLES_CS_TO_DATA: u32 = 14; // ~93 ns
 
 /// CS-to-data delay for multi-ROM sets.
 ///
@@ -54,7 +54,7 @@ pub const CYCLES_CS_TO_DATA: u32 = 13; // ~87 ns
 /// to fall back on: the entry the stale fetch reaches belongs to a *different
 /// chip*, so a short margin here reads another ROM's data rather than the same
 /// byte from another copy.
-pub const CYCLES_CS_TO_DATA_MULTI: u32 = 13; // ~87 ns
+pub const CYCLES_CS_TO_DATA_MULTI: u32 = 14; // ~93 ns
 
 /// Cycles with CS deasserted between consecutive reads.
 pub const CYCLES_AFTER_READ: u32 = 6; // ~40 ns

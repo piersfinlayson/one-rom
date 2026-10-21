@@ -45,7 +45,8 @@ use doc_gen::{claims, documents, format, marker, repo_root, source};
 const USAGE: &str = "\
 One ROM documentation checker.
 
-  doc-gen                        check every document under docs/
+  doc-gen                        check every document under docs/, and
+                                 onerom-config/README.md
   doc-gen --check <path>         check one document, or a directory of them
 
 Paths are relative to the repository root.  Nothing is ever written.
@@ -55,7 +56,7 @@ are checked on every run, whatever path is named.
 ";
 
 /// Checked when no path is named.
-const DEFAULT_PATH: &str = "docs";
+const DEFAULT_PATHS: &[&str] = &["docs", "onerom-config/README.md"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -79,15 +80,21 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let path = repo_root().join(value("--check").unwrap_or_else(|| DEFAULT_PATH.to_string()));
-
-    let documents = match documents(&path) {
-        Ok(documents) => documents,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::FAILURE;
-        }
+    let paths = match value("--check") {
+        Some(path) => vec![path],
+        None => DEFAULT_PATHS.iter().map(|path| path.to_string()).collect(),
     };
+
+    let mut found = Vec::new();
+    for path in paths {
+        match documents(&repo_root().join(path)) {
+            Ok(documents) => found.extend(documents),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
 
     // Checked whatever path was named: a claim is two files in the tree
     // disagreeing, and it disagrees whoever asked.
@@ -100,7 +107,7 @@ fn main() -> ExitCode {
     let mut checked = 0;
     let mut spans = 0;
 
-    for document in documents {
+    for document in found {
         match check(&document) {
             Ok(found) => {
                 if found > 0 {

@@ -71,7 +71,8 @@ use onerom_config::pin::ReservedPins;
 use onerom_gen::{FlashChips, MIN_RESERVED_PINS_VERSION};
 use onerom_metadata::{
     FLASH_CS1_BASE_ADDR, MaybeKnown, OneromBoardSize, OneromRomInfo, OneromRomSlot, Pointer,
-    RomSlotType, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, metadata_generation_for,
+    RomSlotType, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, addr_mon_min_cs_act_to_ns,
+    metadata_generation_for,
 };
 
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
@@ -329,6 +330,12 @@ impl ParsedDevice {
         let first = metadata_generation_for(MIN_RESERVED_PINS_VERSION)?;
         (header.version >= first)
             .then(|| ReservedPins::from_bits(header.reserved_sel_pins, header.reserved_x_pins))
+    }
+
+    /// The global address monitor minimum CS-active time in nanoseconds.
+    /// `None` where it isn't set or the metadata wasn't read.
+    pub fn addr_mon_min_cs_act_ns(&self) -> Option<u16> {
+        addr_mon_min_cs_act_to_ns(self.as_schema()?.metadata()?.addr_mon_min_cs_act)
     }
 
     /// Iterates the device's ROM slots in flash order, classified and numbered.

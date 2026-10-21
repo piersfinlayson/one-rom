@@ -14,9 +14,9 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_SRAM};
 use onerom_metadata::{
-    BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg, GPIO_NONE, Generations,
-    MaybeKnown, ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET,
-    ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
+    ADDR_MON_MIN_CS_ACT_NOT_SET, BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg,
+    GPIO_NONE, Generations, MaybeKnown, ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC,
+    ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
     ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET,
     ONEROM_INFO_SIZE, ONEROM_RUNTIME_INFO_SYSTEM_PLUGIN_CONTEXT_OFFSET,
     ONEROM_RUNTIME_INFO_USER_PLUGIN_CONTEXT_OFFSET, OneromAlgAddrConfig, OneromAlgConfig,
@@ -414,6 +414,114 @@ fn an_override_state_older_metadata_cannot_carry_is_refused() {
 }
 
 // ===========================================================================
+// Address monitor minimum CS-active time
+// ===========================================================================
+
+/// The first release with the minimum CS-active time.
+const ADDR_MON_MIN_CS_ACT_RELEASE: FirmwareVersion = FirmwareVersion::new(0, 8, 1, 0);
+
+/// A header holding `header_value`, whose one slot holds `slot_value`.
+fn header_with_addr_mon(header_value: u8, slot_value: u8) -> OneromMetadataHeader {
+    let mut overrides = OneromFirmwareOverrides::default();
+    overrides.addr_mon_min_cs_act = slot_value;
+    let mut slot = make_slot(vec![make_rom_info("2364")]);
+    slot.firmware_overrides = Some(overrides);
+    let mut header = header_with_slots(vec![slot]);
+    header.addr_mon_min_cs_act = header_value;
+    header
+}
+
+/// Offset of the first slot's overrides in `buf`.
+fn first_overrides_off(buf: &[u8]) -> usize {
+    let slots_off = ptr_to_off(read_u32_le(buf, 32), METADATA_BASE);
+    ptr_to_off(read_u32_le(buf, slots_off + 20), METADATA_BASE)
+}
+
+#[test]
+fn addr_mon_min_cs_act_is_written_at_its_offsets() {
+    let header = header_with_addr_mon(14, 30);
+    let buf = do_serialize(&header);
+    assert_eq!(buf[38], 14);
+    assert_eq!(buf[first_overrides_off(&buf) + 25], 30);
+    assert_round_trips(&header);
+}
+
+/// 0 is a valid value.
+#[test]
+fn addr_mon_min_cs_act_of_0_reads_back_as_0() {
+    let parsed = round_trip(&header_with_addr_mon(0, 0));
+    assert_eq!(parsed.addr_mon_min_cs_act, 0);
+    let overrides = parsed.rom_slots[0].firmware_overrides.clone().unwrap();
+    assert_eq!(overrides.addr_mon_min_cs_act, 0);
+}
+
+#[test]
+fn addr_mon_min_cs_act_defaults_to_not_set() {
+    assert_eq!(
+        OneromMetadataHeader::default().addr_mon_min_cs_act,
+        ADDR_MON_MIN_CS_ACT_NOT_SET
+    );
+    assert_eq!(
+        OneromFirmwareOverrides::default().addr_mon_min_cs_act,
+        ADDR_MON_MIN_CS_ACT_NOT_SET
+    );
+}
+
+/// Generation 3 metadata doesn't hold either field, so whatever its bytes
+/// contain reads as not set.
+#[test]
+fn generation_3_metadata_reads_addr_mon_min_cs_act_as_not_set() {
+    let mut header = header_with_addr_mon(ADDR_MON_MIN_CS_ACT_NOT_SET, ADDR_MON_MIN_CS_ACT_NOT_SET);
+    header.version = 3;
+    let mut buf = do_serialize(&header);
+    let overrides_off = first_overrides_off(&buf);
+    buf[38] = 14;
+    buf[overrides_off + 25] = 30;
+
+    let view = DeviceMemoryView::new(&buf, METADATA_BASE);
+    let parsed = OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN)
+        .expect("parse failed");
+    assert_eq!(parsed.version, 3);
+    assert_eq!(parsed.addr_mon_min_cs_act, ADDR_MON_MIN_CS_ACT_NOT_SET);
+    let overrides = parsed.rom_slots[0].firmware_overrides.clone().unwrap();
+    assert_eq!(overrides.addr_mon_min_cs_act, ADDR_MON_MIN_CS_ACT_NOT_SET);
+}
+
+/// Metadata older than generation 4 has nowhere to put a value that is set.
+#[test]
+fn a_set_addr_mon_min_cs_act_fails_in_older_metadata() {
+    for (header_value, slot_value, field) in [
+        (
+            14,
+            ADDR_MON_MIN_CS_ACT_NOT_SET,
+            "onerom_metadata_header_t.addr_mon_min_cs_act",
+        ),
+        (
+            ADDR_MON_MIN_CS_ACT_NOT_SET,
+            30,
+            "onerom_firmware_overrides_t.addr_mon_min_cs_act",
+        ),
+    ] {
+        let mut header = header_with_addr_mon(header_value, slot_value);
+        header.version = 3;
+        let mut buf = vec![0u8; METADATA_SIZE];
+        assert_eq!(
+            serialize(&header, METADATA_BASE, &mut buf),
+            Err(SerializeError::FieldTooNew {
+                field,
+                minimum: ADDR_MON_MIN_CS_ACT_RELEASE,
+            }),
+        );
+    }
+
+    // With neither set, generation 3 metadata serializes.
+    let mut header = header_with_addr_mon(ADDR_MON_MIN_CS_ACT_NOT_SET, ADDR_MON_MIN_CS_ACT_NOT_SET);
+    header.version = 3;
+    let mut buf = vec![0u8; METADATA_SIZE];
+    assert!(serialize(&header, METADATA_BASE, &mut buf).is_ok());
+}
+
+// ===========================================================================
 // Structural byte checks (9–13)
 // ===========================================================================
 
@@ -429,7 +537,8 @@ fn an_override_state_older_metadata_cannot_carry_is_refused() {
 //  32..36  rom_slots ptr
 //  36      reserved_sel_pins u8
 //  37      reserved_x_pins u8
-//  38..256 reserved (218 bytes, must be 0xFF)
+//  38      addr_mon_min_cs_act u8
+//  39..256 reserved (217 bytes, must be 0xFF)
 //
 // OneromRomSlot layout (32 bytes, offsets relative to slot start):
 //   0..4   data (opaque_ptr, u32)
@@ -526,13 +635,16 @@ fn byte_check_object_dedup() {
     );
 }
 
-/// 12. The 218-byte reserved region in OneromMetadataHeader (offsets 38–255)
+/// 12. The 217-byte reserved region in OneromMetadataHeader (offsets 39–255)
 ///     is all 0xFF after serialization.
 #[test]
 fn byte_check_header_padding_is_ff() {
-    let buf = do_serialize(&minimal_header());
+    let mut header = minimal_header();
+    // Not 0xFF, so the check fails if the field lands in the padding.
+    header.addr_mon_min_cs_act = 0;
+    let buf = do_serialize(&header);
     #[allow(clippy::needless_range_loop)]
-    for offset in 38..256 {
+    for offset in 39..256 {
         assert_eq!(
             buf[offset], 0xFF,
             "header reserved byte at offset {offset} should be 0xFF, got 0x{:02X}",

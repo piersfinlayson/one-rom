@@ -12,6 +12,7 @@ use onerom_cli::{Device, DeviceState, Error, Firmware, LogLevel, Options};
 use onerom_cli::{LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::{Board, Model};
+use onerom_gen::MAX_ADDR_MON_MIN_CS_ACT_NS;
 
 /// The board types the CLI can act on, comma-separated.
 ///
@@ -238,6 +239,18 @@ pub fn parse_gpio_hold_ms(s: &str) -> Result<u32, String> {
     }
 
     Ok(value)
+}
+
+/// Parse a minimum CS-active time in nanoseconds, bounded by what a config can
+/// set.
+pub fn parse_addr_mon_min_cs_act_ns(s: &str) -> Result<u16, String> {
+    let value = parse_u32(s)
+        .map_err(|_| "Minimum CS-active time must be a number of nanoseconds".to_string())?;
+
+    u16::try_from(value)
+        .ok()
+        .filter(|&ns| ns <= MAX_ADDR_MON_MIN_CS_ACT_NS)
+        .ok_or_else(|| format!("Minimum CS-active time is at most {MAX_ADDR_MON_MIN_CS_ACT_NS}ns"))
 }
 
 /// The shortest period each repeating mode accepts, in milliseconds.
@@ -725,6 +738,25 @@ mod tests {
                 filename,
                 "{config}"
             );
+        }
+    }
+
+    /// A value that isn't a number and a value above the maximum fail with
+    /// different errors. Only the second contains the maximum.
+    #[test]
+    fn an_addr_mon_min_cs_act_ns_parses_up_to_the_maximum() {
+        let max = MAX_ADDR_MON_MIN_CS_ACT_NS;
+        assert_eq!(parse_addr_mon_min_cs_act_ns("0"), Ok(0));
+        assert_eq!(parse_addr_mon_min_cs_act_ns(&max.to_string()), Ok(max));
+
+        let max_ns = format!("{max}ns");
+        for value in ["-1", "140ns", ""] {
+            let err = parse_addr_mon_min_cs_act_ns(value).unwrap_err();
+            assert!(!err.contains(&max_ns), "{value}: {err}");
+        }
+        for value in [u32::from(max) + 1, 70000] {
+            let err = parse_addr_mon_min_cs_act_ns(&value.to_string()).unwrap_err();
+            assert!(err.contains(&max_ns), "{value}: {err}");
         }
     }
 }

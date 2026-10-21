@@ -32,6 +32,7 @@ use std::sync::{Mutex, PoisonError};
 use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::Board;
 use onerom_config::mcu::{Family, Variant as McuVariant};
+use onerom_fw_emulator::{Emulator, OraResult};
 use onerom_gen::{Builder, Config};
 use onerom_metadata::{
     DeviceMemoryView, Generations, GpioOverride, METADATA_BASE, MaybeKnown, OneromAlgAddrConfig,
@@ -106,6 +107,21 @@ fn is_plugin(slot_type: MaybeKnown<RomSlotType>) -> bool {
                 | RomSlotType::RomSlotTypePluginPio
         )
     )
+}
+
+/// The version the firmware reports, for [`build_header`].
+pub fn firmware_version(board: Board, log_enabled: bool) -> Result<FirmwareVersion, String> {
+    Emulator::set_logging(log_enabled);
+    Emulator::set_rp_variant(board.rp_variant());
+    Emulator::set_sel_image(0);
+    let emu = Emulator::boot();
+    let (r, version) = emu.get_device_version(64);
+    if r != OraResult::Ok {
+        return Err(format!("get_device_version returned {r:?}"));
+    }
+    let version = version.ok_or("get_device_version returned no string")?;
+    FirmwareVersion::try_from_str(version.strip_prefix('v').unwrap_or(&version))
+        .map_err(|e| format!("'{version}': {e}"))
 }
 
 /// Build the firmware metadata for `config` on `board` and parse it.

@@ -13,13 +13,13 @@ use crate::plugin::{PluginSpec, ResolvedPlugin, plugin_to_chip_set_config};
 use onerom_config::chip::{CHIP_TYPE_NAMES_PLUGINS, ChipFunction, ChipType, ControlLineType};
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::{Board, Model};
-use onerom_gen::MIN_SUPPORTED_FIRMWARE_VERSION_V2;
 use onerom_gen::compat::{check_chip_set_on_board, default_cs_config, supported_chips};
 use onerom_gen::{
     ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, Config, CsLogic, FileFormat, FireConfig,
     FireCpuFreq, FireVreg, FirmwareConfig, LedConfig, LoadAddress, SizeHandling, Transform,
     parse_transform_list, requires_half_select_cs1,
 };
+use onerom_gen::{MAX_ADDR_MON_MIN_CS_ACT_NS, MIN_SUPPORTED_FIRMWARE_VERSION_V2};
 
 const DEFAULT_CONFIG_DESCRIPTION: &str = "Created by the One ROM CLI";
 
@@ -33,6 +33,8 @@ pub struct GlobalConfig {
     pub turbo_boot: Option<bool>,
     /// Replaces the config's `reserved_pins` where not empty.
     pub reserved_pins: Vec<Pin>,
+    /// Replaces the config's `addr_mon_min_cs_act_ns` where set.
+    pub addr_mon_min_cs_act_ns: Option<u16>,
 }
 
 /// The result of checking whether any slot specifications require user
@@ -105,6 +107,7 @@ pub struct SlotSpec {
     pub led: Option<bool>,
     pub force_16bit: Option<bool>,
     pub standby: Option<bool>,
+    pub addr_mon_min_cs_act_ns: Option<u16>,
     pub format: Option<FileFormat>,
     pub load_address: Option<LoadAddress>,
     pub transform: Vec<Transform>,
@@ -273,6 +276,28 @@ fn parse_vreg(slot: &str, key: &str, value: &str) -> Result<FireVreg, Error> {
     })
 }
 
+fn parse_addr_mon_min_cs_act_ns(slot: &str, key: &str, value: &str) -> Result<u16, Error> {
+    let ns = value.parse::<u32>().map_err(|_| {
+        Error::InvalidArgument(
+            "--slot".to_string(),
+            format!(
+                "Invalid minimum CS-active time '{value}': expected format {key}=140\n    --slot '{slot}'"
+            ),
+        )
+    })?;
+    u16::try_from(ns)
+        .ok()
+        .filter(|&ns| ns <= MAX_ADDR_MON_MIN_CS_ACT_NS)
+        .ok_or_else(|| {
+            Error::InvalidArgument(
+                "--slot".to_string(),
+                format!(
+                    "Minimum CS-active time {ns}ns out of range (0-{MAX_ADDR_MON_MIN_CS_ACT_NS}ns)\n    --slot '{slot}'"
+                ),
+            )
+        })
+}
+
 /// The slot keys advertised when an unrecognised one is given.
 ///
 /// Spelled kebab-case, matching the CLI's own convention for argument names.
@@ -296,6 +321,7 @@ const SLOT_KEYS: &[&str] = &[
     "led",
     "force-16-bit",
     "standby",
+    "addr-mon-min-cs-act-ns",
     "format",
     "load-address",
     "transform",
@@ -316,6 +342,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
     let mut led = None;
     let mut force_16bit = None;
     let mut standby = None;
+    let mut addr_mon_min_cs_act_ns = None;
     let mut format = None;
     let mut load_address = None;
     let mut transform = Vec::new();
@@ -356,6 +383,9 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
                 force_16bit = Some(parse_bool(slot, key, value)?)
             }
             "standby" => standby = Some(parse_bool(slot, key, value)?),
+            "addr-mon-min-cs-act-ns" | "addr_mon_min_cs_act_ns" => {
+                addr_mon_min_cs_act_ns = Some(parse_addr_mon_min_cs_act_ns(slot, key, value)?)
+            }
             "format" => format = Some(parse_format(slot, value)?),
             "load_address" | "load-address" | "load_addr" => {
                 load_address = Some(parse_load_address(slot, value)?)
@@ -439,6 +469,7 @@ fn parse_slot(slot: &str, board: &Board) -> Result<SlotSpec, Error> {
         led,
         force_16bit,
         standby,
+        addr_mon_min_cs_act_ns,
         format,
         load_address,
         transform,
@@ -680,7 +711,8 @@ fn slot_to_firmware_overrides(slot: &SlotSpec) -> Option<FirmwareConfig> {
     let has_fire = slot.cpu_freq.is_some()
         || slot.vreg.is_some()
         || slot.force_16bit.is_some()
-        || slot.standby.is_some();
+        || slot.standby.is_some()
+        || slot.addr_mon_min_cs_act_ns.is_some();
     let has_led = slot.led.is_some();
 
     if !has_fire && !has_led {
@@ -694,6 +726,7 @@ fn slot_to_firmware_overrides(slot: &SlotSpec) -> Option<FirmwareConfig> {
         fire.vreg = slot.vreg.clone();
         fire.force_16_bit = slot.force_16bit.unwrap_or(false);
         fire.standby = slot.standby;
+        fire.addr_mon_min_cs_act_ns = slot.addr_mon_min_cs_act_ns;
         fire
     });
 
@@ -745,6 +778,7 @@ pub fn slots_to_config_json(
     config.swd_enabled = !global_config.is_some_and(|c| c.disable_swd.unwrap_or(false));
     config.turbo_boot = global_config.is_some_and(|c| c.turbo_boot.unwrap_or(false));
     config.reserved_pins = global_config.map_or(Vec::new(), |c| c.reserved_pins.clone());
+    config.addr_mon_min_cs_act_ns = global_config.and_then(|c| c.addr_mon_min_cs_act_ns);
 
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
 }
@@ -1283,6 +1317,76 @@ mod tests {
             ),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn slot_parses_addr_mon_min_cs_act_ns_under_either_key() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        for key in ["addr-mon-min-cs-act-ns", "addr_mon_min_cs_act_ns"] {
+            for ns in [0, MAX_ADDR_MON_MIN_CS_ACT_NS] {
+                let spec = format!("file=rom.bin,type=2364,cs1=active_low,{key}={ns}");
+                let slot = parse_slot(&spec, &board).unwrap();
+                assert_eq!(slot.addr_mon_min_cs_act_ns, Some(ns), "{spec}");
+                let fire = slot_to_firmware_overrides(&slot)
+                    .and_then(|overrides| overrides.fire)
+                    .expect("a Fire override");
+                assert_eq!(fire.addr_mon_min_cs_act_ns, Some(ns), "{spec}");
+            }
+        }
+    }
+
+    /// A value that isn't a number and a value above the maximum fail with
+    /// different errors. Only the second contains the maximum.
+    #[test]
+    fn an_invalid_addr_mon_min_cs_act_ns_fails_to_parse() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let error = |value: &str| {
+            let spec =
+                format!("file=rom.bin,type=2364,cs1=active_low,addr-mon-min-cs-act-ns={value}");
+            parse_slot(&spec, &board).unwrap_err().to_string()
+        };
+        let max = format!("{MAX_ADDR_MON_MIN_CS_ACT_NS}ns");
+        for value in ["-1", "140ns", "0x8c", ""] {
+            let err = error(value);
+            assert!(!err.contains(&max), "{value}: {err}");
+        }
+        for ns in [u32::from(MAX_ADDR_MON_MIN_CS_ACT_NS) + 1, 70000] {
+            let err = error(&ns.to_string());
+            assert!(err.contains(&format!("{ns}ns")), "{ns}: {err}");
+            assert!(err.contains(&max), "{ns}: {err}");
+        }
+    }
+
+    #[test]
+    fn addr_mon_min_cs_act_ns_reaches_the_config() {
+        let board = Board::try_from_str("fire-24-e").unwrap();
+        let slots = parse_slots(
+            &["file=rom.bin,type=2364,cs1=active_low,addr-mon-min-cs-act-ns=300".to_string()],
+            &board,
+        )
+        .unwrap();
+        let global = GlobalConfig {
+            config_name: None,
+            config_description: None,
+            instance_name: None,
+            serial_override: None,
+            boot_logging: None,
+            disable_swd: None,
+            turbo_boot: None,
+            reserved_pins: Vec::new(),
+            addr_mon_min_cs_act_ns: Some(140),
+        };
+
+        let json = slots_to_config_json(&[], &slots, Some(&global)).unwrap();
+        let config: Config = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(config.addr_mon_min_cs_act_ns, Some(140));
+        let fire = config.chip_sets[0]
+            .firmware_overrides
+            .as_ref()
+            .and_then(|overrides| overrides.fire.as_ref())
+            .expect("a Fire override");
+        assert_eq!(fire.addr_mon_min_cs_act_ns, Some(300));
     }
 
     #[test]

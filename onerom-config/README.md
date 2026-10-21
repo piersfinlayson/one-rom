@@ -58,7 +58,7 @@ The format is defined by [schema.json](schema.json), also published at https://i
 - Chip types, 24 to 40 pins and RAM, and the select lines each takes: [CHIP-TYPES.md](/docs/CHIP-TYPES.md).  27-series EPROMs need no select lines.
 - The older `rom_sets` and `roms` keys still parse.
 
-### Top-level keys
+### Global keys
 
 | Key | Meaning |
 | --- | --- |
@@ -72,6 +72,7 @@ The format is defined by [schema.json](schema.json), also published at https://i
 | `boot_logging` | Log boot over USB (with the USB plugin) or RTT. |
 | `swd_enabled` | `false` shuts SWD off as ROM serving starts, so debug-port reads cannot steal cycles from the serving DMAs.  BOOTSEL and PICOBOOT are unaffected. |
 | `reserved_pins` | Pins reserved for another use, for example `["sel_c", "x1"]`.  Only image select pins and X pins can be reserved.  Added in v0.8.0 and requires firmware v0.8.0 or later.  See [Reserve a pin for another use](/docs/CLI-MANUAL.md#reserve-a-pin-for-another-use). |
+| `addr_mon_min_cs_act_ns` | Minimum time in nanoseconds chip select has to stay active for the address monitor to capture an access.  A pulse slightly longer than this may also not be captured.  Unset, a pulse of <!--[const:ADDR_MON_UNSET_MIN_CS_ACT_NS]-->40<!--[/]-->ns or less isn't captured, or <!--[const:ADDR_MON_UNSET_MIN_CS_ACT_NS_ALG_CS_2]-->20<!--[/]-->ns or less for a 23QL384, at the default CPU frequency of <!--[const:TARGET_FREQ_MHZ]-->150<!--[/]-->MHz.  With a lower value, shorter pulses can be captured.  The value may need tuning for a particular host.  A per-slot value overrides it.  The range is 0 to <!--[gen:MAX_ADDR_MON_MIN_CS_ACT_NS]-->2540<!--[/]-->.  Requires firmware v0.8.1 or later. |
 
 ### Per-set keys
 
@@ -102,7 +103,7 @@ Windows paths take doubled backslashes (`"C:\\roms\\kernal.bin"`) or forward sla
 
 ## Firmware overrides
 
-Fire (RP2350) boards only.  Each set carries its own, and a set without one uses the firmware defaults.
+Fire (RP2350) boards only.  Each slot can have its own.  A setting a slot doesn't override comes from the global key where there is one, or else from the firmware default.
 
 | Key | Meaning |
 | --- | --- |
@@ -111,8 +112,9 @@ Fire (RP2350) boards only.  Each set carries its own, and a set without one uses
 | `fire.vreg` | Core voltage, e.g. `1.20V`.  Left out, the firmware picks a conservative value for the frequency. |
 | `fire.force_16_bit` | Combined 8/16 bit ROM types.  Ignores `/BYTE` and serves 16 bits always, which reads the address lines a third more often. |
 | `fire.standby` | Controls whether One ROM boots into standby mode when this slot is selected.  In standby mode One ROM doesn't serve the ROM.  When `true`, `file` is optional.  Requires firmware v0.8.0 or later. |
+| `fire.addr_mon_min_cs_act_ns` | Overrides the global `addr_mon_min_cs_act_ns` when this slot is selected.  Requires firmware v0.8.1 or later. |
 | `led.enabled` | `false` turns the status LED off while serving.  Limp mode still blinks it. |
-| `swd.swd_enabled` | As the top-level key, for this set. |
+| `swd.swd_enabled` | Overrides the global `swd_enabled` when this slot is selected. |
 
 ```json
 "firmware_overrides": {

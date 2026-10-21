@@ -124,11 +124,12 @@ void vbus_connect_handler(void) {
 }
 #endif // !TEST_BUILD
 
+#define XOSC_MHZ 12
+
 uint8_t calculate_pll_settings(
     rp235x_clock_config_t *config,
     uint8_t overclock
 ) {
-    const uint32_t XOSC_MHZ = 12;
     const uint8_t REFDIV = 1;
 
     (void)overclock;
@@ -214,7 +215,7 @@ void get_clock_config(rp235x_clock_config_t *config) {
     } else if (RUNTIME->fire_freq == FIRE_FREQ_STOCK) {
         // Use stock speed (150MHz) if requested
         config->sys_clock_freq_mhz = RP235X_STOCK_CLOCK_SPEED_MHZ;
-    } else if (RUNTIME->fire_freq < RP235X_MAX_CONFIGURABLE_MHZ) {
+    } else if (RUNTIME->fire_freq <= RP235X_MAX_CONFIGURABLE_MHZ) {
         config->sys_clock_freq_mhz = RUNTIME->fire_freq;
     } else {
         ERR("Freq too high %d/%dMHz - using default", RUNTIME->fire_freq, RP235X_MAX_CONFIGURABLE_MHZ);
@@ -237,6 +238,11 @@ void get_clock_config(rp235x_clock_config_t *config) {
         config,
         RUNTIME->overclock_enabled
     )) {
+        STATIC_ASSERT(
+            XOSC_MHZ * PLL_SYS_FBDIV
+                == TARGET_FREQ_MHZ * PLL_SYS_REFDIV * PLL_SYS_POSTDIV1 * PLL_SYS_POSTDIV2,
+            "The fallback PLL settings don't produce TARGET_FREQ_MHZ"
+        );
         ERR("No valid PLL - using CT %dMHz", TARGET_FREQ_MHZ);
         config->sys_clock_freq_mhz = TARGET_FREQ_MHZ;  
         config->pll_refdiv = PLL_SYS_REFDIV;

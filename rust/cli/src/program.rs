@@ -118,6 +118,7 @@ async fn build_and_assemble(
         disable_swd: args.disable_swd,
         turbo_boot: args.turbo_boot,
         reserved_pins: args.reserve_pin.clone(),
+        addr_mon_min_cs_act_ns: args.addr_mon_min_cs_act_ns,
     };
 
     let config_json = resolve_config_json(
@@ -626,6 +627,31 @@ mod tests {
             args.reserve_pin,
             [Pin::Gpio(8), Pin::Gpio(9), Pin::Gpio(10)]
         );
+    }
+
+    #[test]
+    fn addr_mon_min_cs_act_ns_is_checked_on_program() {
+        use clap::Parser;
+        use onerom_gen::MAX_ADDR_MON_MIN_CS_ACT_NS;
+        let parse = |value: &str| {
+            crate::args::Cli::try_parse_from([
+                "onerom",
+                "program",
+                "--slot",
+                "file=a.bin,type=2364,cs1=active-low",
+                "--addr_mon_min_cs_act_ns",
+                value,
+            ])
+        };
+        let max = MAX_ADDR_MON_MIN_CS_ACT_NS.to_string();
+        let crate::args::Commands::Program(args) = parse(&max).unwrap().command else {
+            panic!("not program");
+        };
+        assert_eq!(
+            args.addr_mon_min_cs_act_ns,
+            Some(MAX_ADDR_MON_MIN_CS_ACT_NS)
+        );
+        assert!(parse(&(MAX_ADDR_MON_MIN_CS_ACT_NS + 1).to_string()).is_err());
     }
 
     /// Firmware before 0.8.0 gets an M image whatever the One ROM's size.

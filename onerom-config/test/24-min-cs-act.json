@@ -1,0 +1,94 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24-min-cs-act",
+    "description": "Address monitor minimum CS-active time test",
+    "categories": [
+    ],
+    "addr_mon_min_cs_act_ns": 140,
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2364 with the global minimum",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2332 with its own minimum",
+                    "file": "images/test/rand_4KB.rom",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "active_high"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "addr_mon_min_cs_act_ns": 650
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2316 with the global minimum at 100MHz",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "100MHz"
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2316 with its own minimum at 200MHz",
+                    "file": "images/test/rand_2KB.rom",
+                    "type": "2316",
+                    "cs1": "active_low",
+                    "cs2": "active_low",
+                    "cs3": "active_high"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "200MHz",
+                    "overclock": true,
+                    "addr_mon_min_cs_act_ns": 400
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2364 with the global minimum at 800MHz",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "800MHz",
+                    "overclock": true
+                }
+            }
+        }
+    ]
+}

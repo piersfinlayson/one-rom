@@ -123,6 +123,8 @@ One ROM type works that way: the **23QL384**, on every board and in every CS con
 
 No other ROM type has a deselected range, so on all of them any address the ROM answers can carry command signalling.
 
+On a host with glitchy chip select lines, for example some C64s, the address monitor captures those pulses and RBCP's knock and protocol bytes can't be matched.  Setting `addr_mon_min_cs_act_ns` stops a pulse no longer than its value from being captured.  It requires **firmware v0.8.1** or later.
+
 ## Deviations from the RBCP specification
 
 This plugin implements the [RBCP specification](https://github.com/piersfinlayson/rom-bus-control-protocol).  Any differences from the spec are listed here.

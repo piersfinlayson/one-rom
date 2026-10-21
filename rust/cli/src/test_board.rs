@@ -147,6 +147,15 @@ pub fn base_firmware(minor: u16) -> Vec<u8> {
     image
 }
 
+/// [`base_firmware`] for v0.`minor`.`patch`.
+pub fn base_firmware_patch(minor: u16, patch: u16) -> Vec<u8> {
+    use onerom_metadata::{ONEROM_INFO_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET};
+    let mut image = base_firmware(minor);
+    let at = ONEROM_INFO_OFFSET as usize + ONEROM_INFO_PATCH_VERSION_OFFSET;
+    image[at..at + 2].copy_from_slice(&patch.to_le_bytes());
+    image
+}
+
 /// Flash holding a fire-24-e's v0.6.0 firmware header, the layout from before
 /// v0.7.0, without ROM sets. Its pin and extra info structures are zeros.
 pub fn original_image() -> Vec<u8> {
@@ -296,6 +305,45 @@ pub fn image_2364_sets(board: Board, sets: &[&str], reserved: &[&str]) -> Vec<u8
         FirmwareProperties::new(version, board, Variant::RP2350, ServeAlg::Default, false).unwrap();
     let (metadata, rom_data) = builder.build(props).unwrap();
     onerom_fw::assemble_firmware(base_firmware(8), Some(metadata), Some(rom_data)).unwrap()
+}
+
+/// An image for a fire-24-f with v0.8.1 firmware from [`base_firmware_patch`].
+/// It holds a single 2364 chip set for each of `slots`. `global` is the
+/// global `addr_mon_min_cs_act_ns` and each of `slots` is that set's own.
+pub fn image_addr_mon(global: Option<u16>, slots: &[Option<u16>]) -> Vec<u8> {
+    use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
+    use onerom_config::mcu::{Family, Variant};
+    use onerom_gen::{Builder, FileData};
+
+    let version = FirmwareVersion::new(0, 8, 1, 0);
+    let sets = vec!["single"; slots.len()];
+    let mut config: serde_json::Value =
+        serde_json::from_str(&config_2364(&sets, Path::new("rom"), &[])).unwrap();
+    if let Some(ns) = global {
+        config["addr_mon_min_cs_act_ns"] = json!(ns);
+    }
+    for (n, ns) in slots.iter().enumerate() {
+        if let Some(ns) = ns {
+            config["chip_sets"][n]["firmware_overrides"] =
+                json!({ "fire": { "addr_mon_min_cs_act_ns": ns } });
+        }
+    }
+    let mut builder = Builder::from_json(version, Family::Rp2350, &config.to_string()).unwrap();
+    for n in 0..slots.len() {
+        builder
+            .add_file(FileData::new(n, vec![n as u8; IMAGE_2364]))
+            .unwrap();
+    }
+    let props = FirmwareProperties::new(
+        version,
+        Board::Fire24F,
+        Variant::RP2350,
+        ServeAlg::Default,
+        false,
+    )
+    .unwrap();
+    let (metadata, rom_data) = builder.build(props).unwrap();
+    onerom_fw::assemble_firmware(base_firmware_patch(8, 1), Some(metadata), Some(rom_data)).unwrap()
 }
 
 /// `image`, an [`image_file`], with slot `slot`'s data pointer changed to

@@ -388,7 +388,14 @@ pub(crate) fn override_lines(overrides: &onerom_metadata::OneromFirmwareOverride
     if let Some(standby) = overrides.standby() {
         lines.push(format!("      Standby at boot: {standby}"));
     }
+    if let Some(ns) = overrides.addr_mon_min_cs_act_ns() {
+        lines.push(format!("      {}", addr_mon_min_cs_act_text(ns)));
+    }
     lines
+}
+
+fn addr_mon_min_cs_act_text(ns: u16) -> String {
+    format!("Address monitor minimum CS-active time: {ns}ns")
 }
 
 /// Print a device's slot configuration.
@@ -483,6 +490,9 @@ pub async fn output_slot_info(
     print!("{prefix}");
     println!("  {}", slot_count_line(rom_count, selected, standby));
     if let Some(line) = reserved_pins_line(parsed) {
+        println!("{prefix}  {line}");
+    }
+    if let Some(line) = addr_mon_min_cs_act_line(parsed) {
         println!("{prefix}  {line}");
     }
 
@@ -651,6 +661,12 @@ pub(crate) fn slot_heading(user_index: usize, selected: bool, standby: bool) -> 
 pub(crate) fn reserved_pins_line(parsed: &ParsedDevice) -> Option<String> {
     let reserved = parsed.reserved_pins()?;
     (!reserved.is_empty()).then(|| format!("Reserved pins: {reserved}"))
+}
+
+pub(crate) fn addr_mon_min_cs_act_line(parsed: &ParsedDevice) -> Option<String> {
+    parsed
+        .addr_mon_min_cs_act_ns()
+        .map(addr_mon_min_cs_act_text)
 }
 
 /// Print one plugin line (and, when verbose, its detail).
@@ -1790,6 +1806,30 @@ mod tests {
         assert_eq!(slot_heading(1, true, false), "Slot 1 (selected, active):");
         assert_eq!(slot_heading(1, true, true), "Slot 1 (selected, standby):");
         assert_eq!(slot_heading(2, false, true), "Slot 2:");
+    }
+
+    /// The global and per-slot values are displayed rounded up to the
+    /// metadata's units.
+    #[tokio::test]
+    async fn addr_mon_min_cs_act_ns_is_displayed_where_set() {
+        use crate::test_board::{holds, image_addr_mon, shows};
+        use onerom_cli::image::parse_firmware;
+
+        let parsed = parse_firmware(&image_addr_mon(Some(141), &[Some(300), None])).await;
+        let line = addr_mon_min_cs_act_line(&parsed).unwrap();
+        assert!(holds(&line, &["150ns"]), "{line}");
+        let slots = &parsed.as_schema().unwrap().metadata().unwrap().rom_slots;
+        let lines = |slot: usize| {
+            slots[slot]
+                .firmware_overrides
+                .as_ref()
+                .map_or(Vec::new(), override_lines)
+        };
+        assert!(shows(lines(0), &["300ns"]), "{:?}", lines(0));
+        assert!(lines(1).is_empty(), "{:?}", lines(1));
+
+        let unset = parse_firmware(&image_addr_mon(None, &[None])).await;
+        assert_eq!(addr_mon_min_cs_act_line(&unset), None);
     }
 
     /// Print every shape the table takes, for eyeballing:

@@ -455,7 +455,4 @@ typedef struct {
     fire_vreg_t vreg;
 } rp235x_clock_config_t;
 
-#define RP235X_STOCK_CLOCK_SPEED_MHZ 150
-#define RP235X_MAX_CONFIGURABLE_MHZ 800
-
 #endif // REG_RP235X_H

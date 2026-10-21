@@ -19,6 +19,7 @@ use onerom_metadata::{
 use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
 use crate::v2::addr_layout::AddrLayout;
+use crate::v2::addr_mon;
 use crate::v2::cs_data_layout::CsDataLayout;
 use crate::v2::firmware_config::{
     build_firmware_config, build_firmware_overrides, build_override_states,
@@ -193,6 +194,8 @@ impl Builder {
                 minimum: MIN_RESERVED_PINS_VERSION,
             });
         }
+
+        addr_mon::check_config(version, &config)?;
 
         for overrides in config
             .chip_sets
@@ -413,6 +416,8 @@ impl Builder {
 
     /// Check that the config can be built
     pub fn build_validation(&self, props: &FirmwareProperties) -> Result<()> {
+        // Also checked in from_json, which a deserialized builder skips.
+        addr_mon::check_config(self.version, &self.config)?;
         check_plugins_set(&self.config)?;
         check_all_files_loaded(&self.files, self.total_file_count())?;
         check_all_licenses_validated(&self.licenses)?;
@@ -710,6 +715,7 @@ impl Builder {
         header.rom_slots = rom_slots;
         header.reserved_sel_pins = reserved.select_bits();
         header.reserved_x_pins = reserved.x_bits();
+        header.addr_mon_min_cs_act = addr_mon::metadata_value(self.config.addr_mon_min_cs_act_ns);
 
         let mut metadata_buf = alloc::vec![0u8; METADATA_SIZE];
         serialize(&header, METADATA_BASE, &mut metadata_buf)?;
