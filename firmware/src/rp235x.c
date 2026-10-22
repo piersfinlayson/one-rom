@@ -485,13 +485,23 @@ void setup_timer0(void) {
     TICKS_TIMER0_CTRL |= TICKS_CTRL_ENABLE;
 }
 
+void usb_controller_out_of_reset(void) {
+    RESET_RESET &= ~RESET_USBCTRL;
+    while (!(RESET_DONE & RESET_USBCTRL)) {}
+}
+
+// RESET_DONE isn't set until clk_usb runs.  USB DPRAM is accessible once the
+// reset bit is clear.
+void usb_controller_reset_and_release(void) {
+    RESET_RESET |= RESET_USBCTRL;
+    RESET_RESET &= ~RESET_USBCTRL;
+}
+
 void setup_usb_controller(void) {
     // Route USB clock to PLL_USB
     CLOCK_CLK_USB_CTRL = CLOCK_USB_CTRL_ENABLE | CLOCK_USB_CTRL_AUXSRC_PLL_USB;
 
-    // Release USB controller from reset
-    RESET_RESET &= ~RESET_USBCTRL;
-    while (!(RESET_DONE & RESET_USBCTRL)) {}
+    usb_controller_out_of_reset();
 }
 
 void setup_usb_pll(void) {
@@ -800,8 +810,9 @@ void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats) {
 }
 
 #if !defined(TEST_BUILD)
-// Enters bootloader mode.
-void enter_bootloader(void) {
+// Schedules a reboot through the bootrom after delay_ms, into BOOTSEL mode or
+// the normal boot.  Returns 1 if the reboot is scheduled.
+uint8_t rom_reboot(uint8_t bootloader, uint32_t delay_ms) {
     // Look up the reboot function from ROM
     typedef int (*reboot_fn_t)(uint32_t flags, uint32_t delay_ms, uint32_t p0, uint32_t p1);
     typedef void *(*rom_table_lookup_fn)(uint32_t code, uint32_t mask);
@@ -817,28 +828,38 @@ void enter_bootloader(void) {
     reboot_fn_t reboot = (reboot_fn_t)rom_table_lookup(reboot_code, 0x0004);
 
     if (reboot == NULL) {
-        ERR("Unable to find reboot function in ROM - cannot enter bootloader");
-        return;
+        ERR("Unable to find reboot function in ROM - cannot reboot");
+        return 0;
     }
 
-    // Reboot into BOOTSEL mode with status LED as activity indicator (active low)
-    uint32_t flags = 0x0100 | 0x0002;   // No return on success | BOOTSEL mode
-    uint32_t ms_delay = 10; // 10ms delay before reboot, needs to be non-zero
+    uint32_t flags = 0;
     uint32_t p0 = 0;
     uint32_t p1 = 0;
 
-    // There is a bug in the Pico SDK and RP2350 datasheet defining p0 and p1
-    // for reboot() when using REBOOT_TYPE_BOOTSEL (0x0002).  p0 and p1 have
-    // been transposed.  p1 is the status LED pin, p0 the flags.  We don't want
-    // to enable the status LED, because it looks too much like One ROM is
-    // ready to serve bytes.  Hence we leave it disabled.  This makes it light
-    // up dimly, just like during initial power-on.
-    // 
-    // However, we do want to explicitly disable mass storage mode, so we set
-    // bit 0 of p0 (not p1!).  If you want mass storage mode, jump BOOTSEL to
-    // GND when plugging in.
-    p0 |= 0x01;     // Disable mass storage mode
-    reboot(flags, ms_delay, p0, p1);
+    if (bootloader) {
+        flags |= 0x0002;        // BOOTSEL mode
+
+        // There is a bug in the Pico SDK and RP2350 datasheet defining p0 and p1
+        // for reboot() when using REBOOT_TYPE_BOOTSEL (0x0002).  p0 and p1 have
+        // been transposed.  p1 is the status LED pin, p0 the flags.  We don't want
+        // to enable the status LED, because it looks too much like One ROM is
+        // ready to serve bytes.  Hence we leave it disabled.  This makes it light
+        // up dimly, just like during initial power-on.
+        // 
+        // However, we do want to explicitly disable mass storage mode, so we set
+        // bit 0 of p0 (not p1!).  If you want mass storage mode, jump BOOTSEL to
+        // GND when plugging in.
+        p0 |= 0x01;     // Disable mass storage mode
+    }
+
+    return reboot(flags, delay_ms, p0, p1) == 0;
+}
+
+// Enters bootloader mode.
+void enter_bootloader(void) {
+    if (rom_reboot(1, 10)) {
+        while (1);
+    }
 }
 
 // Reads OTP row `row` with ECC.  clk_ref must be 25MHz or less while OTP is

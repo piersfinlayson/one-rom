@@ -47,39 +47,11 @@
 //! "is able to accept", so a write of more than that must fail, and nothing
 //! else touches this pipe to make the value stale.
 
-use onerom_fw_emulator::ffi;
-
 use crate::driver::{Bus, CmdFailure, HDR_SIZE, Session, control, group, pipes};
 use crate::{Ctx, Outcome};
 
 /// Payload bytes PIPE_WRITE carries at most, and so the largest valid count.
 const MAX_PAYLOAD: u8 = 4;
-
-/// API identifiers withheld from the plugin for the scenarios that need them.
-///
-/// A pipe is one of the firmware's log channels, and the calls that reach them
-/// arrived in firmware later than this plugin's minimum — so the plugin degrades
-/// where they are absent, and the emulator, which implements the whole API,
-/// cannot reach that path unless they are taken away.  Consulted by
-/// [`crate::suites::withheld_api`] before the plugin starts, which is when a
-/// plugin resolves its pointers.
-pub static WITHHELD_API: &[(&str, &[u32])] = &[
-    (
-        "conformance.pipes.no_pipes_without_the_log_calls",
-        &[
-            ffi::api_id_t_ORA_ID_LOG_OPEN_WRITE,
-            ffi::api_id_t_ORA_ID_LOG_WRITE,
-            ffi::api_id_t_ORA_ID_LOG_QUERY,
-        ],
-    ),
-    (
-        "conformance.pipes.one_pipe_without_the_read_calls",
-        &[
-            ffi::api_id_t_ORA_ID_LOG_OPEN_READ,
-            ffi::api_id_t_ORA_ID_LOG_READ,
-        ],
-    ),
-];
 
 /// Response data section both query commands need, in bytes.
 const REQUIRED_DATA_SIZE: u32 = 8;
@@ -278,37 +250,6 @@ pub fn get_pipe_info_rejects_pipe_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome
                 )
             })?;
     }
-
-    Ok(Outcome::Pass)
-}
-
-/// Without the firmware's log calls the device exposes no pipes.
-///
-/// A pipe is one of the firmware's log channels, so a plugin running on firmware
-/// with no log API has nothing to expose.  The protocol already provides for
-/// that — a count of zero — so the group goes quiet rather than the plugin
-/// refusing to run, and "all other commands in this group return failure on such
-/// a device".
-///
-/// Reached by withholding the three log calls the plugin uses; see
-/// [`WITHHELD_API`].  The count being zero is the sentinel that the withholding
-/// took effect, since the refusals below are what a device with no pipes does
-/// anyway.
-pub fn no_pipes_without_the_log_calls(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let s = ctx.session();
-    bus.enter_cmd_resp(&s)
-        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
-
-    let count = pipe_count(bus, &s)?;
-    if count != 0 {
-        return Err(format!(
-            "the device reports {count} pipe(s) with the firmware's log calls withheld; a pipe \
-             is a log channel, and without those calls there is none to reach"
-        ));
-    }
-
-    bus.expect_rejected(&s, group::PIPES, pipes::GET_PIPE_INFO, &[0])?;
-    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_WRITE, &[b'x', 0, 0, 0, 0, 1])?;
 
     Ok(Outcome::Pass)
 }
@@ -1000,30 +941,6 @@ pub fn pipe_read_needs_room_for_its_answer(bus: &mut Bus, ctx: &Ctx) -> Result<O
             r.data
         ));
     }
-
-    Ok(Outcome::Pass)
-}
-
-/// Firmware with the write calls but not the read calls has one pipe.
-///
-/// Without `ora_log_open_read` and `ora_log_read` the plugin reports only
-/// pipe 0.  PIPE_READ is refused.  PIPE_WRITE still works.
-pub fn one_pipe_without_the_read_calls(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let s = ctx.session();
-    bus.enter_cmd_resp(&s)
-        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
-
-    let count = pipe_count(bus, &s)?;
-    if count != 1 {
-        return Err(format!(
-            "the device reports {count} pipe(s) with the firmware's read calls withheld, want 1"
-        ));
-    }
-
-    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, 0])?;
-    bus.expect_rejected(&s, group::PIPES, pipes::PIPE_READ, &[4, 1])?;
-    bus.issue_cmd(&s, group::PIPES, pipes::PIPE_WRITE, &[b'x', 0, 0, 0, 0, 1])
-        .map_err(|e| format!("PIPE_WRITE with the read calls withheld: {e}"))?;
 
     Ok(Outcome::Pass)
 }

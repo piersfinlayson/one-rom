@@ -53,8 +53,6 @@
 //! 4. Type values 0x80-0xFE, and modes 0x06 and 0x07.  This device reports
 //!    neither, so they are checked only as values the protocol allows.
 
-use onerom_fw_emulator::ffi;
-
 use crate::driver::{Bus, CmdFailure, HDR_SIZE, Hdr, Session, control, group, led, modify};
 use crate::{Ctx, Outcome};
 
@@ -104,22 +102,6 @@ const CLOCK_BASE_US: u64 = 4_000_000;
 /// Reads of the progress byte taken before concluding a command has completed
 /// promptly rather than by luck.
 const SETTLE_POLLS: u32 = 8;
-
-/// API identifiers withheld from the plugin for the scenarios that need them.
-///
-/// The LED calls arrived in firmware later than this plugin's minimum, so it
-/// degrades where they are absent.  The emulator implements the whole API, so
-/// withholding is the only way to reach that path.
-pub static WITHHELD_API: &[(&str, &[u32])] = &[
-    (
-        "conformance.led.no_leds_without_the_led_calls",
-        &[ffi::api_id_t_ORA_ID_LED_SET, ffi::api_id_t_ORA_ID_LED_GET],
-    ),
-    (
-        "conformance.led.no_leds_without_the_led_get_call",
-        &[ffi::api_id_t_ORA_ID_LED_GET],
-    ),
-];
 
 /// What GET_LED_CAPABILITY reports.
 #[derive(Clone, Copy)]
@@ -1248,62 +1230,6 @@ pub fn led_state_survives_the_session(bus: &mut Bus, ctx: &Ctx) -> Result<Outcom
             info(bus, &s, n)?
         ));
     }
-
-    Ok(Outcome::Pass)
-}
-
-/// Without the firmware's LED calls the device reports no LEDs.
-///
-/// A plugin degrades where a call its minimum firmware version does not
-/// guarantee is missing.  The protocol already provides for it — a count of
-/// zero — so the group goes quiet rather than the plugin refusing to run, and
-/// every other command in the group fails.
-pub fn no_leds_without_the_led_calls(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let s = ctx.session();
-    bus.enter_cmd_resp(&s)
-        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
-
-    let cap = capability(bus, &s)?;
-    if cap.count != 0 {
-        return Err(format!(
-            "the plugin reports {} LEDs with the firmware's LED calls withheld; without them \
-             it has no engine to reach",
-            cap.count
-        ));
-    }
-    expect_zero_led_rule(bus, &s)?;
-
-    Ok(Outcome::Pass)
-}
-
-/// A device that can drive an LED but not read one back reports no LEDs.
-///
-/// The other half of the degradation [`no_leds_without_the_led_calls`] covers,
-/// and not the same path: there the plugin has no engine at all, here it has one
-/// it can write to but cannot ask about.  RBCP numbers only the LEDs a board
-/// actually carries, and reading a channel back is how the plugin finds out
-/// which those are — so a channel it cannot read is one it cannot advertise,
-/// however willing the engine is to be told about it.
-///
-/// The distinction matters because a device getting this wrong looks fine from
-/// the capability command and falls apart from GET_LED_INFO onwards: it would be
-/// offering a host LEDs whose type, mode and colour it has no way to report.
-/// Reached by withholding `ORA_ID_LED_GET` alone — see [`WITHHELD_API`] — since
-/// the emulator implements the whole API.
-pub fn no_leds_without_the_led_get_call(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let s = ctx.session();
-    bus.enter_cmd_resp(&s)
-        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
-
-    let cap = capability(bus, &s)?;
-    if cap.count != 0 {
-        return Err(format!(
-            "the plugin reports {} LED(s) with the firmware's LED read call withheld; it cannot \
-             tell which channels the board carries, nor answer GET_LED_INFO for any of them",
-            cap.count
-        ));
-    }
-    expect_zero_led_rule(bus, &s)?;
 
     Ok(Outcome::Pass)
 }

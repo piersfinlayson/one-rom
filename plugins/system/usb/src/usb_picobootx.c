@@ -209,6 +209,51 @@ static pb_status_t app_range_logical_rom_write(
 }
 
 // ---------------------------------------------------------------------------
+// Custom range handlers: USB DPRAM
+//
+// Read only.  Read a byte at a time, as an unaligned access to USB DPRAM
+// faults.
+// ---------------------------------------------------------------------------
+
+#if defined(ORA_HOST_TEST)
+const volatile uint8_t *usb_host_test_dpram(void);
+#define USB_DPRAM usb_host_test_dpram()
+#else
+#define USB_DPRAM ((const volatile uint8_t *)(uintptr_t)ORA_USB_DPRAM_BASE_ADDR)
+#endif
+
+static pb_status_t app_range_usb_dpram_read_prepare(
+    uint32_t addr,
+    uint32_t len,
+    void *ctx
+) {
+    (void)ctx;
+
+    if (addr < ORA_USB_DPRAM_BASE_ADDR ||
+        len > ORA_USB_DPRAM_SIZE ||
+        (addr - ORA_USB_DPRAM_BASE_ADDR) > (ORA_USB_DPRAM_SIZE - len)) {
+        return PB_STATUS_NOT_FOUND;
+    }
+
+    return PB_STATUS_OK;
+}
+
+static pb_status_t app_range_usb_dpram_read(
+    uint32_t addr,
+    uint8_t  *buf,
+    uint32_t len,
+    void *ctx
+) {
+    (void)ctx;
+
+    const volatile uint8_t *src = USB_DPRAM + (addr - ORA_USB_DPRAM_BASE_ADDR);
+    for (uint32_t i = 0u; i < len; i++) {
+        buf[i] = src[i];
+    }
+    return PB_STATUS_OK;
+}
+
+// ---------------------------------------------------------------------------
 // Custom range dispatch helpers
 // ---------------------------------------------------------------------------
 
@@ -216,7 +261,7 @@ static pb_status_t app_range_logical_rom_write(
 // the range, PB_STATUS_NOT_FOUND if no handler matches, or another status to
 // reject immediately.
 static pb_status_t app_custom_prepare(uint32_t addr, uint32_t len, void *ctx) {
-    for (uint32_t i = 0u; i < APP_CUSTOM_RANGE_COUNT; i++) {
+    for (uint32_t i = 0u; i < APP_CUSTOM_READ_RANGE_COUNT; i++) {
         pb_status_t st = k_custom_read_ranges[i].prepare(addr, len, ctx);
         if (st != PB_STATUS_NOT_FOUND) {
             return st;
@@ -234,7 +279,7 @@ static pb_status_t app_custom_read(
     uint32_t len,
     void *ctx
 ) {
-    for (uint32_t i = 0u; i < APP_CUSTOM_RANGE_COUNT; i++) {
+    for (uint32_t i = 0u; i < APP_CUSTOM_READ_RANGE_COUNT; i++) {
         pb_status_t st = k_custom_read_ranges[i].prepare(addr, len, ctx);
         if (st == PB_STATUS_OK) {
             return k_custom_read_ranges[i].read(addr, buf, len, ctx);
@@ -249,7 +294,7 @@ static pb_status_t app_custom_read(
 // Similar functions for write range handling. 
 
 static pb_status_t app_custom_write_prepare(uint32_t addr, uint32_t len, bool *is_flash, void *ctx) {
-    for (uint32_t i = 0u; i < APP_CUSTOM_RANGE_COUNT; i++) {
+    for (uint32_t i = 0u; i < APP_CUSTOM_WRITE_RANGE_COUNT; i++) {
         pb_status_t st = k_custom_write_ranges[i].prepare(addr, len, is_flash, ctx);
         if (st != PB_STATUS_NOT_FOUND) {
             return st;
@@ -268,7 +313,7 @@ static pb_status_t app_custom_write(
     // communicated to the picoboot core via app_picoboot_write_prepare.  Hence
     // it is discarded in this function.
     bool is_flash;
-    for (uint32_t i = 0u; i < APP_CUSTOM_RANGE_COUNT; i++) {
+    for (uint32_t i = 0u; i < APP_CUSTOM_WRITE_RANGE_COUNT; i++) {
         pb_status_t st = k_custom_write_ranges[i].prepare(addr, len, &is_flash, ctx);
         if (st == PB_STATUS_OK) {
             return k_custom_write_ranges[i].write(addr, buf, len, ctx);

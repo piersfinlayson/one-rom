@@ -37,6 +37,7 @@ pub(crate) mod rom_image;
 pub(crate) mod rom_info;
 pub(crate) mod rom_slot;
 pub(crate) mod slot_context;
+pub(crate) mod unscramble;
 
 pub mod builder;
 pub use builder::*;

@@ -83,6 +83,10 @@ anticipated.
   the programmer.  It names the ROM images to serve, the chip type and chip
   select behaviour of each, and any settings.
 
+- **Firmware** - the complete image a One ROM runs.  Every One ROM is built
+  from a combination of configuration and ROM images.  A programmer turns them
+  into firmware together with the Base Firmware, metadata and any plugins.
+
 - **Programmer** - a tool that composes ROM images, configuration, Base Firmware
   and metadata into a complete image, and flashes it to the device.  There are
   three - the [web programmer](https://onerom.org/web), the

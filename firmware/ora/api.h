@@ -380,6 +380,7 @@ typedef enum {
     /**
      * @brief Reboot into BOOTSEL mode
      * @sa ora_reboot_bootsel_fn_t
+     * @deprecated Use ORA_ID_REBOOT
      */
     ORA_ID_REBOOT_BOOTSEL = 0x00000000,
 
@@ -392,6 +393,7 @@ typedef enum {
     /**
      * @brief Get One ROM information
      * @sa ora_get_firmware_info_fn_t
+     * @deprecated Returns NULL from v0.7.0
      */
     ORA_ID_GET_FIRMWARE_INFO = 0x00000002,
 
@@ -476,6 +478,7 @@ typedef enum {
     /**
      * @brief Get a pointer to the runtime info structure
       * @sa ora_ntime_info_fn_t
+     * @deprecated Returns NULL from v0.7.0
      */
     ORA_ID_GET_RUNTIME_INFO = 0x00000010,
 
@@ -763,7 +766,7 @@ typedef enum {
     ORA_ID_GET_PLUGIN_UPTIME_MS      = 0x0000003B,
 
     /**
-     * @brief Get one element of an array-valued unsigned metadata datum
+     * @brief Get one value of an array metadata key
      * @sa ora_get_metadata_uint_at_fn_t
      * @since firmware 0.7.2
      */
@@ -796,6 +799,34 @@ typedef enum {
      * @since firmware 0.8.0
      */
     ORA_ID_SET_STANDBY               = 0x00000040,
+
+    /**
+     * @brief Reboot One ROM
+     * @sa ora_reboot_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_REBOOT                    = 0x00000041,
+
+    /**
+     * @brief Get a commissioning value
+     * @sa ora_get_commissioning_value_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_COMMISSIONING_VALUE   = 0x00000042,
+
+    /**
+     * @brief Get a flash slot's address and size
+     * @sa ora_get_flash_slot_addr_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_FLASH_SLOT_ADDR       = 0x00000043,
+
+    /**
+     * @brief Get the commissioning instance
+     * @sa ora_get_commissioning_instance_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_COMMISSIONING_INSTANCE = 0x00000044,
 
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
@@ -1230,13 +1261,18 @@ typedef struct {
     ora_core_t core;
 
     /**
-     * @brief Reserved. Set to zero.
+     * @brief ORA_ENTRY_FLAG_ values
      *
-     * Declared rather than left to the compiler: @ref static_ram_base is
-     * four-byte aligned, so these three bytes exist either way, and a reader
-     * following the fields down should not have to work that out.
+     * Zero on firmware before 0.8.1.
+     *
+     * @since firmware 0.8.1
      */
-    uint8_t reserved[3];
+    uint8_t flags;
+
+    /**
+     * @brief Reserved, written as zero
+     */
+    uint8_t reserved[2];
 
     /**
      * @brief The plugin's static RAM base address
@@ -1272,6 +1308,17 @@ typedef struct {
      */
     uint32_t stack_size;
 } ora_entry_args_t;
+
+/**
+ * @brief Exclusive serial IN mode is on
+ * @sa ora_entry_args_t
+ * @sa ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN
+ * @since firmware 0.8.1
+ *
+ * In this mode only @c ORA_LOG_CHANNEL_0 is written to the serial port.
+ * Firmware and plugin logging aren't written to channel 0.
+ */
+#define ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN   (1u << 0)
 
 /**
  * @brief Monitor mode
@@ -1427,7 +1474,11 @@ typedef void (*ora_plugin_entry_t)(
 /**
  * @brief Reboot into BOOTSEL mode
  * @sa ORA_ID_REBOOT_BOOTSEL
+ * @deprecated Use ORA_ID_REBOOT
  * 
+ * DEPRECATED AS OF v0.8.1 - use ORA_ID_REBOOT with ORA_REBOOT_MODE_BOOTLOADER.
+ * This function is still functional.
+ *
  * Reboots One ROM into the RP2350's BOOTSEL mode, for repogramming or
  * recovery.  This (obviously) stops One ROM serving the ROM image and does
  * not return.  There may be a slight (e.g. 10ms) delay before the reboot.
@@ -1456,6 +1507,7 @@ typedef void *(*ora_alloc_fn_t)(size_t size);
 /**
  * @brief Get One ROM information
  * @sa ORA_ID_GET_FIRMWARE_INFO
+ * @deprecated Returns NULL from v0.7.0
  *
  * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
  * NULL.
@@ -1680,6 +1732,7 @@ typedef uint32_t (*ora_get_plugin_uptime_ms_fn_t)(void);
 /**
  * @brief Get a pointer to the runtime info structure
  * @sa ORA_ID_GET_RUNTIME_INFO
+ * @deprecated Returns NULL from v0.7.0
  * 
  * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
  * NULL.
@@ -2339,6 +2392,35 @@ typedef ora_result_t (*ora_get_flash_slot_ext_info_fn_t)(
     uint32_t *rbcp_rom_type_out
 );
 
+/**
+ * @brief Get a flash slot's address and size
+ * @sa ORA_ID_GET_FLASH_SLOT_ADDR
+ * @since firmware 0.8.1
+ *
+ * The slot's data is stored as it is served by One ROM.  Its address and data
+ * bits are rearranged to match the board's pins.  @sa ora_map_addr_to_phys_fn_t
+ *
+ * @param flash_slot  Index of the flash slot, filtered as per
+ *                    @ref ora_get_flash_slot_count_fn_t
+ * @param flags       Filtering flags, must match those passed to
+ *                    @ref ora_get_flash_slot_count_fn_t
+ *                    @sa ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS
+ *                    @sa ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS
+ * @param addr_out    Set to the slot's address in the XIP flash window. May
+ *                    be NULL.
+ * @param size_out    Set to the slot's size in bytes. May be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_INVALID_SLOT if @p flash_slot is out of range for
+ *         @p flags, the slot doesn't have an image or the slot is
+ *         outside the board's flash.
+ */
+typedef ora_result_t (*ora_get_flash_slot_addr_fn_t)(
+    uint8_t flash_slot,
+    uint32_t flags,
+    uint32_t *addr_out,
+    uint32_t *size_out
+);
+
 /** @brief Perform the copy asynchronously via DMA */
 #define ORA_COPY_FLAG_ASYNC  0x00000001
 
@@ -2448,30 +2530,24 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
 typedef ora_result_t (*ora_get_metadata_uint_fn_t)(ora_metadata_key_t key, uint32_t *out);
 
 /**
- * @brief Get one element of an array-valued unsigned metadata datum
+ * @brief Get one value of an array metadata key
  * @sa ORA_ID_GET_METADATA_UINT_AT
- *
- * Indexed sibling of @ref ora_get_metadata_uint_fn_t over the same unified key
- * space - a key means the same datum whichever accessor is asked for it. This
- * accessor resolves keys whose datum is an array of unsigned values, such as
- * the image select and X expansion pin maps (ORA_METADATA_KEY_GPIO_SEL,
- * ORA_METADATA_KEY_GPIO_X1, ORA_METADATA_KEY_GPIO_X2).
- *
- * There is no companion call reporting an array's length. A caller reads
- * upwards from index 0 until the call stops returning @c ORA_RESULT_OK, which
- * needs no sentinel value in the data and so works whatever the elements mean.
- * Learning a length that way costs one call per element, plus one.
- *
- * @param key   The metadata datum to retrieve. @sa ora_metadata_key_t
- * @param index Element to read, counting from 0.
- * @param out   Output pointer to receive the value. Must not be NULL.
- * @return ORA_RESULT_OK on success;
- *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware;
- *         ORA_RESULT_TYPE_MISMATCH if @p key is valid but not an array of
- *         unsigned values;
- *         ORA_RESULT_INVALID_ARG if @p out is NULL, or @p index is beyond the
- *         last element of the array.
  * @since firmware 0.7.2
+ *
+ * Returns the value at @p index of an array key, for example
+ * ORA_METADATA_KEY_GPIO_SEL or ORA_METADATA_KEY_CHIP_ID.
+ *
+ * To find an array's length, read from index 0 until the call returns
+ * ORA_RESULT_INVALID_ARG.
+ *
+ * @param key    An array metadata key. @sa ora_metadata_key_t
+ * @param index  Index of the value, from 0
+ * @param out    Set to the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware.
+ *         ORA_RESULT_TYPE_MISMATCH if @p key isn't an array.
+ *         ORA_RESULT_INVALID_ARG if @p index is past the end of the array or
+ *         @p out is NULL.
  */
 typedef ora_result_t (*ora_get_metadata_uint_at_fn_t)(
     ora_metadata_key_t key,
@@ -3398,6 +3474,118 @@ typedef ora_result_t (*ora_firmware_state_query_fn_t)(
  */
 typedef ora_result_t (*ora_set_standby_fn_t)(uint8_t standby, uint32_t flags);
 
+/**
+ * @brief Reboot modes
+ * @since firmware 0.8.1
+ */
+typedef enum {
+    /** @brief Normal boot */
+    ORA_REBOOT_MODE_NORMAL     = 0,
+
+    /** @brief RP2350 BOOTSEL mode with USB mass storage disabled */
+    ORA_REBOOT_MODE_BOOTLOADER = 1,
+} ora_reboot_mode_t;
+
+/**
+ * @brief Reboot request
+ * @since firmware 0.8.1
+ */
+typedef struct {
+    /** @brief sizeof this structure, set by the caller.  Minimum 8. */
+    uint8_t  size;
+
+    /** @brief Reboot mode. @sa ora_reboot_mode_t */
+    uint8_t  mode;
+
+    /** @brief Reserved.  Set to zero. */
+    uint8_t  reserved[2];
+
+    /**
+     * @brief Delay before the reboot in ms, up to ORA_REBOOT_MAX_DELAY_MS
+     *
+     * One ROM serves the ROM during the delay.  A delay of 0 is interpreted
+     * as 1ms, which is the minimum delay ora_reboot supports.
+     */
+    uint32_t delay_ms;
+} ora_reboot_request_t;
+_Static_assert(sizeof(ora_reboot_request_t) == 8, "ora_reboot_request_t must be 8 bytes");
+
+/**
+ * @brief Reboot One ROM
+ * @sa ORA_ID_REBOOT
+ * @since firmware 0.8.1
+ *
+ * Returns once the reboot is scheduled.
+ *
+ * @param req  Reboot request
+ * @return ORA_RESULT_INVALID_ARG if @p req is NULL or the delay is too long;
+ *         ORA_RESULT_INVALID_SIZE if @p req->size is too small;
+ *         ORA_RESULT_NOT_SUPPORTED if the mode isn't supported;
+ *         ORA_RESULT_ERROR if the reboot can't be scheduled
+ */
+typedef ora_result_t (*ora_reboot_fn_t)(const ora_reboot_request_t *req);
+
+/**
+ * @brief Get a commissioning value
+ * @sa ORA_ID_GET_COMMISSIONING_VALUE
+ * @since firmware 0.8.1
+ *
+ * Commissioning values are written to OTP when a One ROM is commissioned. The
+ * value comes from the last complete commissioning instance.
+ *
+ * When called with key ORA_COMMISSIONING_VERSION_KEY the call returns the
+ * instance's format version. A One ROM is commissioned if this returns
+ * ORA_RESULT_OK. If the commissioning area contains an instance with a version
+ * this firmware can't read, the call returns that version for
+ * ORA_COMMISSIONING_VERSION_KEY and ORA_RESULT_NOT_SUPPORTED for every other
+ * key.
+ *
+ * - The value is read in place from OTP.
+ * - A string isn't null-terminated.
+ * - A number is little-endian.
+ * - The firmware doesn't check the signature.
+ *
+ * @param key        An ORA_OTP_KEY_* value or ORA_COMMISSIONING_VERSION_KEY
+ * @param value_out  Set to the value, which stays valid until the One ROM
+ *                   reboots. Must not be NULL.
+ * @param len_out    Set to the value's length in bytes. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if the One ROM doesn't have the value.
+ *         ORA_RESULT_INVALID_ARG if @p key is ORA_OTP_KEY_NONE or an output
+ *         pointer is NULL.
+ */
+typedef ora_result_t (*ora_get_commissioning_value_fn_t)(
+    uint16_t key,
+    const uint8_t **value_out,
+    uint16_t *len_out
+);
+
+/**
+ * @brief Get the commissioning instance
+ * @sa ORA_ID_GET_COMMISSIONING_INSTANCE
+ * @since firmware 0.8.1
+ *
+ * The instance is the last complete commissioning instance, including its
+ * magic row to the end of its signature entry, as described in docs/OTP.md.
+ *
+ * - The instance is read in place from OTP, two bytes per row, low byte first.
+ * - The firmware doesn't check the signature.
+ *
+ * @param instance_out  Set to the instance, which stays valid until the One
+ *                      ROM reboots. Must not be NULL.
+ * @param len_out       Set to the instance's length in bytes. Must not be
+ *                      NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if the commissioning area doesn't contain
+ *         a complete instance, contains an instance with a version this
+ *         firmware can't read or isn't laid out as docs/OTP.md specifies.
+ *         ORA_RESULT_INVALID_ARG if an output pointer is NULL.
+ */
+typedef ora_result_t (*ora_get_commissioning_instance_fn_t)(
+    const uint8_t **instance_out,
+    uint16_t *len_out
+);
+
 /** @} */ // plugin_api_functions
 
 /**
@@ -3512,34 +3700,30 @@ typedef struct {
     uint8_t sam_usage;
 
     /**
-     * @brief Firmware overrides this plugin wants to apply
-     * 
-     * Only supported by system plugins, used to indicate to the firmware that
-     * defaults built into the firmware, or overriden by config, should
-     * be overridden.
+     * @brief Firmware overrides set by this plugin
+     *
+     * Overrides apply only if this plugin starts.
      *
      * For future compatibility, any unused bits must be set to 0.
      *
      * This is a bit field, with 1 indicating override.  Bit 0 = LSB
      * Bit 0 - Disable VBUS detect @sa ORA_OVERRIDE1_DISABLE_VBUS_DETECT
+     * Bit 1 - Set the ROM slot to boot @sa ORA_OVERRIDE1_BOOT_SLOT
+     * Bit 2 - Ignore the image select jumpers @sa ORA_OVERRIDE1_IGNORE_IMAGE_SELECT
      */
     // offset 22
     uint8_t overrides1;
 
     /**
      * @brief Plugin properties
-     * 
-     * 
-     * This is used to indicate properties of the plugin to the firmware, to
-     * allow the core firmware and firmware parses to make informed decisions
-     * about how to use the plugin.
-     * 
+     *
      * For future compatibility, any unused bits must be set to 0.
      * 
      * This is a bit field, with 1 indicating the presence of the property.
      * Bit 0 = LSB
      * Bit 0 = supports running while USB is connected @sa ORA_PROPERTY1_SUPPORTS_USB_RUNNING
      * Bit 1 = supports yielding to allow exclusive mode @sa ORA_PROPERTY1_SUPPORTS_YIELD
+     * Bit 2 = requests exclusive serial IN mode @sa ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN
      */
     // offset 23
     uint8_t properties1;
@@ -3567,15 +3751,39 @@ typedef struct {
     uint16_t min_fw_patch_version;
 
     /**
+     * @brief Reserved. Set to zero.
+     */
+    // offset 30
+    uint8_t reserved0[2];
+
+    /**
+     * @brief Flash address of the byte containing the number of the ROM slot to boot
+     *
+     * Set to zero unless ORA_OVERRIDE1_BOOT_SLOT is set.
+     *
+     * @since firmware 0.8.1
+     */
+    // offset 32
+    uint32_t boot_slot_addr;
+
+    /**
      * @brief Reserved for future use
      *
      * This field is reserved for future use and must be set to 0.
      */
-    uint8_t reserved[226];
+    uint8_t reserved[220];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
 #if UINTPTR_MAX == 0xFFFFFFFFu
 _Static_assert(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugin_header_t must be 256 bytes");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, plugin_type) == ORA_PLUGIN_HEADER_PLUGIN_TYPE_OFFSET,
+               "plugin_type offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, overrides1) == ORA_PLUGIN_HEADER_OVERRIDES1_OFFSET,
+               "overrides1 offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, properties1) == ORA_PLUGIN_HEADER_PROPERTIES1_OFFSET,
+               "properties1 offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, boot_slot_addr) == ORA_PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET,
+               "boot_slot_addr offset");
 #endif
 
 /**

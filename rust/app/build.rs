@@ -88,11 +88,25 @@ fn write_signer(out: &mut String, entry: &Entry) {
             )
         }
     };
+    let contacts: Vec<String> = entry
+        .contacts
+        .iter()
+        .map(|(manufacturer, contact)| {
+            format!(
+                "(alloc::borrow::Cow::Borrowed({manufacturer:?}), \
+                 alloc::borrow::Cow::Borrowed({contact:?}))"
+            )
+        })
+        .collect();
     writeln!(
         out,
         "    crate::signers::Signer {{ id: {}, name: alloc::borrow::Cow::Borrowed({:?}), \
-         public_key: {:?}, status: {status}, manufacturers: {manufacturers} }},",
-        entry.id, entry.name, entry.public_key,
+         public_key: {:?}, status: {status}, manufacturers: {manufacturers}, \
+         contacts: alloc::borrow::Cow::Borrowed(&[{}]) }},",
+        entry.id,
+        entry.name,
+        entry.public_key,
+        contacts.join(", "),
     )
     .unwrap();
 }

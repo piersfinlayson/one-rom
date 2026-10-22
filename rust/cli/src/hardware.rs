@@ -21,9 +21,9 @@ use crossterm::terminal;
 use onerom_app::{
     BoardSize, CommissionError, LocalFetch, LocalOtpAccess, OtpError, Plan, Request, RequestDate,
     RowValue, Signer, SignerTable, Step, StepKind, Verdict, plan_size, prepare, read_board_size,
-    read_chip_id, read_commissioning, verify_instance,
+    read_chip_id, read_commissioning, verdict_text, verify_instance,
 };
-use onerom_cli::error::NEWER_DATA;
+use onerom_cli::error::{NEWER_DATA, VALUES_TOO_LONG};
 use onerom_cli::otp::{PicobootOtp, board_size_text, escape_controls, format_date};
 use onerom_cli::signing::{KeyFile, SigningServer};
 use onerom_cli::usb::{read_device_chip_info, read_memory};
@@ -33,7 +33,7 @@ use onerom_config::mcu::RpVariant;
 use onerom_metadata::otp::{
     AreaIssue, BuildError, CommissioningInstance, CommissioningValues, format_chip_id, white_label,
 };
-use onerom_metadata::{MaybeKnown, OTP_NUM_GPIOS_ROW};
+use onerom_metadata::{MaybeKnown, OTP_NUM_GPIOS_ROW, OneromBoardSize};
 use serde::Serialize;
 
 use crate::args::hardware::{
@@ -41,8 +41,8 @@ use crate::args::hardware::{
     HardwareValidateArgs, today,
 };
 use crate::commissioning::{
-    Labelled, instance_state, instance_values, issue_text, labelled_lines, signer_name,
-    unknown_keys, unknown_version, white_label_values,
+    Labelled, board_size_value, instance_state, instance_values, issue_text, labelled_lines,
+    signer_name, unknown_keys, unknown_version, white_label_values,
 };
 use crate::inspect::write_otp;
 use crate::program::{reboot_stopped, reboot_stopped_and_select, reboot_to_stopped, restart};
@@ -75,9 +75,7 @@ pub(crate) enum Signing {
 /// What a commissioning instance's signature covers.
 pub(crate) struct ToSign<'a> {
     pub(crate) chip_id: [u16; 4],
-    pub(crate) board: Board,
-    pub(crate) manufacturer: &'a str,
-    pub(crate) date: &'a str,
+    pub(crate) values: &'a CommissioningValues,
     /// The message the values and `chip_id` make.
     pub(crate) message: &'a [u8],
 }
@@ -100,16 +98,7 @@ pub(crate) trait SignatureSource {
 impl SignatureSource for Signing {
     async fn dry_run(&self, to_sign: &ToSign<'_>) -> Result<[u8; 64], Error> {
         match self {
-            Self::Server(server) => {
-                server
-                    .sign_dry_run(
-                        to_sign.chip_id,
-                        to_sign.board,
-                        to_sign.manufacturer,
-                        to_sign.date,
-                    )
-                    .await
-            }
+            Self::Server(server) => server.sign_dry_run(to_sign.chip_id, to_sign.values).await,
             Self::File(key) => Ok(key.sign(to_sign.message)),
             Self::Given { signature, .. } => Ok(*signature),
         }
@@ -117,15 +106,7 @@ impl SignatureSource for Signing {
 
     async fn record(&self, to_sign: &ToSign<'_>) -> Result<Option<[u8; 64]>, Error> {
         match self {
-            Self::Server(server) => server
-                .sign(
-                    to_sign.chip_id,
-                    to_sign.board,
-                    to_sign.manufacturer,
-                    to_sign.date,
-                )
-                .await
-                .map(Some),
+            Self::Server(server) => server.sign(to_sign.chip_id, to_sign.values).await.map(Some),
             Self::File(_) | Self::Given { .. } => Ok(None),
         }
     }
@@ -403,28 +384,16 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
             None => RequestDate::Today(today()),
         },
         signer: signer.id(),
+        revision: args.revision.clone(),
+        batch: args.batch.clone(),
         force: args.force,
     };
     let prepared = match prepare(otp, &request).await {
         Ok(prepared) => prepared,
         // The refusal shows the instance's values, with the signing key's
         // name from the table.
-        Err(CommissionError::AlreadyCommissioned {
-            board,
-            manufacturer,
-            date,
-            signer,
-            ..
-        }) => {
-            let values: Vec<Labelled> = [
-                ("Board type:", escape_controls(&board)),
-                ("Manufacturer:", escape_controls(&manufacturer)),
-                ("Date:", format_date(&date)),
-                ("Signing key:", signer_name(signer, table)),
-            ]
-            .into_iter()
-            .map(|(label, value)| (label.to_string(), value))
-            .collect();
+        Err(CommissionError::AlreadyCommissioned { current, .. }) => {
+            let values = signed_values(&current, table);
             let instance: Vec<String> = labelled_lines(&values)
                 .into_iter()
                 .map(|line| format!("  {line}"))
@@ -436,10 +405,7 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
         Err(e) => return Err(e.into()),
     };
     if let Some(replaced) = prepared.replaced_instance() {
-        let mut values = instance_values(replaced);
-        if let Some(signer) = replaced.signer() {
-            values.push(("Signing key:".to_string(), signer_name(signer, table)));
-        }
+        let values = signed_values(replaced, table);
         line(out, "WARNING: Re-commissioning this One ROM.")?;
         line(out, "Commissioned: yes")?;
         for text in labelled_lines(&values) {
@@ -451,14 +417,16 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
         shown_date.push_str(" (from the commissioning instance)");
     }
     let values: Vec<Labelled> = [
-        ("Board type:", args.board.name().to_string()),
-        ("Board size:", size.to_string()),
-        ("Manufacturer:", escape_controls(&args.manufacturer)),
-        ("Date:", shown_date),
-        ("Signing key:", signer_name(signer.id(), table)),
+        ("Board type:", Some(args.board.name().to_string())),
+        ("Board size:", Some(size.to_string())),
+        ("Revision:", args.revision.clone()),
+        ("Manufacturer:", Some(escape_controls(&args.manufacturer))),
+        ("Date:", Some(shown_date)),
+        ("Batch:", args.batch.clone()),
+        ("Signing key:", Some(signer_name(signer.id(), table))),
     ]
     .into_iter()
-    .map(|(label, value)| (label.to_string(), value))
+    .filter_map(|(label, value)| Some((label.to_string(), value?)))
     .collect();
     line(out, "Commissioning:")?;
     for text in labelled_lines(&values) {
@@ -466,13 +434,11 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
     }
 
     // Planning consumes `prepared`, and the recorded signature needs these.
-    let date = prepared.date().to_string();
+    let values = prepared.values().clone();
     let message = prepared.message().to_vec();
     let to_sign = ToSign {
         chip_id: prepared.chip_id(),
-        board: args.board,
-        manufacturer: &args.manufacturer,
-        date: &date,
+        values: &values,
         message: &message,
     };
     let signature = signing.dry_run(&to_sign).await?;
@@ -511,6 +477,21 @@ pub(crate) async fn commission_otp<O: LocalOtpAccess, S: SignatureSource>(
     write_plan(&plan, otp, out, Error::CommissionFailed).await?;
     line(out, "Commissioning complete")?;
     Ok(true)
+}
+
+/// `instance`'s values with their labels, including its size and signing key.
+/// An instance from a CLI before v0.6.0 doesn't have a size, and its size is
+/// displayed as not recorded.
+fn signed_values(instance: &CommissioningInstance, table: &SignerTable) -> Vec<Labelled> {
+    let mut values = instance_values(instance, None);
+    let size = instance
+        .size()
+        .map_or_else(|| "not recorded".to_string(), board_size_text);
+    values.insert(1, ("Board size:".to_string(), size));
+    if let Some(signer) = instance.signer() {
+        values.push(("Signing key:".to_string(), signer_name(signer, table)));
+    }
+    values
 }
 
 /// Whether `plan` writes any of the bootloader USB strings' rows.
@@ -901,9 +882,13 @@ struct Signed<'a> {
     chip_id: String,
     board: &'a str,
     size: BoardSize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<&'a str>,
     manufacturer: &'a str,
     /// The commissioning date as `YYYYMMDD`.
     date: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch: Option<&'a str>,
     key_id: u16,
     /// The signature in lowercase hex.
     signature: String,
@@ -937,20 +922,29 @@ pub(crate) async fn sign_values<S: SignatureSource>(
         .board_size()
         .map_err(|e| Error::InvalidArgument("--size".to_string(), e.to_string()))?;
     let date = args.date.clone().unwrap_or_else(today);
-    let values = CommissioningValues::new(args.board, &args.manufacturer, &date, signer.id())
-        .map_err(values_error)?;
+    let mut builder =
+        CommissioningValues::builder(args.board, &args.manufacturer, &date, signer.id()).size(size);
+    if let Some(revision) = &args.revision {
+        builder = builder.revision(revision);
+    }
+    if let Some(batch) = &args.batch {
+        builder = builder.batch(batch);
+    }
+    let values = builder.build().map_err(values_error)?;
     let message = values.message(args.chip_id);
 
     let shown: Vec<Labelled> = [
-        ("Chip ID:", format_chip_id(args.chip_id)),
-        ("Board type:", args.board.name().to_string()),
-        ("Board size:", size.to_string()),
-        ("Manufacturer:", escape_controls(&args.manufacturer)),
-        ("Date:", format_date(&date)),
-        ("Signing key:", signer_name(signer.id(), table)),
+        ("Chip ID:", Some(format_chip_id(args.chip_id))),
+        ("Board type:", Some(args.board.name().to_string())),
+        ("Board size:", Some(size.to_string())),
+        ("Revision:", args.revision.clone()),
+        ("Manufacturer:", Some(escape_controls(&args.manufacturer))),
+        ("Date:", Some(format_date(&date))),
+        ("Batch:", args.batch.clone()),
+        ("Signing key:", Some(signer_name(signer.id(), table))),
     ]
     .into_iter()
-    .map(|(label, value)| (label.to_string(), value))
+    .filter_map(|(label, value)| Some((label.to_string(), value?)))
     .collect();
     line(ui, "Signing:")?;
     for text in labelled_lines(&shown) {
@@ -959,9 +953,7 @@ pub(crate) async fn sign_values<S: SignatureSource>(
 
     let to_sign = ToSign {
         chip_id: args.chip_id,
-        board: args.board,
-        manufacturer: &args.manufacturer,
-        date: &date,
+        values: &values,
         message: &message,
     };
     let signature = signing.dry_run(&to_sign).await?;
@@ -982,22 +974,16 @@ pub(crate) async fn sign_values<S: SignatureSource>(
 
     // A dry run's signature isn't recorded, so it doesn't provide a command to
     // use it.
-    let command = (!args.dry_run).then(|| {
-        commission_command(
-            (args.board, size),
-            &args.manufacturer,
-            &date,
-            signer.id(),
-            &signature,
-        )
-    });
+    let command = (!args.dry_run).then(|| commission_command(&values, signer.id(), &signature));
     if args.json {
         let signed = Signed {
             chip_id: format_chip_id(args.chip_id),
             board: args.board.name(),
             size,
+            revision: values.revision(),
             manufacturer: &args.manufacturer,
             date: &date,
+            batch: values.batch(),
             key_id: signer.id(),
             signature: hex::encode(signature),
             command,
@@ -1018,56 +1004,57 @@ pub(crate) async fn sign_values<S: SignatureSource>(
     Ok(())
 }
 
-/// The error for values `CommissioningValues::new` refused with `error`.
+/// The error for `error` from `CommissioningValuesBuilder::build`.
 fn values_error(error: BuildError) -> Error {
     match error {
-        BuildError::DoesNotFit => Error::InvalidArgument(
-            "--manufacturer".to_string(),
-            "The manufacturer's name is too long to fit in OTP.".to_string(),
-        ),
-        // clap refuses a manufacturer check_manufacturer() refuses and a bad
-        // date, and every key's ID is 1 or more. Only an instance has a first
-        // row.
+        BuildError::DoesNotFit => Error::Other(VALUES_TOO_LONG.to_string()),
+        // clap rejects a bad manufacturer, revision, batch or date, and every
+        // key's ID is 1 or more. Only an instance has a first row.
         BuildError::EmptyManufacturer
         | BuildError::BadManufacturer
+        | BuildError::BadRevision
+        | BuildError::BadBatch
         | BuildError::BadDate
         | BuildError::BadSigner
-        | BuildError::BadFirstRow => Error::Commission(CommissionError::Build(error)),
+        | BuildError::BadFirstRow
+        | _ => Error::Commission(CommissionError::Build(error)),
     }
 }
 
-/// The `hardware commission` command that writes the instance of `board` and
-/// its size by `manufacturer` on `date`, with `signature` from key `key_id`.
-/// Each word a shell would change is quoted.
-fn commission_command(
-    (board, size): (Board, BoardSize),
-    manufacturer: &str,
-    date: &str,
-    key_id: u16,
-    signature: &[u8; 64],
-) -> String {
-    let (size, key_id, signature) = (size.to_string(), key_id.to_string(), hex::encode(signature));
-    [
+/// The `hardware commission` command that writes the instance holding
+/// `values`, with `signature` from key `key_id`. Each word a shell would
+/// change is quoted.
+fn commission_command(values: &CommissioningValues, key_id: u16, signature: &[u8; 64]) -> String {
+    let size = values.size().map(|size| size.to_string());
+    let (key_id, signature) = (key_id.to_string(), hex::encode(signature));
+    let mut words = vec![
         "onerom",
         "hardware",
         "commission",
         "--board",
-        board.name(),
-        "--size",
-        &size,
+        values.board().name(),
+    ];
+    if let Some(size) = &size {
+        words.extend(["--size", size]);
+    }
+    words.extend([
         "--manufacturer",
-        manufacturer,
+        values.manufacturer(),
         "--date",
-        date,
-        "--key-id",
-        &key_id,
-        "--signature",
-        &signature,
-    ]
-    .iter()
-    .map(|word| shell_word(word))
-    .collect::<Vec<_>>()
-    .join(" ")
+        values.date(),
+    ]);
+    if let Some(revision) = values.revision() {
+        words.extend(["--revision", revision]);
+    }
+    if let Some(batch) = values.batch() {
+        words.extend(["--batch", batch]);
+    }
+    words.extend(["--key-id", &key_id, "--signature", &signature]);
+    words
+        .iter()
+        .map(|word| shell_word(word))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// `word` as a shell reads it back. A word containing only characters a shell
@@ -1139,6 +1126,8 @@ pub(crate) async fn request_signature_otp<O: LocalOtpAccess>(
         manufacturer: signing_request::MANUFACTURER.to_string(),
         date: RequestDate::Given(today()),
         signer: signing_request::KEY_ID,
+        revision: None,
+        batch: None,
         force: false,
     };
     let prepared = prepare(otp, &request)
@@ -1150,7 +1139,8 @@ pub(crate) async fn request_signature_otp<O: LocalOtpAccess>(
         board: args.board,
         size,
     };
-    // The link fills in the same values.
+    // The link contains the same values and the CLI version, which isn't
+    // displayed.
     let labels = ["Chip ID:", "Board type:", "Board size:", "Manufacturer:"];
     let values: Vec<Labelled> = labels
         .into_iter()
@@ -1192,6 +1182,8 @@ pub(crate) enum SigningKeys {
 struct Validation<'a> {
     /// CHIPID as the bootloader's USB serial number shows it.
     chip_id: String,
+    /// The size OTP configures.
+    board_size: String,
     signing_keys: SigningKeys,
     instances: Vec<InstanceCheck<'a>>,
     issues: &'a [AreaIssue],
@@ -1204,8 +1196,15 @@ struct InstanceCheck<'a> {
     row: u16,
     current: bool,
     board: Option<&'a str>,
+    /// The size the board was commissioned as.
+    size: Option<String>,
+    revision: Option<&'a str>,
     manufacturer: Option<&'a str>,
+    /// `None` unless the signature is accepted and its key has the
+    /// manufacturer's contact.
+    contact: Option<&'a str>,
     date: Option<&'a str>,
+    batch: Option<&'a str>,
     signer: Option<u16>,
     signer_name: Option<&'a str>,
     /// `None` where the check failed.
@@ -1255,6 +1254,7 @@ pub(crate) async fn validate_otp<O: LocalOtpAccess, F: LocalFetch<Error = onerom
 ) -> Result<(), Error> {
     let chip_id = read_chip_id(otp).await?;
     let area = read_commissioning(otp).await?;
+    let size = read_board_size(otp).await?;
 
     let current = area.current().map(CommissioningInstance::first_row);
     let mut checks = Vec::new();
@@ -1279,6 +1279,20 @@ pub(crate) async fn validate_otp<O: LocalOtpAccess, F: LocalFetch<Error = onerom
             ),
             None => "OTP doesn't contain a valid commissioning instance.".to_string(),
         }),
+        // Commissioning writes the instance before it sets
+        // FLASH_DEVINFO_ENABLE, so a run that stopped between the two leaves a
+        // board commissioned as L that OTP doesn't configure as L.
+        Some((instance, Ok(verdict)))
+            if verdict.is_accepted()
+                && instance.size() == Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL))
+                && size != OneromBoardSize::BoardSizeL =>
+        {
+            Err(format!(
+                "The One ROM was commissioned as L but its size is {}.\n  This happens when commissioning stops part way.\n  Use 'onerom hardware set-size --board {} --size L' to change its size to L.",
+                board_size_text(MaybeKnown::Known(size)),
+                escape_controls(instance.board().unwrap_or_default()),
+            ))
+        }
         Some((_, Ok(verdict))) if verdict.is_accepted() => Ok(()),
         Some((_, Ok(verdict))) => Err(sentence(verdict_text(*verdict))),
         Some((_, Err(onerom_app::Error::Fetch { .. }))) => {
@@ -1292,6 +1306,7 @@ pub(crate) async fn validate_otp<O: LocalOtpAccess, F: LocalFetch<Error = onerom
     if json {
         let validation = Validation {
             chip_id: format_chip_id(chip_id),
+            board_size: board_size_text(MaybeKnown::Known(size)),
             signing_keys: keys,
             instances: checks
                 .iter()
@@ -1304,8 +1319,7 @@ pub(crate) async fn validate_otp<O: LocalOtpAccess, F: LocalFetch<Error = onerom
             serde_json::to_string_pretty(&validation).map_err(|e| Error::Other(e.to_string()))?;
         line(out, json)?;
     } else {
-        let size = read_board_size(otp).await?;
-        let size = board_size_text(MaybeKnown::Known(size));
+        let size = board_size_value(MaybeKnown::Known(size), area.current());
         line(out, format!("Board size: {size}"))?;
         if verbose {
             let keys = match keys {
@@ -1375,8 +1389,14 @@ fn instance_check<'a>(
         row: instance.first_row(),
         current: Some(instance.first_row()) == current,
         board: instance.board(),
+        size: instance.size().map(board_size_text),
+        revision: instance.revision(),
         manufacturer: instance.manufacturer(),
+        contact: accepted(verdict)
+            .then(|| manufacturer_contact(instance, table))
+            .flatten(),
         date: instance.date(),
+        batch: instance.batch(),
         signer,
         signer_name: signer.and_then(|id| table.get(id)).map(Signer::name),
         verdict: verdict.as_ref().ok().copied(),
@@ -1398,15 +1418,33 @@ fn checked_values(
     verdict: &Result<Verdict, AppError>,
     table: &SignerTable,
 ) -> Vec<Labelled> {
-    let mut values = instance_values(instance);
+    let contact =
+        accepted(verdict).then(|| manufacturer_contact(instance, table).unwrap_or("unknown"));
+    let mut values = instance_values(instance, contact);
     values.extend(check_values(instance, verdict, table));
     values.extend(unknown_keys(instance.entries()).map(|unknown| {
         (
             "Skipped:".to_string(),
-            format!("unknown {}", unknown.text()),
+            format!("unknown commissioning key {}", unknown.text()),
         )
     }));
     values
+}
+
+/// Whether the signature is accepted. Only an accepted signature proves the
+/// manufacturer, so its contact is shown only then.
+fn accepted(verdict: &Result<Verdict, AppError>) -> bool {
+    verdict.as_ref().is_ok_and(Verdict::is_accepted)
+}
+
+/// The contact `table` has for `instance`'s manufacturer.
+fn manufacturer_contact<'a>(
+    instance: &CommissioningInstance,
+    table: &'a SignerTable,
+) -> Option<&'a str> {
+    table
+        .get(instance.signer()?)?
+        .contact(instance.manufacturer()?)
 }
 
 /// The check of `instance`'s signature, a line each. An incomplete instance
@@ -1432,22 +1470,6 @@ fn check_values(
             signature("not checked"),
             ("Error:".to_string(), error_line(e)),
         ],
-    }
-}
-
-/// `verdict` as a phrase about an instance's signature.
-fn verdict_text(verdict: Verdict) -> &'static str {
-    match verdict {
-        Verdict::Verified => "verified",
-        Verdict::Recorded => "verified and recorded before the key was retired",
-        Verdict::NotRecorded | Verdict::RecordChanged => "invalid due to retired key",
-        Verdict::ManufacturerNotAllowed => {
-            "invalid because the signing key cannot sign this manufacturer"
-        }
-        Verdict::BadSignature => "invalid",
-        Verdict::UnknownSigner => "invalid due to unknown signing key",
-        Verdict::Incomplete => "incomplete",
-        Verdict::Invalid => "missing values",
     }
 }
 
@@ -1724,7 +1746,7 @@ mod tests {
     /// The parts a first run on a fire-24-f writes, in order, with each
     /// part's rows.
     const FIRST_RUN: [(StepKind, usize); 6] = [
-        (StepKind::Instance, 60),
+        (StepKind::Instance, 63),
         (StepKind::Lock { page: 3 }, 1),
         (StepKind::WhiteLabelStrings, 41),
         (StepKind::WhiteLabelTable, 9),
@@ -1944,12 +1966,14 @@ mod tests {
         println!("{out}");
 
         // The signature's first value row follows its key and length rows.
-        let values =
-            CommissioningValues::new(args.board, "piers.rocks", test_board::DATE, 1).unwrap();
+        let values = CommissioningValues::builder(args.board, "piers.rocks", test_board::DATE, 1)
+            .size(BoardSize::M)
+            .build()
+            .unwrap();
         let signature = test_board::key().sign(&values.message(CHIP_ID)).to_bytes();
         let first = u16::from_le_bytes([signature[0], signature[1]]);
         assert!(
-            shows(out.lines(), &["0x0dc", &format!("{first:#06x}")]),
+            shows(out.lines(), &["0x0df", &format!("{first:#06x}")]),
             "{out}"
         );
         // The total of the rows to write.
@@ -2052,9 +2076,10 @@ mod tests {
         // line each. Its row is --verbose information.
         let lines: Vec<&str> = out.lines().collect();
         assert!(holds(lines[0], &["M"]), "{out}");
-        let instance: [&[&str]; 4] = [
+        let instance: [&[&str]; 5] = [
             &["fire-24-f"],
             &["piers.rocks"],
+            &["https://piers.rocks"],
             &["2026-01-01"],
             &[SIGNER_NAME, "1"],
         ];
@@ -2092,6 +2117,51 @@ mod tests {
             .unwrap_or_else(|| panic!("{out}"));
         assert!(shows(&lines[earlier..], &["2026-01-01"]), "{out}");
         assert!(!shows(&lines[..earlier], &["2026-01-01"]), "{out}");
+    }
+
+    /// A board commissioned as L that OTP doesn't configure as L, from a run that
+    /// stopped before it set FLASH_DEVINFO_ENABLE, doesn't validate.
+    #[tokio::test]
+    async fn a_board_signed_as_l_but_not_configured_as_l_doesnt_validate() {
+        let mut otp = test_board::commissioned_board("fire-40-a", BoardSize::L).await;
+        // BOOT_FLAGS0 and its two copies.
+        for row in 0x048..=0x04a {
+            otp.set_raw(row, 0);
+        }
+        let (result, out) = validate(&mut otp, &table(None), &Files(Vec::new()), false).await;
+        println!("{out}");
+        let Err(Error::NotValidated(reason)) = result else {
+            panic!("{result:?}\n{out}");
+        };
+        assert!(reason.contains("commissioned as L"), "{reason}");
+        assert!(
+            reason.contains("set-size --board fire-40-a --size L"),
+            "{reason}"
+        );
+        assert!(
+            shows(out.lines(), &["Board size:", "M", "commissioned as L"]),
+            "{out}"
+        );
+    }
+
+    /// A board commissioned as M and later set to L validates, and its
+    /// `Board size:` line includes the size it was commissioned as.
+    #[tokio::test]
+    async fn a_board_set_to_l_after_commissioning_validates() {
+        let mut otp = test_board::commissioned_board("fire-40-a", BoardSize::M).await;
+        // FLASH_DEVINFO, and FLASH_DEVINFO_ENABLE in BOOT_FLAGS0 and its two
+        // copies, as set-size writes them.
+        otp.set_raw(0x054, 0x3a_99af);
+        for row in 0x048..=0x04a {
+            otp.set_raw(row, 0x20);
+        }
+        let (result, out) = validate(&mut otp, &table(None), &Files(Vec::new()), false).await;
+        println!("{out}");
+        result.unwrap_or_else(|e| panic!("{e}\n{out}"));
+        assert!(
+            shows(out.lines(), &["Board size:", "L", "commissioned as M"]),
+            "{out}"
+        );
     }
 
     /// The device line each check after commissioning shows.
@@ -2180,7 +2250,7 @@ mod tests {
         assert_eq!(part_lists(&out), [FIRST_RUN], "{out}");
         // The instance's line holds its first row. Its second row isn't shown.
         let instance = step_name(StepKind::Instance);
-        assert!(shows(out.lines(), &[&instance, "0x0c0", "60"]), "{out}");
+        assert!(shows(out.lines(), &[&instance, "0x0c0", "63"]), "{out}");
         assert!(!shows(out.lines(), &["0x0c1"]), "{out}");
     }
 
@@ -2256,12 +2326,12 @@ mod tests {
             part_lists(&out),
             [
                 vec![
-                    (StepKind::Instance, 60),
+                    (StepKind::Instance, 63),
                     (StepKind::Lock { page: 3 }, 1),
-                    (StepKind::WhiteLabelStrings, 8),
+                    (StepKind::WhiteLabelStrings, 5),
                 ],
                 vec![
-                    (StepKind::WhiteLabelStrings, 33),
+                    (StepKind::WhiteLabelStrings, 36),
                     (StepKind::WhiteLabelTable, 9),
                     (StepKind::WhiteLabelAddr, 1),
                     (StepKind::UsbBootFlags, 3),
@@ -2271,7 +2341,7 @@ mod tests {
         );
         // Each list's total.
         assert!(shows(out.lines(), &["69"]), "{out}");
-        assert!(shows(out.lines(), &["46"]), "{out}");
+        assert!(shows(out.lines(), &["49"]), "{out}");
     }
 
     /// A row that doesn't contain its value once written fails the run.
@@ -2417,8 +2487,9 @@ mod tests {
         );
         let text = error.to_string();
         let lines: Vec<&str> = text.lines().collect();
-        let instance: [&[&str]; 4] = [
+        let instance: [&[&str]; 5] = [
             &["fire-24-f"],
+            &["M"],
             &["piers.rocks"],
             &["2026-01-01"],
             &[SIGNER_NAME, "1"],
@@ -2511,13 +2582,18 @@ mod tests {
             json,
             json!({
                 "chip_id": "DE3F9C232F655B6B",
+                "board_size": "M",
                 "signing_keys": "downloaded",
                 "instances": [{
                     "row": 0x0c0,
                     "current": true,
                     "board": "fire-24-f",
+                    "size": "M",
+                    "revision": null,
                     "manufacturer": "piers.rocks",
+                    "contact": "https://piers.rocks",
                     "date": "20260101",
+                    "batch": null,
                     "signer": 1,
                     "signer_name": "test signer",
                     "verdict": "verified",
@@ -2528,6 +2604,40 @@ mod tests {
                 "valid": true,
             })
         );
+    }
+
+    /// A signature that isn't accepted leaves the manufacturer unproven, so
+    /// its contact isn't shown although the table has it.
+    #[tokio::test]
+    async fn validate_shows_the_contact_only_for_an_accepted_signature() {
+        let mut otp = commissioned_board().await;
+        let retired = table(Some(json!({})));
+        assert_eq!(
+            retired.get(1).unwrap().contact("piers.rocks"),
+            Some("https://piers.rocks")
+        );
+        let (result, out) = validate(&mut otp, &retired, &Files(Vec::new()), false).await;
+        assert!(result.is_err());
+        assert!(!out.contains("https://piers.rocks"), "{out}");
+        let (_, out) = validate(&mut otp, &retired, &Files(Vec::new()), true).await;
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(json["instances"][0]["contact"], json!(null), "{out}");
+    }
+
+    /// An accepted signature whose key doesn't have the manufacturer's contact
+    /// has "unknown" as the contact's value.
+    #[tokio::test]
+    async fn validate_shows_a_missing_contact_as_unknown() {
+        let mut otp = commissioned_board().await;
+        let table = test_board::table_with_empty_contacts();
+        let (result, out) = validate(&mut otp, &table, &Files(Vec::new()), false).await;
+        result.unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        let instance: [&[&str]; 3] = [&["piers.rocks"], &["unknown"], &["2026-01-01"]];
+        assert!(in_turn(&lines, &instance), "{out}");
+        let (_, out) = validate(&mut otp, &table, &Files(Vec::new()), true).await;
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(json["instances"][0]["contact"], json!(null), "{out}");
     }
 
     #[test]
@@ -2937,7 +3047,16 @@ mod tests {
     /// signer `id`, on a board whose CHIPID is [`CHIP_ID`].
     fn signature_for(args: &HardwareCommissionArgs, id: u16) -> [u8; 64] {
         let date = args.date.as_deref().unwrap();
-        let values = CommissioningValues::new(args.board, &args.manufacturer, date, id).unwrap();
+        let size = args.board_size().unwrap();
+        let mut builder =
+            CommissioningValues::builder(args.board, &args.manufacturer, date, id).size(size);
+        if let Some(revision) = &args.revision {
+            builder = builder.revision(revision);
+        }
+        if let Some(batch) = &args.batch {
+            builder = builder.batch(batch);
+        }
+        let values = builder.build().unwrap();
         test_board::key().sign(&values.message(CHIP_ID)).to_bytes()
     }
 
@@ -3245,12 +3364,14 @@ mod tests {
         assert!(!ui.contains("(y/N)"), "{ui}");
 
         // The signature verifies with the test key.
-        let values = CommissioningValues::new(
+        let values = CommissioningValues::builder(
             Board::try_from_str("fire-40-a").unwrap(),
             "piers.rocks",
             test_board::DATE,
             1,
         )
+        .size(BoardSize::L)
+        .build()
         .unwrap();
         let expected = test_board::key().sign(&values.message(CHIP_ID)).to_bytes();
         assert!(shows(out.lines(), &[&hex::encode(expected)]), "{out}");
@@ -3269,6 +3390,33 @@ mod tests {
         let mut otp = blank_board();
         let (result, out) = commission_signed(&mut otp, &args, &table(None)).await;
         assert!(result.unwrap(), "{out}");
+    }
+
+    /// The revision and batch are shown, signed and passed to the command,
+    /// which commissions a board with them.
+    #[tokio::test]
+    async fn a_revision_and_batch_are_signed_and_passed_to_the_command() {
+        let words = to_sign("fire-24-f", "piers.rocks");
+        let words: Vec<&str> = words
+            .iter()
+            .map(String::as_str)
+            .chain(["--rev", "A1", "--batch", "Y1 2345"])
+            .collect();
+        let (ui, out) = sign_with_key_file(&words).await;
+        println!("{ui}{out}");
+        assert!(shows(ui.lines(), &["Revision:", "A1"]), "{ui}");
+        assert!(shows(ui.lines(), &["Batch:", "Y1 2345"]), "{ui}");
+
+        let args = command_in(&out);
+        assert_eq!(args.revision.as_deref(), Some("A1"));
+        assert_eq!(args.batch.as_deref(), Some("Y1 2345"));
+        let mut otp = blank_board();
+        let (result, out) = commission_signed(&mut otp, &args, &table(None)).await;
+        assert!(result.unwrap(), "{out}");
+        let area = read_commissioning(&mut otp).await.unwrap();
+        let current = area.current().unwrap();
+        assert_eq!(current.revision(), Some("A1"));
+        assert_eq!(current.batch(), Some("Y1 2345"));
     }
 
     /// The command always carries the size, M where the board doesn't
@@ -3516,6 +3664,8 @@ mod tests {
             manufacturer: signing_request::MANUFACTURER.to_string(),
             date: RequestDate::Given(date.to_string()),
             signer: signing_request::KEY_ID,
+            revision: None,
+            batch: None,
             force: false,
         };
         let prepared = prepare(&mut otp, &request).await.unwrap();
@@ -3559,6 +3709,8 @@ mod tests {
             manufacturer: signing_request::MANUFACTURER.to_string(),
             date: RequestDate::Given(today()),
             signer: signing_request::KEY_ID,
+            revision: None,
+            batch: None,
             force: false,
         };
         prepare(otp, &request).await.err()

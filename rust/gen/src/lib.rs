@@ -18,6 +18,7 @@ pub mod ihex;
 pub mod image;
 pub mod meta;
 pub mod plugin;
+mod recover;
 pub mod srec;
 pub mod transform;
 pub mod v1;
@@ -39,6 +40,9 @@ pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::{Family, Variant};
+pub use recover::{
+    ChipData, RecoverError, RecoveredConfig, RecoveryProblem, SlotName, check_known, recover_config,
+};
 pub use srec::{SrecError, decode_srec, encode_srec};
 pub use transform::{
     TRANSFORM_LIST_SEPARATOR, Transform, TransformError, apply_transforms, format_transform_list,
@@ -65,6 +69,7 @@ pub use v2::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V2;
 pub use v2::alg_preference::{AddrAlgPreference, CsAlgPreference, DataAlgPreference};
 pub use v2::gpio_use::used_gpios;
 pub use v2::slot_context::socket_pin_offset;
+pub use v2::unscramble::{UnscrambleError, unscramble_slot};
 
 /// Version of metadata produced by this version of the crate
 pub const METADATA_VERSION: u32 = 1;
@@ -392,6 +397,18 @@ pub enum Error {
         /// The plugin's name from the config, or else from its URL or file name.
         plugin: String,
     },
+    /// The board doesn't support a ROM slot.
+    SlotUnsupported {
+        /// The slot's index among ROM slots, as numbered by `inspect slots`.
+        slot: usize,
+        /// The slot's chip type.
+        chip_type: ChipType,
+        /// The board.
+        board: Board,
+        /// Why the board doesn't support the slot. `None` where the reason only
+        /// repeats that the board doesn't support it.
+        reason: Option<String>,
+    },
 }
 type Result<T> = core::result::Result<T, Error>;
 
@@ -717,6 +734,18 @@ impl core::fmt::Display for Error {
                 f,
                 "Cannot set addr_mon_min_cs_act_ns on the {plugin} plugin."
             ),
+            Error::SlotUnsupported {
+                slot,
+                chip_type,
+                board,
+                reason,
+            } => {
+                write!(f, "{board} doesn't support slot {slot}'s {chip_type}.")?;
+                match reason {
+                    Some(reason) => write!(f, "\n  {reason}"),
+                    None => Ok(()),
+                }
+            }
         }
     }
 }
@@ -1212,8 +1241,21 @@ impl ChipConfig {
         }
     }
 
+    /// The chip's [`file`](Self::file) for display. A file inlined as base64 is
+    /// replaced by its label, or as in [`file_for_display`] without one.
+    pub fn file_for_display(&self) -> &str {
+        if !self.file.starts_with(INLINE_BASE64) {
+            return &self.file;
+        }
+        self.label
+            .as_deref()
+            .filter(|label| !label.is_empty())
+            .map_or(INLINE_BASE64_SHOWN, file_for_display)
+    }
+
     // Constructs the filename string for metadata.  Note label will be used
-    // in metadata instead if specified.
+    // in metadata instead if specified.  Errors include it too, so an inlined
+    // file's bytes are left out.
     fn filename(&self) -> String {
         if let Some(label) = &self.label {
             // Return label if we have one
@@ -1221,10 +1263,11 @@ impl ChipConfig {
         }
 
         // Base of filename is "file|extract" or just "file"
+        let file = file_for_display(&self.file);
         let filename_base = if let Some(extract) = &self.extract {
-            format!("{}|{}", self.file, extract)
+            format!("{file}|{extract}")
         } else {
-            self.file.clone()
+            file.to_string()
         };
 
         // If location specified, append "|start=0x...,length=0x..."
@@ -1249,6 +1292,25 @@ impl ChipConfig {
                 format_transform_list(&self.transform)
             )
         }
+    }
+}
+
+/// The prefix of a chip's [`file`](ChipConfig::file) holding the file's
+/// base64-encoded bytes rather than its path or URL.
+pub const INLINE_BASE64: &str = "base64:";
+
+/// The display text for a file inlined as base64.
+const INLINE_BASE64_SHOWN: &str = "base64:...";
+
+/// `file`, a chip's [`file`](ChipConfig::file) or a name made from one, for
+/// display. A file inlined as base64 is replaced by a placeholder.
+/// [`ChipConfig::file_for_display`] uses an inlined file's label where it has
+/// one.
+pub fn file_for_display(file: &str) -> &str {
+    if file.starts_with(INLINE_BASE64) {
+        INLINE_BASE64_SHOWN
+    } else {
+        file
     }
 }
 

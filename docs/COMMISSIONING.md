@@ -37,6 +37,9 @@ of a One ROM, allowing them to commission their own device. When commissioned
 in this way, the manufacturer appears in the commissioning data as
 `onerom.org`.
 
+Use the latest CLI to make the request and to run `hardware commission`.
+A request from an earlier CLI will be rejected.
+
 1. Connect the One ROM and run `onerom hardware request-signature`. For
    example:
 
@@ -86,6 +89,15 @@ signing key is typically only authorised for a single manufacturer string, but
 the maintainers will consider requests for multiple strings on a case by case
 basis.
 
+The key's name and its manufacturer strings must not contain One ROM in any
+form, for example `One ROM`, `OneROM` or `onerom`.
+
+A request must include a contact for each manufacturer string. A contact is an
+email address or URL at which the manufacturer can be contacted, for example
+`https://github.com/acme-retro`. Contacts are published with in the ONE ROM
+repository's signing key table,
+[`rust/app/signing-keys.json`](/rust/app/signing-keys.json).
+
 Any information you submit as part of your request may be published in the One
 ROM repository.
 
@@ -121,8 +133,9 @@ commands require OpenSSL 3.
 
 4. Raise a
    [signing key request](https://github.com/piersfinlayson/one-rom/issues/new?template=signing-key-request.yml),
-   listing each `--manufacturer` you want the key to be able to sign. This key will
-   not be usable until the maintainers grant your request and issue a key ID.
+   listing each `--manufacturer` you want the key to be able to sign, and contact
+   details. This key will not be usable until the maintainers grant your request
+   and issue a key ID.
 
 5. Upon granting your request you will receive a unique signing key ID, which
    is required if using a [signing server](#signing-server).
@@ -181,6 +194,13 @@ to test the external flash with the
 [External Flash Plugin](#external-flash-plugin) before setting the
 size.  If set to `M`, the [size can be changed](#modifying-one-rom-size) later.
 
+The size is written to the signed commissioning data.
+
+There are some optional commissioning values:
+- `--revision` (or `--rev`) is the board's revision, for example `A1`.
+- `--batch` is the board's manufacturing batch, for example a PCB order number
+  or date.
+
 ## Correcting Commissioning Errors
 
 USB bootloader white-labelling details are permanent and cannot be changed once
@@ -189,9 +209,10 @@ written.
 Size information can be changed for 32 and 40 pin boards if the current size is
 `M`.
 
-Board type and manufacturer details can be corrected by re-commissioning the
-One ROM.  This writes a new set of commissioning data in OTP after the
-existing data. The One ROM tooling uses the last commissioning instance.
+Board type, manufacturer, revision and batch can be corrected by
+re-commissioning the One ROM.  This writes a new set of commissioning data in
+OTP after the existing data. The One ROM tooling uses the last commissioning
+instance.
 
 To re-commission a One ROM re-run the commissioning process.
 
@@ -210,6 +231,9 @@ onerom hardware set-size --board fire-40-b --size L
 This setting is **permanent**.  A One ROM set to a size other than M can
 never be changed.
 
+Where a One ROM's size differs from the size it was commissioned as, host
+tools display both, for example `Board size: L (commissioned as M)`.
+
 ## Signing Server
 
 To sign One ROMs using a signing server requires:
@@ -221,7 +245,7 @@ To sign One ROMs using a signing server requires:
 
 To sign through a [signing server](/rust/signing-server/README.md) replace
 `--key acme.pem` with the server's address and the key ID. For example
-`--signer https://sign.internal.example.com --key-id 256`.
+`--signer https://sign.internal.example.com --key-id 4096`.
 
 ## External Flash Plugin
 

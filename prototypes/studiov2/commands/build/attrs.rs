@@ -165,6 +165,10 @@ pub struct CommandSpec {
     /// `#[command(subcommand)]`, which makes the field a branch of the tree.
     pub subcommand: bool,
 
+    /// `#[command(flatten)]`, which adds another struct's options to the
+    /// field's own struct.
+    pub flatten: bool,
+
     /// `#[command(verbatim_doc_comment)]`, which has clap keep the doc
     /// comment's lines as written.
     pub verbatim: bool,
@@ -197,6 +201,7 @@ impl CommandSpec {
         for meta in metas(attrs, "command") {
             match &meta {
                 Meta::Path(path) if is(path, "subcommand") => spec.subcommand = true,
+                Meta::Path(path) if is(path, "flatten") => spec.flatten = true,
                 Meta::Path(path) if is(path, "verbatim_doc_comment") => spec.verbatim = true,
                 Meta::NameValue(nv) if is(&nv.path, "name") => spec.name = Some(text(&nv.value)),
                 Meta::NameValue(nv) if is(&nv.path, "hide") => {

@@ -153,6 +153,12 @@ pub struct SessionState {
     pub format: OutputFormat,
     /// Batch read interval in seconds. Defaults to 1.
     pub interval_secs: u32,
+    /// Fast read delay in cycles.
+    pub fast_read_delay: u32,
+    /// Data lines a drive toggles, or `None` for all of them.
+    pub drive_lines: Option<u16>,
+    /// Drive delay in cycles between toggles.
+    pub drive_delay: u32,
     /// Control line polarities for the current chip.
     pub cs: CsSettings,
     /// Tri-state testing flag for checksum mode.
@@ -169,6 +175,9 @@ impl SessionState {
             range: ReadRange::default(),
             format: OutputFormat::default(),
             interval_secs: 1,
+            fast_read_delay: crate::fast_read::DEFAULT_DELAY_CYCLES,
+            drive_lines: None,
+            drive_delay: crate::drive::DEFAULT_DELAY_CYCLES,
             cs: CsSettings::unset(),
             tri_state: true,
         }
@@ -399,6 +408,13 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  b   Batch ROM read").await?;
     send_line("        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
         .await?;
+    send_line("  a   Batch ROM read and RBCP query").await?;
+    send_line("        a[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
+        .await?;
+    send_line("  x   Continuous fast read").await?;
+    send_line("        x[:<chip>[:<cycles>[:<cs1>[:<cs2>[:<cs3>]]]]]").await?;
+    send_line("  d   Drive data lines as a square wave, chip deselected").await?;
+    send_line("        d[:<chip>[:<lines|all>[:<cycles>]]]").await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
     send_line("  c   Set or change chip type").await?;
@@ -412,6 +428,7 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  p   Show board pin map (socket pin -> GPIO)").await?;
     send_line("        p[:<chip>]").await?;
     send_line("  T   List supported board types").await?;
+    send_line("  R   Query a One ROM in the socket over RBCP").await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;
     send_line("").await?;

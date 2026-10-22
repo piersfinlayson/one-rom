@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.5 - unreleased
+
+- Moves to logic shared with the CLI to combine and verify built firmware.
+- The Analyse tab's Open in Create button copies the configuration and ROM images of a One ROM or firmware file into the Create tab.
+- An image fails to build when a plugin's boot slot address is outside its region.
+- Fix: Due to longer ROM config names the "Loaded (xxx bytes)" was wrapping. It has been removed.
+
 ## v0.2.4 - 2026-10-06
 
 - Rebuilt against the Rust crates released with firmware v0.8.0.

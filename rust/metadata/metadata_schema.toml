@@ -114,9 +114,12 @@
 # Plugin key attributes
 # ---------------------------------------------------------------------------
 #   A [[plugin_keys]] entry is a plugin key with no stored field. The firmware
-#   resolves it by hand in ora_get_metadata_uint (firmware/src/plugin.c). Its
-#   name, id and first_release follow the rules of a field's plugin_key.
+#   resolves it by hand in ora_get_metadata_uint or ora_get_metadata_uint_at
+#   (firmware/src/plugin.c). Its name, id and first_release follow the rules
+#   of a field's plugin_key.
 #   type              - the value's type: u8, u16, u32 or an [[enums]] entry
+#   element           - in place of type, for an array: its element type, u8,
+#                       u16 or u32
 #   comment           - reaches the generated key header whole
 #
 # ---------------------------------------------------------------------------
@@ -128,6 +131,8 @@
 #                       never changes and a new one is free.
 #   params_len_constant - on a variant, the constant holding its parameter
 #                       length. A variant ending in a string names none.
+#   non_exhaustive    - mark the Rust enum #[non_exhaustive] so a new variant
+#                       isn't a breaking change to the crate
 #
 # ---------------------------------------------------------------------------
 # Enum attributes
@@ -135,6 +140,7 @@
 #   ora_api           - also emit each value as ORA_<value name>, as for a
 #                       constant
 #   first_release     - as for a constant
+#   non_exhaustive    - as for a tagged FAM
 #
 # ---------------------------------------------------------------------------
 # Enum variant attributes
@@ -527,6 +533,15 @@ value = 1
 comment = "Format version, in the row after OTP_STORE_MAGIC."
 
 [[constants]]
+name = "COMMISSIONING_VERSION_KEY"
+type = "u16"
+value = 0xFFFF
+ora_api = true
+first_release = "0.8.1"
+comment = """Key for the commissioning instance's format version in
+ora_get_commissioning_value."""
+
+[[constants]]
 name = "OTP_USB_WHITE_LABEL_ROW"
 type = "u16"
 value = 0xec0
@@ -544,6 +559,12 @@ name = "OTP_COMMISSIONING_SIGNER_LEN"
 type = "usize"
 value = 2
 comment = "Length of an OTP_KEY_COMMISSIONING_SIGNER value."
+
+[[constants]]
+name = "OTP_COMMISSIONING_SIZE_LEN"
+type = "usize"
+value = 2
+comment = "Length of an OTP_KEY_COMMISSIONING_SIZE value."
 
 [[constants]]
 name = "OTP_BOOT_FLAGS0_ROW"
@@ -1256,12 +1277,16 @@ packed = true
 comment = """Key of an entry in the One ROM OTP store. The commissioning area and the
 general store share this list, and a key keeps its number for good."""
 strip_prefix = "OTP_KEY_"
+ora_api = true
+first_release = "0.8.1"
+non_exhaustive = true
 
 [[enums.variants]]
 name = "OTP_KEY_NONE"
 value = 0
 sentinel = true
-comment = "Not a key. With length 0 it ends a list, and otherwise it marks a deleted entry."
+comment = """An entry with key 0 and length 0 ends a list of OTP store entries. An entry
+with key 0 and any other length has been deleted."""
 
 [[enums.variants]]
 name = "OTP_KEY_COMMISSIONING_BOARD"
@@ -1289,10 +1314,26 @@ value = 5
 comment = "ID of the signing key"
 
 [[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_REVISION"
+value = 6
+comment = "Board revision"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_BATCH"
+value = 7
+comment = "Manufacturing batch"
+
+[[enums.variants]]
+name = "OTP_KEY_COMMISSIONING_SIZE"
+value = 8
+comment = "Size the board was commissioned as"
+
+[[enums.variants]]
 name = "OTP_KEY_RESERVED"
 value = 0xFFFF
 sentinel = true
-comment = "Never a key. Holds the packed C enum at 2 bytes."
+comment = """0xFFFF is never written to OTP as a key. It makes the C enum
+onerom_otp_key_t 2 bytes wide."""
 
 # ---
 
@@ -1458,6 +1499,12 @@ first_release = "0.8.0"
 name = "FIRMWARE_FLAG_STANDBY"
 bit = 0
 comment = "One ROM is in standby and doesn't serve the ROM."
+
+[[bitfields.members]]
+name = "FIRMWARE_FLAG_LOG_IN_UP1"
+bit = 1
+first_release = "0.8.1"
+comment = """One ROM's log is in RTT up buffer 1. Never cleared once set."""
 
 [[bitfields]]
 name = "onerom_override_states_t"
@@ -2408,6 +2455,14 @@ type = "onerom_flash_size_t"
 comment = """Size of the flash chip on QSPI chip select 1, as an ORA_FLASH_SIZE_* value.
 See ora_get_metadata_uint_fn_t in api.h."""
 
+[[plugin_keys]]
+name = "CHIP_ID"
+id = 26
+first_release = "0.8.1"
+element = "u8"
+comment = """The RP2350's 64-bit chip ID as 8 bytes. The most significant byte is first
+as the chip ID is usually written in hex most significant byte first."""
+
 [[structs.fields]]
 name = "firmware_states"
 kind = "bitfield"
@@ -2733,6 +2788,7 @@ discriminant_type = "onerom_otp_key_t"
 param_len_field = "len"
 param_len_type = "u16"
 base_size = 4
+non_exhaustive = true
 
 [[tagged_fams.variants]]
 discriminant = "OTP_KEY_COMMISSIONING_BOARD"
@@ -2777,6 +2833,32 @@ params_len_constant = "OTP_COMMISSIONING_SIGNER_LEN"
 
 [[tagged_fams.variants.fields]]
 name = "id"
+kind = "scalar"
+type = "u16"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_REVISION"
+comment = "Board revision"
+
+[[tagged_fams.variants.fields]]
+name = "revision"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_BATCH"
+comment = "Manufacturing batch"
+
+[[tagged_fams.variants.fields]]
+name = "batch"
+kind = "string"
+
+[[tagged_fams.variants]]
+discriminant = "OTP_KEY_COMMISSIONING_SIZE"
+comment = "Size the board was commissioned as, an onerom_board_size_t value"
+params_len_constant = "OTP_COMMISSIONING_SIZE_LEN"
+
+[[tagged_fams.variants.fields]]
+name = "size"
 kind = "scalar"
 type = "u16"
 
@@ -3026,3 +3108,121 @@ value = 0xF540
 ora_api = true
 first_release = "0.8.0"
 comment = "The USB product ID a commissioned One ROM's bootloader presents."
+
+# ---------------------------------------------------------------------------
+# Reboot
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "REBOOT_MAX_DELAY_MS"
+type = "u32"
+value = 10000
+ora_api = true
+first_release = "0.8.1"
+comment = "Maximum reboot delay in milliseconds."
+
+[[constants]]
+name = "REBOOT_MIN_DELAY_MS"
+type = "u32"
+value = 1
+comment = """Reboot delay in milliseconds used instead of zero to avoid
+loading the watchdog with zero."""
+
+[[constants]]
+name = "REBOOT_REQUEST_MIN_SIZE"
+type = "u8"
+value = 8
+comment = """Size of ora_reboot_request_t when introduced, and the smallest
+size field accepted. Frozen, for the reason LED_REQUEST_MIN_SIZE is."""
+
+# ---------------------------------------------------------------------------
+# Plugin header
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "PLUGIN_MAGIC"
+type = "u32"
+value = 0x2041524F
+comment = """A plugin header's magic value "ORA " read as a little-endian 32-bit value."""
+
+[[constants]]
+name = "PLUGIN_HEADER_PLUGIN_TYPE_OFFSET"
+type = "usize"
+value = 20
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the plugin_type byte in the plugin header."
+
+[[constants]]
+name = "PLUGIN_HEADER_OVERRIDES1_OFFSET"
+type = "usize"
+value = 22
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the overrides1 byte in the plugin header."
+
+[[constants]]
+name = "PLUGIN_HEADER_PROPERTIES1_OFFSET"
+type = "usize"
+value = 23
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the properties1 byte in the plugin header."
+
+[[constants]]
+name = "PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET"
+type = "usize"
+value = 32
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the little-endian 32-bit boot_slot_addr in the plugin header."
+
+[[constants]]
+name = "OVERRIDE1_BOOT_SLOT"
+type = "u8"
+value = 0x02
+ora_api = true
+first_release = "0.8.1"
+comment = """Plugin header overrides1 bit. With it set, One ROM boots the ROM slot
+numbered in the byte at boot_slot_addr, which must be in the plugin's own flash
+region. ROM slot 0 is the first slot that isn't a plugin. A number past the
+last ROM slot is ignored. The system plugin's boot slot is used ahead of the
+user plugin's."""
+
+[[constants]]
+name = "OVERRIDE1_IGNORE_IMAGE_SELECT"
+type = "u8"
+value = 0x04
+ora_api = true
+first_release = "0.8.1"
+comment = """Plugin header overrides1 bit. With it set, ROM slot 0 boots unless a
+plugin's OVERRIDE1_BOOT_SLOT selects a slot."""
+
+[[constants]]
+name = "PROPERTY1_EXCLUSIVE_SERIAL_IN"
+type = "u8"
+value = 0x04
+ora_api = true
+first_release = "0.8.1"
+comment = """Plugin header properties1 bit requesting exclusive serial IN mode. With this
+bit set, plugin are started with ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN set."""
+
+# ---------------------------------------------------------------------------
+# USB DPRAM
+# ---------------------------------------------------------------------------
+
+[[constants]]
+name = "USB_DPRAM_BASE_ADDR"
+type = "u32"
+value = 0x50100000
+ora_api = true
+first_release = "0.8.1"
+comment = "Address of the RP2350's USB DPRAM."
+
+[[constants]]
+name = "USB_DPRAM_SIZE"
+type = "usize"
+value = 0x1000
+ora_api = true
+first_release = "0.8.1"
+comment = "Size in bytes of the RP2350's USB DPRAM."

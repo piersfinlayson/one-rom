@@ -53,6 +53,12 @@ async fn a_commissioned_l_board() {
     both(&mut otp, "fire-40-a").await;
 }
 
+/// A board commissioned as M and later set to L.
+#[tokio::test]
+async fn an_m_board_set_to_l() {
+    inspect_otp(&mut super::m_board_set_to_l().await, "fire-40-a", false).await;
+}
+
 #[tokio::test]
 async fn a_board_neither_m_nor_l() {
     both(&mut neither_m_nor_l_board(), "fire-40-a").await;

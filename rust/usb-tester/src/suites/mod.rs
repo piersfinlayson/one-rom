@@ -7,6 +7,7 @@
 use crate::Suite;
 
 pub mod descriptors;
+pub mod exclusive;
 pub mod gpio;
 pub mod input;
 pub mod led;
@@ -45,6 +46,11 @@ pub static SUITES: &[Suite] = &[
         name: "input",
         blurb: "does what a terminal types reach the input channel?",
         scenarios: input::SCENARIOS,
+    },
+    Suite {
+        name: "exclusive",
+        blurb: "does a plugin get exclusive use of the serial port?",
+        scenarios: exclusive::SCENARIOS,
     },
     Suite {
         name: "descriptors",

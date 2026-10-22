@@ -269,6 +269,8 @@ fn main() {
         .allowlist_function("stub_set_sel_image")
         .allowlist_function("stub_set_rp_variant")
         .allowlist_function("stub_bootloader_entered")
+        .allowlist_function("stub_rom_reboot")
+        .allowlist_function("stub_set_rom_reboot_fails")
         // The microsecond counter behind ora_get_plugin_uptime_ms().  There is no
         // TIMER0 in this process, so the harness owns the count - which also
         // lets a test place the clock exactly where it wants it.
@@ -289,7 +291,9 @@ fn main() {
         .allowlist_function("ffi_firmware_states")
         .allowlist_function("ffi_set_plugins_started")
         .allowlist_function("ffi_firmware_flags")
+        .allowlist_function("ffi_set_firmware_flags")
         .allowlist_var("ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT")
+        .allowlist_function("otp_commissioning_value")
         .allowlist_function("otp_commissioned_board")
         .allowlist_function("otp_board_mismatch")
         .allowlist_function("otp_board_size")
@@ -310,11 +314,43 @@ fn main() {
         // A slot's override states, so a test can boot a slot into standby
         // without a config of its own.
         .allowlist_function("ffi_set_rom_slot_override_states")
+        .allowlist_function("ffi_set_rom_slot_no_image")
         .allowlist_function("ffi_set_plugin_header")
         .allowlist_function("initial_plugin_parse")
         .allowlist_function("other_core_yield_capability_from")
         .allowlist_var("ORA_OVERRIDE1_DISABLE_VBUS_DETECT")
         .allowlist_var("ORA_PROPERTY1_SUPPORTS_YIELD")
+        // Plugin launch, the plugins' boot slot and exclusive serial IN mode.
+        .allowlist_function("ffi_overlay_plugin_slots")
+        .allowlist_function("ffi_set_plugin_boot_slot_addr")
+        .allowlist_function("ffi_user_plugin_to_start")
+        .allowlist_function("ffi_system_plugin_to_launch")
+        .allowlist_function("ffi_user_plugin_to_launch")
+        .allowlist_function("plugin_entry_args")
+        .allowlist_function("stub_flash_set8")
+        .allowlist_function("stub_flash_clear")
+        .allowlist_function("plugin_entry_flags")
+        .allowlist_function("plugin_boot_slot")
+        .allowlist_var("ORA_ENTRY_FLAG_.*")
+        .allowlist_function("ffi_set_plugin_magic")
+        .allowlist_function("ffi_set_plugin_api_version")
+        .allowlist_function("ffi_set_plugin_min_fw_version")
+        .allowlist_var("ORA_PLUGIN_MAGIC")
+        .allowlist_var("ORA_PLUGIN_VERSION_1")
+        .allowlist_function("ffi_set_plugin_filename")
+        .allowlist_function("ffi_set_rom_slot_count")
+        // The log's move to USB DPRAM.
+        .allowlist_function("launch_log_move")
+        .allowlist_var("USB_DPRAM_LOG_SIZE")
+        .allowlist_function("stub_usb_resets")
+        .allowlist_var("STUB_USB_RESET.*")
+        .allowlist_function("onerom_rtt_test_unmove_log")
+        .allowlist_function("onerom_rtt_log_moved")
+        .allowlist_function("ora_log_reset_claims")
+        .allowlist_function("ffi_rtt_up")
+        .allowlist_type("ffi_rtt_up_t")
+        .allowlist_function("ffi_log_write")
+        .allowlist_function("ffi_log_read")
         .allowlist_function("ffi_epio_setup_sram")
         .allowlist_function("ffi_epio_setup_dma_chain")
         .allowlist_function("ffi_epio_update_from_apio")
@@ -351,6 +387,9 @@ fn main() {
         // nothing drags them in transitively either.  The plugin API tester
         // names the LEDs and the modes rather than hardcoding their values.
         .allowlist_type("ora_led.*")
+        // ora_reboot_mode_t reaches the API as a uint8_t field, as the LED
+        // enums do.
+        .allowlist_type("ora_reboot_mode_t")
         // ora_address_monitor_priority_t reaches the API as a uint8_t field of
         // ora_address_monitor_options_t, so it is not pulled in by the setup
         // function's type and is named here so the monitor tester can use it.

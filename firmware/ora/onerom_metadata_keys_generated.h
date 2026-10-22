@@ -116,6 +116,10 @@ typedef enum {
     // The firmware's flags, as ORA_FIRMWARE_FLAG_* bits.
     // @since firmware 0.8.0
     ORA_METADATA_KEY_FIRMWARE_FLAGS    = 0x00000019,
+    // The RP2350's 64-bit chip ID as 8 bytes. The most significant byte is first
+    // as the chip ID is usually written in hex most significant byte first.
+    // @since firmware 0.8.1
+    ORA_METADATA_KEY_CHIP_ID           = 0x0000001A,
     ORA_METADATA_KEY_INVALID           = 0xFFFFFFFF,  // Invalid metadata key
 } ora_metadata_key_t;
 _Static_assert(sizeof(ora_metadata_key_t) == 4, "ora_metadata_key_t must be 4 bytes");

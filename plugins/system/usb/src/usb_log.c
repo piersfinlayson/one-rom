@@ -2,27 +2,15 @@
 //
 // MIT License
 
-// Forwarding One ROM's log to the CDC serial port, and the terminal's input
+// Forwarding log channel 0 to the CDC serial port, and the terminal's input
 // back.
 //
-// The plugin claims the channels 0 and 1 for reading and writing respectively.
-// When a terminal is attached the CDC interface.
-// 
-// Each terminal session opens with a banner naming the device.
+// The plugin claims channels 0 and 1 for reading and writing respectively.
 //
-// Nothing is forwarded until a terminal opens the port, so that a debug probe
-// can still read the log on a device that merely has USB.  What has already
-// accumulated is then forwarded rather than discarded - see log_drain_task().
+// Each terminal session opens with a banner identifying the device.
 //
-// Two different conditions gate this, and they are not the same thing:
-//
-// - Whether a terminal has the port open, which is DTR, and which marks the
-//   start of a session.  tinyusb reports the transition rather than the level,
-//   so a close and reopen between two passes of the main loop is still seen as
-//   both.
-// - Whether the bus can carry data right now, which is tud_cdc_n_connected().
-//   It also goes false on a bus suspend, where the terminal is still open, so a
-//   host sleeping pauses the forwarding and resumes where it left off.
+// In exclusive serial IN mode only channel 0 goes to the port, as soon as the
+// bus is ready.
 
 #include "usb_plugin.h"
 #include "tusb.h"
@@ -440,8 +428,8 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
     }
 }
 
-// Move what the channel holds to the endpoint.  The banner is complete and the
-// bus can carry data by the time this is called.
+// Move the channel's bytes to the endpoint.  The bus is ready and any banner is
+// complete by the time this is called.
 static void log_drain_bytes(void) {
     uint8_t buf[LOG_DRAIN_CHUNK];
     uint32_t copied = 0;
@@ -479,7 +467,20 @@ static void log_drain_bytes(void) {
     tud_cdc_n_write_flush(LOG_DRAIN_CDC_ITF);
 }
 
+// tinyusb clears the CDC TX FIFO when the host configures the device, so
+// channel 0 keeps the bytes until the bus is ready.
+static void log_drain_exclusive(void) {
+    if ((context.log_read != NULL) && tud_ready()) {
+        log_drain_bytes();
+    }
+}
+
 void log_drain_task(void) {
+    if (context.exclusive_serial_in) {
+        log_drain_exclusive();
+        return;
+    }
+
     // Nothing is drained until a terminal opens the port, so that a debug
     // probe remains able to read the log on a device that merely has USB.  The
     // channel filling and the writer dropping records is the same behaviour as

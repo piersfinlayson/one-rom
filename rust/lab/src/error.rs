@@ -39,6 +39,18 @@ pub enum Error {
     Cancelled,
     /// An invalid control line polarity was entered
     InvalidCsPolarity,
+    /// A control line's polarity is unset or set to auto-detect
+    CsPolarityNotSet,
+    /// An RBCP step failed
+    Rbcp(crate::rbcp::Failure),
+    /// The chip is larger than a fast read supports
+    FastReadChipSize,
+    /// The board's pins for this chip can't be driven by a fast read
+    FastReadPins,
+    /// The board's data pins for this chip can't be driven as a square wave
+    DrivePins,
+    /// A drive's data lines include one the chip doesn't have
+    DriveLines(usize),
 }
 
 impl From<crate::usb::Error> for Error {
@@ -67,6 +79,22 @@ impl fmt::Display for Error {
             Self::Syntax => write!(f, "syntax error"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::InvalidCsPolarity => write!(f, "invalid control line polarity"),
+            Self::CsPolarityNotSet => {
+                write!(f, "control line polarity not set - use 'c' to set it")
+            }
+            Self::Rbcp((step, e)) => write!(f, "RBCP {step}: {e}"),
+            Self::FastReadChipSize => write!(
+                f,
+                "a fast read supports chips up to {}KB",
+                crate::fast_read::MAX_BYTES / 1024
+            ),
+            Self::FastReadPins => {
+                write!(f, "a fast read doesn't support this chip on this board")
+            }
+            Self::DrivePins => {
+                write!(f, "data lines can't be driven for this chip on this board")
+            }
+            Self::DriveLines(n) => write!(f, "this chip has {n} data lines"),
         }
     }
 }

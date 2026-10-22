@@ -27,7 +27,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::AUTHORIZATION;
 use hyper::{Method, Request, StatusCode};
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_metadata::otp::{CommissioningValues, RecordLine, format_chip_id};
 use onerom_signing_server::http::{Server, serve};
 use onerom_signing_server::keys::{self, Keys};
@@ -378,6 +378,35 @@ async fn a_live_request_adds_a_line_to_each_record() {
     );
 }
 
+/// A request with a size, revision and batch has them in the instance it
+/// signs and in its private line.
+#[tokio::test]
+async fn a_size_revision_and_batch_are_signed_and_recorded() {
+    let setup = Setup::new().await;
+    let request = REQUEST.replace(
+        r#""manufacturer""#,
+        r#""size": "L", "revision": "A1", "batch": "Y1-2345", "manufacturer""#,
+    );
+    let (status, body) = setup.sign(&request).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let signature: [u8; 64] = body.try_into().unwrap();
+    let message = CommissioningValues::builder(Board::Fire24F, "piers.rocks", "20260926", 1)
+        .size(BoardSize::L)
+        .revision("A1")
+        .batch("Y1-2345")
+        .build()
+        .unwrap()
+        .message(CHIP_ID);
+    public_key(1)
+        .verify_strict(&message, &Signature::from_bytes(&signature))
+        .unwrap();
+    let hex: String = signature.iter().map(|byte| format!("{byte:02x}")).collect();
+    let line = format!(
+        r#"{{"request":"live","chip_id":"DE3F9C232F655B6B","board":"fire-24-f","size":"L","revision":"A1","manufacturer":"piers.rocks","date":"20260926","batch":"Y1-2345","signature":"{hex}"}}"#
+    );
+    assert_eq!(setup.private_file(1), Some(format!("{line}\n")));
+}
+
 /// The private record contains a board's canonical name whichever of its names
 /// the request used.
 #[tokio::test]
@@ -512,6 +541,9 @@ async fn a_bad_request_is_refused() {
         REQUEST.replace("piers.rocks", "Café"),
         REQUEST.replace("piers.rocks", r"piers\trocks"),
         REQUEST.replace("piers.rocks", &"x".repeat(1941)),
+        REQUEST.replace('}', r#", "size": "XL"}"#),
+        REQUEST.replace('}', r#", "revision": " A1"}"#),
+        REQUEST.replace('}', r#", "batch": ""}"#),
     ];
     for body in &bodies {
         let (status, response) = setup.sign(body).await;

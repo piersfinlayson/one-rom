@@ -62,20 +62,20 @@ fn help() {
 /// 27C400 chip sets.
 #[tokio::test]
 async fn a_built_image() {
-    inspect_both(&image_file(BoardSize::M, 2)).await;
+    inspect_both(&image_file(BoardSize::M, 2).await).await;
 }
 
 /// A fire-24-f image with SEL_C and X1 reserved.
 #[tokio::test]
 async fn an_image_with_reserved_pins() {
-    inspect_both(&image_2364(1, &["sel_c", "x1"])).await;
+    inspect_both(&image_2364(1, &["sel_c", "x1"]).await).await;
 }
 
 /// A fire-24-f image with v0.8.1 firmware whose address monitor minimum
 /// CS-active time is set globally and for slot 0.
 #[tokio::test]
 async fn an_image_with_addr_mon_min_cs_act_ns() {
-    inspect_both(&image_addr_mon(Some(140), &[Some(300), None])).await;
+    inspect_both(&image_addr_mon(Some(140), &[Some(300), None]).await).await;
 }
 
 /// A fire-24-f image with v0.8.1 firmware whose address monitor minimum
@@ -84,7 +84,7 @@ async fn an_image_with_addr_mon_min_cs_act_ns() {
 async fn an_image_with_addr_mon_min_cs_act_ns_rounded_up() {
     inspect(
         "onerom firmware inspect --firmware image.bin",
-        &image_addr_mon(Some(141), &[None]),
+        &image_addr_mon(Some(141), &[None]).await,
     )
     .await;
 }
@@ -98,7 +98,7 @@ async fn base_firmware_alone() {
 /// A built image cut off part way through its metadata.
 #[tokio::test]
 async fn an_image_cut_off_in_its_metadata() {
-    let mut image = image_file(BoardSize::M, 1);
+    let mut image = image_file(BoardSize::M, 1).await;
     image.truncate(FIRMWARE_SIZE + 0x100);
     inspect("onerom firmware inspect --firmware image.bin", &image).await;
 }

@@ -4,9 +4,9 @@
 
 //! Shared error type for the One ROM CLI library.
 
-use onerom_app::FlashPlanError;
+use onerom_app::{FlashPlanError, ImageProblem};
 use onerom_config::fw::FirmwareVersion;
-use onerom_fw_parser::ImageFileError;
+use onerom_fw_parser::{ImageFileError, ParseError};
 use onerom_gen::FileFormat;
 use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
@@ -14,6 +14,9 @@ use crate::device::flash_chips;
 use crate::hint;
 use crate::otp::{board_size_text, escape_controls};
 use crate::plugin::{CompatibleRelease, PluginType, PluginVersion};
+use crate::usb::AccessFailure;
+
+pub use onerom_app::image_file_text;
 
 /// Render the way out of a plugin incompatibility as a further indented line.
 ///
@@ -30,7 +33,30 @@ fn plugin_way_out(newest_compatible: &Option<CompatibleRelease>) -> String {
     }
 }
 
+fn reason_line(reason: &Option<String>) -> String {
+    reason
+        .as_ref()
+        .map_or_else(String::new, |reason| format!("\n  {reason}"))
+}
+
+fn slot_range(slots: usize) -> String {
+    match slots {
+        0 => "There aren't any ROM slots.".to_string(),
+        1 => "There is one ROM slot, slot 0.".to_string(),
+        _ => format!("The ROM slots are 0 to {}.", slots - 1),
+    }
+}
+
+fn chip_range(chips: usize) -> String {
+    if chips == 1 {
+        "It contains one chip, chip 0.".to_string()
+    } else {
+        format!("Its chips are 0 to {}.", chips - 1)
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     #[error("Hit an error accessing USB:\n  {0}")]
     Usb(String),
@@ -43,6 +69,13 @@ pub enum Error {
 
     #[error("One ROM not found: {0}")]
     DeviceNotFound(String),
+
+    /// `--serial` matched a One ROM that could not be opened or read.
+    #[error("One ROM {failure}: {serial}")]
+    DeviceInaccessible {
+        serial: String,
+        failure: AccessFailure,
+    },
 
     #[error("Hit an input/output error: {0}")]
     Io(String),
@@ -83,6 +116,84 @@ pub enum Error {
     #[error("The '{0}' command has not been implemented")]
     Unimplemented(String),
 
+    #[error("Couldn't read {what}.\n  {reason}")]
+    ReadBack { what: String, reason: String },
+
+    #[error("There isn't a ROM slot {slot}.\n  {}", slot_range(*slots))]
+    NoSlot { slot: usize, slots: usize },
+
+    #[error("Slot {slot} doesn't have a ROM image.")]
+    NoImage { slot: usize },
+
+    /// A read-back config's unrecognised setting, as a sentence without its
+    /// full stop.
+    #[error("{0}.\n  This is likely a bug.  Please report it.")]
+    NotRecognised(String),
+
+    /// `what` is the One ROM or firmware file read, as the subject of a
+    /// sentence.
+    #[error(
+        "{what}'s firmware v{version} is newer than this version of onerom supports.\n  Update onerom."
+    )]
+    FirmwareTooNew {
+        what: String,
+        version: FirmwareVersion,
+    },
+
+    #[error("--from and --to are the same One ROM.")]
+    CloneOntoItself,
+
+    #[error("Slot {slot} contains {chips} chips.\n  Use --chip to choose one, from 0 to {}.", chips - 1)]
+    ChipNeeded { slot: u8, chips: usize },
+
+    #[error("Slot {slot} doesn't have a chip {chip}.\n  {}", chip_range(*chips))]
+    NoChip { slot: u8, chip: u8, chips: usize },
+
+    /// `feature` is used by the config read back.
+    #[error("Firmware v{version} doesn't support {feature}.\n  Use firmware v{minimum} or later.")]
+    FirmwareTooOldFor {
+        feature: String,
+        version: FirmwareVersion,
+        minimum: FirmwareVersion,
+    },
+
+    #[error(
+        "{file} is too small for a {chip_type}.\n  It's {actual} bytes and a {chip_type} image is {expected} bytes."
+    )]
+    ImageTooSmall {
+        file: String,
+        chip_type: String,
+        expected: usize,
+        actual: usize,
+    },
+
+    /// `reason` is why the board doesn't support the slot. `None` where the
+    /// build error doesn't contain one.
+    #[error(
+        "The destination is a {board}, which doesn't support slot {slot}'s {chip_type}.{}",
+        reason_line(.reason)
+    )]
+    DestinationUnsupported {
+        board: String,
+        slot: usize,
+        chip_type: String,
+        reason: Option<String>,
+    },
+
+    #[error(
+        "There isn't a published {} plugin called {name}.\n  Use '{list}' to list the published plugins.",
+        plugin_type.short(),
+        list = hint::PLUGIN_LIST
+    )]
+    PluginNotPublished {
+        plugin_type: PluginType,
+        name: String,
+    },
+
+    /// onerom-gen's error building an image from a config.
+    #[error("{0}")]
+    Build(onerom_fw::Error),
+
     #[error("Hit an error accessing the serial port:\n  {0}")]
     SerialPort(String),
 
@@ -113,6 +224,9 @@ pub enum Error {
         "No logs were received in {0} seconds.\n  This suggests this One ROM's USB plugin is not new enough to support logging."
     )]
     LogSilent(f32),
+
+    #[error("One ROM's log wasn't found in its RAM.\n  {0}")]
+    LogNotFound(String),
 
     #[error(
         "The operation attempted to access an unsupported memory region\n  Address {0:#010x}, length {1:#010x}"
@@ -155,6 +269,12 @@ pub enum Error {
 
     #[error("Specified version '{0}' not found.\n  Available releases: {1}")]
     VersionNotFound(String, String),
+
+    #[error(
+        "Firmware v{version} isn't released for {board}.\n  Use '{}' to list the releases.",
+        hint::firmware_releases(.board)
+    )]
+    ReleaseNotForBoard { version: String, board: String },
 
     #[error("No latest release found in manifest.\n  This is likely a bug.  Please report it.")]
     NoLatestRelease,
@@ -283,7 +403,7 @@ pub enum Error {
     PluginTooLarge(usize, usize),
 
     #[error(
-        "Plugin '{name}' not found in the release manifest.\n  Use '{list}' to list available plugins.",
+        "There isn't a published plugin called {name}.\n  Use '{list}' to list the published plugins.",
         name = .0,
         list = hint::PLUGIN_LIST
     )]
@@ -500,6 +620,9 @@ pub enum Error {
     #[error("Output directory does not exist: {0}")]
     OutputDirMissing(String),
 
+    #[error("{0} is a file, not a directory.")]
+    NotADirectory(String),
+
     /// One of these was refused:
     /// - a signer table
     /// - the table's pointer
@@ -701,6 +824,11 @@ fn signing_server_text(url: &str, status: &u16, message: &str) -> String {
 /// What to do about a One ROM commissioned with other values.
 const RE_COMMISSION: &str = "Use --force to re-commission it.";
 
+/// The commissioning values are too long for OTP. The manufacturer, revision
+/// and batch are the only values whose lengths the user chooses.
+pub const VALUES_TOO_LONG: &str =
+    "The manufacturer, revision and batch together are too long to fit in OTP.";
+
 /// Who may have written commissioning data this CLI doesn't know.
 pub const NEWER_DATA: &str = "It may have been written by a newer version of the CLI.";
 
@@ -787,11 +915,7 @@ fn refusal(error: &onerom_app::CommissionError, command: Refusing) -> String {
         E::NewerData { .. } | E::UnknownKey { .. } => {
             format!("{}\n  {NEWER_DATA}", sentence(error))
         }
-        // The manufacturer's name is the only value whose length the user
-        // chooses.
-        E::Build(BuildError::DoesNotFit) => {
-            "The manufacturer's name is too long to fit in OTP.".to_string()
-        }
+        E::Build(BuildError::DoesNotFit) => VALUES_TOO_LONG.to_string(),
         E::Otp { .. }
         | E::AreaFull
         | E::Build(_)
@@ -853,24 +977,6 @@ fn image_file_error_text(error: &ImageFileError) -> String {
     )
 }
 
-/// The text for an image file whose slots don't match its length or the flash
-/// chips. The advice isn't included.
-pub fn image_file_text(error: &ImageFileError) -> String {
-    let (fault, detail) = match *error {
-        ImageFileError::TooShort { short_by } => {
-            ("too short", format!("It ends {short_by} bytes short"))
-        }
-        ImageFileError::BadAddress { slot, addr } => (
-            "damaged",
-            format!("Slot {slot} is at {addr:#010x}, which isn't a valid address"),
-        ),
-        ImageFileError::TooLong { too_long_by } => {
-            ("too long", format!("It is {too_long_by} bytes too long"))
-        }
-    };
-    format!("Cannot use this image file because it is {fault}.\n  {detail}.")
-}
-
 /// The error for an image of `image_len` bytes that [`FlashPlan::new`] fails
 /// to plan on a board whose size is `size`.
 ///
@@ -899,11 +1005,37 @@ pub fn plan_error(
 /// The warning `--force` shows in place of `Error::ImageFile(error)`.
 pub fn image_file_warning(error: &ImageFileError) -> String {
     let reason = match *error {
-        ImageFileError::TooShort { short_by } => format!("ends {short_by} bytes short"),
+        ImageFileError::TooShort { short_by } => format!("is {short_by} bytes short"),
         ImageFileError::BadAddress { .. } => "is damaged".to_string(),
         ImageFileError::TooLong { too_long_by } => format!("is {too_long_by} bytes too long"),
     };
     format!("Warning: This image file {reason} (continuing due to --force)")
+}
+
+/// The warning printed under `--force` in place of the error for `problem`.
+pub fn image_problem_warning(problem: &ImageProblem) -> String {
+    match problem {
+        ImageProblem::BoardMismatch { image, expected } => format!(
+            "Warning: firmware board type '{}' does not match expected '{}' (continuing due to --force)",
+            image.name(),
+            expected.name()
+        ),
+        ImageProblem::ParseErrors(errors) => format!(
+            "Warning: assembled firmware has parse errors (continuing due to --force):\n{}",
+            parse_error_detail(errors)
+        ),
+        ImageProblem::ImageFile(error) => image_file_warning(error),
+        _ => format!("Warning: {problem} (continuing due to --force)"),
+    }
+}
+
+/// Each of `errors` on its own indented line.
+fn parse_error_detail(errors: &[ParseError]) -> String {
+    errors
+        .iter()
+        .map(|e| format!("  {e}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// `error`'s text as a sentence, with a capital letter and a full stop.
@@ -934,6 +1066,28 @@ impl From<crate::picobootx::DecodeError> for Error {
 impl From<onerom_fw::Error> for Error {
     fn from(e: onerom_fw::Error) -> Self {
         Self::Other(e.to_string())
+    }
+}
+
+impl From<onerom_app::ImageTooLarge> for Error {
+    fn from(e: onerom_app::ImageTooLarge) -> Self {
+        Self::Other(e.to_string())
+    }
+}
+
+impl From<ImageProblem> for Error {
+    fn from(problem: ImageProblem) -> Self {
+        match problem {
+            ImageProblem::BoardMismatch { image, expected } => Self::BoardMismatch {
+                firmware: image.name().to_string(),
+                expected: expected.name().to_string(),
+            },
+            ImageProblem::ParseErrors(errors) => {
+                Self::FirmwareValidation(parse_error_detail(&errors))
+            }
+            ImageProblem::ImageFile(error) => Self::ImageFile(error),
+            _ => Self::Other(problem.to_string()),
+        }
     }
 }
 
@@ -1037,6 +1191,9 @@ impl From<onerom_app::CommissionError> for Error {
 mod tests {
     use super::*;
 
+    use onerom_metadata::OTP_COMMISSIONING_AREA_FIRST_ROW;
+    use onerom_metadata::otp::{CommissioningArea, CommissioningValues, NewCommissioningInstance};
+
     /// An image file refusal and its warning contain the byte counts.
     #[test]
     fn an_image_file_refusal_contains_the_byte_counts() {
@@ -1137,12 +1294,23 @@ mod tests {
         assert!(commission_l.contains("--force"), "{commission_l}");
         assert!(commission_m.contains("--force"), "{commission_m}");
 
+        let values = CommissioningValues::new(
+            onerom_config::hw::Board::Fire24F,
+            "piers.rocks",
+            "20260101",
+            1,
+        )
+        .unwrap();
+        let mut rows = vec![0; 64];
+        for write in NewCommissioningInstance::new(&values, OTP_COMMISSIONING_AREA_FIRST_ROW)
+            .unwrap()
+            .writes(&[0; 64])
+        {
+            rows[usize::from(write.row - OTP_COMMISSIONING_AREA_FIRST_ROW)] = write.value;
+        }
+        let current = CommissioningArea::parse(&rows).current().cloned().unwrap();
         let already = CommissionError::AlreadyCommissioned {
-            row: 0x0c0,
-            board: "fire-24-f".to_string(),
-            manufacturer: "piers.rocks".to_string(),
-            date: "20260101".to_string(),
-            signer: 1,
+            current: Box::new(current),
             only_date_differs: false,
         };
         let request = Error::RequestSignature(already.clone()).to_string();

@@ -5,9 +5,10 @@
 //! `docs/OTP.md` specifies them.
 //!
 //! - [`CommissioningArea`] and [`GeneralStore`] parse the store's two areas.
-//! - [`CommissioningValues`] builds the message a commissioning instance's
-//!   signature covers.
-//! - [`check_manufacturer`] checks a manufacturer's name.
+//! - [`CommissioningValues`] and [`CommissioningValuesBuilder`] build the
+//!   message a commissioning instance's signature covers.
+//! - [`check_manufacturer`], [`check_revision`] and [`check_batch`] check
+//!   commissioning values.
 //! - [`NewCommissioningInstance`] builds the rows a commissioning instance
 //!   writes.
 //! - [`format_chip_id`] and [`parse_chip_id`] write and read a CHIPID as the
@@ -31,9 +32,9 @@ use serde::ser::SerializeStruct;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    DeviceMemoryView, Generations, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
+    DeviceMemoryView, Generations, MaybeKnown, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
     OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_COMMISSIONING_SIG_LEN,
-    OTP_COMMISSIONING_SIGNER_LEN, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT,
+    OTP_COMMISSIONING_SIGNER_LEN, OTP_COMMISSIONING_SIZE_LEN, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT,
     OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_SIZE_BITS, OTP_FLASH_DEVINFO_SIZE_UNIT,
     OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
     OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_KEY_NONE, OTP_PAGE_ROWS, OTP_STORE_MAGIC,
@@ -63,6 +64,8 @@ const GENERAL_STORE_END: u16 =
 /// server can build it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommissioningValues {
+    /// The values as they were set.
+    source: CommissioningValuesBuilder,
     /// Each entry's rows, key row first, without the signature's entry.
     entries: Vec<Vec<u16>>,
 }
@@ -84,15 +87,23 @@ pub struct RowWrite {
     pub value: u16,
 }
 
-/// Why [`CommissioningValues::new`] or [`NewCommissioningInstance::new`]
-/// refused an instance, or [`check_manufacturer`] refused a name.
+/// Why [`CommissioningValuesBuilder::build`] or
+/// [`NewCommissioningInstance::new`] failed, or why a value failed
+/// [`check_manufacturer`], [`check_revision`] or [`check_batch`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BuildError {
     /// The manufacturer's name is empty.
     EmptyManufacturer,
     /// The manufacturer's name isn't printable ASCII, contains `*` or has a
     /// leading or trailing space.
     BadManufacturer,
+    /// The revision is empty, isn't printable ASCII or has a leading or
+    /// trailing space.
+    BadRevision,
+    /// The batch is empty, isn't printable ASCII or has a leading or trailing
+    /// space.
+    BadBatch,
     /// The date isn't 8 ASCII digits.
     BadDate,
     /// The signer is 0, which no signing key has.
@@ -109,59 +120,69 @@ pub fn check_manufacturer(name: &str) -> Result<(), BuildError> {
     if name.is_empty() {
         return Err(BuildError::EmptyManufacturer);
     }
-    let printable = name.bytes().all(|b| matches!(b, b' '..=b'~') && b != b'*');
-    if !printable || name.starts_with(' ') || name.ends_with(' ') {
+    if name.contains('*') || !is_trimmed_printable(name) {
         return Err(BuildError::BadManufacturer);
     }
     Ok(())
 }
 
+/// Checks `revision` is a valid `COMMISSIONING_REVISION` value. It must be
+/// non-empty printable ASCII without a leading or trailing space.
+pub fn check_revision(revision: &str) -> Result<(), BuildError> {
+    if !is_trimmed_printable(revision) {
+        return Err(BuildError::BadRevision);
+    }
+    Ok(())
+}
+
+/// Checks `batch` is a valid `COMMISSIONING_BATCH` value. It must be
+/// non-empty printable ASCII without a leading or trailing space.
+pub fn check_batch(batch: &str) -> Result<(), BuildError> {
+    if !is_trimmed_printable(batch) {
+        return Err(BuildError::BadBatch);
+    }
+    Ok(())
+}
+
+fn is_trimmed_printable(text: &str) -> bool {
+    !text.is_empty()
+        && text.bytes().all(|b| matches!(b, b' '..=b'~'))
+        && !text.starts_with(' ')
+        && !text.ends_with(' ')
+}
+
 impl CommissioningValues {
-    /// Builds `board`'s commissioning values.
-    ///
-    /// - `date` is the UTC commissioning date as `YYYYMMDD`.
-    /// - `signer` is the ID of the key that signs the instance.
-    ///
-    /// Values too long to fit the commissioning area return
-    /// [`BuildError::DoesNotFit`].
+    /// Builds `board`'s commissioning values without a revision, batch or
+    /// size. It's [`builder`](Self::builder) followed by
+    /// [`build`](CommissioningValuesBuilder::build).
     pub fn new(
         board: Board,
         manufacturer: &str,
         date: &str,
         signer: u16,
     ) -> Result<Self, BuildError> {
-        check_manufacturer(manufacturer)?;
-        if date.len() != 8 || !date.bytes().all(|b| b.is_ascii_digit()) {
-            return Err(BuildError::BadDate);
-        }
-        if signer == 0 {
-            return Err(BuildError::BadSigner);
-        }
+        Self::builder(board, manufacturer, date, signer).build()
+    }
 
-        let entries = [
-            OneromOtpEntry::OtpKeyCommissioningBoard {
-                name: board.name().into(),
-            },
-            OneromOtpEntry::OtpKeyCommissioningManufacturer {
-                name: manufacturer.into(),
-            },
-            OneromOtpEntry::OtpKeyCommissioningDate { date: date.into() },
-            OneromOtpEntry::OtpKeyCommissioningSigner { id: signer },
-        ];
-        // Checked before building the rows because only a value that fits the
-        // area has a length the 16-bit length row can hold.
-        let rows = instance_row_count(
-            entries
-                .iter()
-                .map(|entry| entry_row_count(value_len(entry))),
-        );
-        if rows > usize::from(COMMISSIONING_AREA_END - OTP_COMMISSIONING_AREA_FIRST_ROW) {
-            return Err(BuildError::DoesNotFit);
+    /// Starts building `board`'s commissioning values.
+    ///
+    /// - `date` is the UTC commissioning date as `YYYYMMDD`.
+    /// - `signer` is the ID of the key that signs the instance.
+    pub fn builder(
+        board: Board,
+        manufacturer: &str,
+        date: &str,
+        signer: u16,
+    ) -> CommissioningValuesBuilder {
+        CommissioningValuesBuilder {
+            board,
+            manufacturer: manufacturer.into(),
+            date: date.into(),
+            signer,
+            revision: None,
+            batch: None,
+            size: None,
         }
-
-        Ok(Self {
-            entries: entries.iter().map(entry_rows).collect(),
-        })
     }
 
     /// The message the instance's signature covers, for the chip whose CHIPID
@@ -176,9 +197,143 @@ impl CommissioningValues {
         )
     }
 
+    /// The board.
+    pub fn board(&self) -> Board {
+        self.source.board
+    }
+
+    /// The size the board is commissioned as, where it was set.
+    pub fn size(&self) -> Option<BoardSize> {
+        self.source.size
+    }
+
+    /// The manufacturer's name.
+    pub fn manufacturer(&self) -> &str {
+        &self.source.manufacturer
+    }
+
+    /// The UTC commissioning date as `YYYYMMDD`.
+    pub fn date(&self) -> &str {
+        &self.source.date
+    }
+
+    /// The board's revision, where it was set.
+    pub fn revision(&self) -> Option<&str> {
+        self.source.revision.as_deref()
+    }
+
+    /// The board's manufacturing batch, where it was set.
+    pub fn batch(&self) -> Option<&str> {
+        self.source.batch.as_deref()
+    }
+
     /// The number of rows the instance takes including its signature's entry.
     fn row_count(&self) -> usize {
         instance_row_count(self.entries.iter().map(Vec::len))
+    }
+}
+
+/// [`CommissioningValues`] being built, from [`CommissioningValues::builder`].
+///
+/// A value left unset isn't written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommissioningValuesBuilder {
+    board: Board,
+    manufacturer: String,
+    date: String,
+    signer: u16,
+    revision: Option<String>,
+    batch: Option<String>,
+    size: Option<BoardSize>,
+}
+
+impl CommissioningValuesBuilder {
+    /// Sets the board's revision.
+    pub fn revision(mut self, revision: &str) -> Self {
+        self.revision = Some(revision.into());
+        self
+    }
+
+    /// Sets the board's manufacturing batch.
+    pub fn batch(mut self, batch: &str) -> Self {
+        self.batch = Some(batch.into());
+        self
+    }
+
+    /// Sets the size the board is commissioned as.
+    pub fn size(mut self, size: BoardSize) -> Self {
+        self.size = Some(size);
+        self
+    }
+
+    /// Builds the values.
+    ///
+    /// The entries are in a fixed order whatever order the values were set
+    /// in, so the same values always produce the same rows and signature.
+    ///
+    /// Values too long to fit the commissioning area return
+    /// [`BuildError::DoesNotFit`].
+    pub fn build(self) -> Result<CommissioningValues, BuildError> {
+        let source = self.clone();
+        check_manufacturer(&self.manufacturer)?;
+        if self.date.len() != 8 || !self.date.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(BuildError::BadDate);
+        }
+        if self.signer == 0 {
+            return Err(BuildError::BadSigner);
+        }
+        if let Some(revision) = &self.revision {
+            check_revision(revision)?;
+        }
+        if let Some(batch) = &self.batch {
+            check_batch(batch)?;
+        }
+
+        let size = self
+            .size
+            .map(|size| OneromOtpEntry::OtpKeyCommissioningSize {
+                size: match size {
+                    BoardSize::M => OneromBoardSize::BoardSizeM,
+                    BoardSize::L => OneromBoardSize::BoardSizeL,
+                } as u16,
+            });
+        let revision = self
+            .revision
+            .map(|revision| OneromOtpEntry::OtpKeyCommissioningRevision { revision });
+        let batch = self
+            .batch
+            .map(|batch| OneromOtpEntry::OtpKeyCommissioningBatch { batch });
+        let entries: Vec<OneromOtpEntry> = [
+            OneromOtpEntry::OtpKeyCommissioningBoard {
+                name: self.board.name().into(),
+            },
+            OneromOtpEntry::OtpKeyCommissioningManufacturer {
+                name: self.manufacturer,
+            },
+            OneromOtpEntry::OtpKeyCommissioningDate { date: self.date },
+            OneromOtpEntry::OtpKeyCommissioningSigner { id: self.signer },
+        ]
+        .into_iter()
+        .chain(size)
+        .chain(revision)
+        .chain(batch)
+        .collect();
+
+        // Checked before building the rows because only a value that fits the
+        // area has a length the 16-bit length row can hold.
+        let rows = instance_row_count(
+            entries
+                .iter()
+                .map(|entry| entry_row_count(value_len(entry))),
+        );
+        if rows > usize::from(COMMISSIONING_AREA_END - OTP_COMMISSIONING_AREA_FIRST_ROW) {
+            return Err(BuildError::DoesNotFit);
+        }
+
+        Ok(CommissioningValues {
+            source,
+            entries: entries.iter().map(entry_rows).collect(),
+        })
     }
 }
 
@@ -299,11 +454,16 @@ impl serde::Serialize for StoreEntry {
                 match entry {
                     OneromOtpEntry::OtpKeyCommissioningBoard { name }
                     | OneromOtpEntry::OtpKeyCommissioningManufacturer { name }
-                    | OneromOtpEntry::OtpKeyCommissioningDate { date: name } => {
+                    | OneromOtpEntry::OtpKeyCommissioningDate { date: name }
+                    | OneromOtpEntry::OtpKeyCommissioningRevision { revision: name }
+                    | OneromOtpEntry::OtpKeyCommissioningBatch { batch: name } => {
                         s.serialize_field("value", name)?
                     }
                     OneromOtpEntry::OtpKeyCommissioningSigner { id } => {
                         s.serialize_field("value", id)?
+                    }
+                    OneromOtpEntry::OtpKeyCommissioningSize { size } => {
+                        s.serialize_field("value", size)?
                     }
                     OneromOtpEntry::OtpKeyCommissioningSig { signature } => {
                         s.serialize_field("value", &Hex(signature))?
@@ -551,8 +711,45 @@ impl CommissioningInstance {
         }
     }
 
-    /// Whether the instance has a value for each of the five commissioning
-    /// keys.
+    /// `COMMISSIONING_REVISION`'s value.
+    pub fn revision(&self) -> Option<&str> {
+        if let OneromOtpEntry::OtpKeyCommissioningRevision { revision } =
+            self.used(OneromOtpKey::OtpKeyCommissioningRevision)?
+        {
+            Some(revision)
+        } else {
+            None
+        }
+    }
+
+    /// `COMMISSIONING_BATCH`'s value.
+    pub fn batch(&self) -> Option<&str> {
+        if let OneromOtpEntry::OtpKeyCommissioningBatch { batch } =
+            self.used(OneromOtpKey::OtpKeyCommissioningBatch)?
+        {
+            Some(batch)
+        } else {
+            None
+        }
+    }
+
+    /// `COMMISSIONING_SIZE`'s value. A size missing from this build's
+    /// [`OneromBoardSize`] is [`MaybeKnown::Unknown`].
+    pub fn size(&self) -> Option<MaybeKnown<OneromBoardSize>> {
+        if let OneromOtpEntry::OtpKeyCommissioningSize { size } =
+            self.used(OneromOtpKey::OtpKeyCommissioningSize)?
+        {
+            let known = u8::try_from(*size)
+                .ok()
+                .and_then(|size| OneromBoardSize::try_from(size).ok());
+            Some(known.map_or(MaybeKnown::Unknown(u32::from(*size)), MaybeKnown::Known))
+        } else {
+            None
+        }
+    }
+
+    /// Whether the instance has a value for each key every commissioning
+    /// instance requires.
     pub fn is_valid(&self) -> bool {
         self.board().is_some()
             && self.manufacturer().is_some()
@@ -893,8 +1090,11 @@ fn value_len(entry: &OneromOtpEntry) -> usize {
         OneromOtpEntry::OtpKeyCommissioningBoard { name }
         | OneromOtpEntry::OtpKeyCommissioningManufacturer { name } => name.len(),
         OneromOtpEntry::OtpKeyCommissioningDate { date } => date.len(),
+        OneromOtpEntry::OtpKeyCommissioningRevision { revision } => revision.len(),
+        OneromOtpEntry::OtpKeyCommissioningBatch { batch } => batch.len(),
         OneromOtpEntry::OtpKeyCommissioningSig { .. } => OTP_COMMISSIONING_SIG_LEN,
         OneromOtpEntry::OtpKeyCommissioningSigner { .. } => OTP_COMMISSIONING_SIGNER_LEN,
+        OneromOtpEntry::OtpKeyCommissioningSize { .. } => OTP_COMMISSIONING_SIZE_LEN,
         OneromOtpEntry::Unknown { params, .. } => params.len(),
     }
 }
@@ -909,6 +1109,11 @@ fn entry_key(entry: &OneromOtpEntry) -> u16 {
         }
         OneromOtpEntry::OtpKeyCommissioningDate { .. } => OneromOtpKey::OtpKeyCommissioningDate,
         OneromOtpEntry::OtpKeyCommissioningSigner { .. } => OneromOtpKey::OtpKeyCommissioningSigner,
+        OneromOtpEntry::OtpKeyCommissioningRevision { .. } => {
+            OneromOtpKey::OtpKeyCommissioningRevision
+        }
+        OneromOtpEntry::OtpKeyCommissioningBatch { .. } => OneromOtpKey::OtpKeyCommissioningBatch,
+        OneromOtpEntry::OtpKeyCommissioningSize { .. } => OneromOtpKey::OtpKeyCommissioningSize,
         OneromOtpEntry::Unknown { key, .. } => return *key as u16,
     };
     key as u16

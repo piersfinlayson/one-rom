@@ -45,8 +45,10 @@ mod error;
 mod fetch;
 mod flash;
 pub mod identity;
+mod image;
 mod otp;
 mod plugin;
+mod read_back;
 mod signers;
 mod size;
 
@@ -61,6 +63,12 @@ pub use error::{Error, PluginError};
 pub use fetch::{Fetch, LocalFetch};
 // The flash operations that program an image file.
 pub use flash::{FlashPlan, FlashPlanError, FlashStep};
+// Assembling an image file from a build, and checking an image file before it
+// is programmed.
+pub use image::{
+    CheckedImage, ImagePart, ImageProblem, ImageTooLarge, assemble_image, check_image,
+    image_file_text,
+};
 // A board's size. onerom-config declares it because firmware properties
 // contain one.
 pub use onerom_config::hw::{BoardSize, BoardSizeError};
@@ -72,7 +80,8 @@ pub use size::{device_board_size, known_board_size};
 // word commissioning writes.
 pub use otp::{
     EccRow, Interruption, LOCK1_READ_ONLY, LocalOtpAccess, MemoryOtp, OtpAccess, OtpError,
-    OtpReport, PageLock, read_board_size, read_chip_id, read_commissioning, read_report,
+    OtpReport, PageLock, board_size_text, escape_controls, format_date, read_board_size,
+    read_chip_id, read_commissioning, read_report,
 };
 // FLASH_DEVINFO's fields. The schema declares them, and these are the names the
 // CLI uses.
@@ -113,19 +122,28 @@ pub use plugin::{
     fetch_releases,
     newest_compatible,
     // Pure decision logic.
+    parse_plugin,
     parse_plugins,
     plugin_to_chip_set_config,
     // Resolve the plugins a config refers to by name (delegates fetching).
     resolve_config_plugins,
+    resolve_plugin,
     // Resolve a device plugin slot to a PluginDisplay (delegates fetching).
     resolve_plugin_display,
     resolve_plugins,
     validate_resolved_plugin_types,
     verify_binary,
 };
+// Reading a One ROM or an image file back into the config that builds it.
+pub use read_back::{
+    ReadBack, ReadBackError, ReadBackFile, RecordedPlugin, published_plugins, read_back,
+    read_back_file, read_slot_roms, read_slot_roms_file,
+};
+// A setting a read back's config couldn't recover.
+pub use onerom_gen::RecoveryProblem;
 // The signing keys and the check of a commissioning instance's signature
 // against them.
-pub use signers::{Signer, SignerError, SignerTable, Verdict, verify_instance};
+pub use signers::{Signer, SignerError, SignerTable, Verdict, verdict_text, verify_instance};
 
 /// Returns the version of this crate, as set in `Cargo.toml`.
 pub fn crate_version() -> &'static str {

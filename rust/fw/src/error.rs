@@ -69,10 +69,10 @@ impl std::fmt::Display for Error {
             Error::Config { details } => write!(f, "Configuration error.\n  {details}"),
             Error::Read { file, error } => write!(f, "Error reading file {file}.\n  {error}"),
             Error::Parse { error } => {
-                write!(f, "Hit error parsing supplied configuration.\n  {error}")
+                write!(f, "Hit an error parsing supplied configuration.\n  {error}")
             }
-            Error::Build { error } => write!(f, "Hit error building firmware.\n  {error}"),
-            Error::License { error } => write!(f, "Hit error processing a license.\n  {error}"),
+            Error::Build { error } => write!(f, "Hit an error building firmware.\n  {error}"),
+            Error::License { error } => write!(f, "Hit an error processing a license.\n  {error}"),
             Error::FirmwareVersion { error } => match error {
                 ConfigError::InvalidFirmwareVersion => {
                     write!(f, "Invalid firmware version supplied")
@@ -82,12 +82,12 @@ impl std::fmt::Display for Error {
                 }
             },
             Error::Network { url, error } => {
-                write!(f, "Hit network error accessing URL {url}.\n  {error}")
+                write!(f, "Hit a network error accessing URL {url}.\n  {error}")
             }
             Error::Http { url, status } => {
                 write!(
                     f,
-                    "Hit HTTP error accessing URL {url}.\n  Status code {status}"
+                    "Hit an HTTP error accessing URL {url}.\n  Status code {status}"
                 )
             }
             Error::Json { error } => {

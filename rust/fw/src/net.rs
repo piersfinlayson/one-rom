@@ -10,7 +10,7 @@ use log::{debug, error, info, trace, warn};
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board as HwBoard;
 use onerom_config::mcu::Variant as McuVariant;
-use onerom_gen::Error as GenError;
+use onerom_gen::{Error as GenError, INLINE_BASE64, file_for_display};
 
 use crate::Error;
 
@@ -69,11 +69,14 @@ pub fn fetch_rom_file(
 ) -> Result<(Vec<u8>, Vec<u8>), Error> {
     let bytes = if file.is_empty() {
         // Get the file itself
-        debug!("Fetching ROM file from {}", file_to_retrieve);
+        debug!(
+            "Fetching ROM file from {}",
+            file_for_display(file_to_retrieve)
+        );
 
-        if file_to_retrieve.starts_with("base64:") {
+        if file_to_retrieve.starts_with(INLINE_BASE64) {
             // Base64 encoded file
-            let b64_data = file_to_retrieve.trim_start_matches("base64:");
+            let b64_data = file_to_retrieve.trim_start_matches(INLINE_BASE64);
             let data = base64_engine
                 .decode(b64_data)
                 .map_err(|_| Error::parse(GenError::Base64))?;
@@ -111,7 +114,10 @@ pub fn fetch_rom_file(
             bytes::Bytes::from(data)
         }
     } else {
-        debug!("Using cached ROM file for {}", file_to_retrieve);
+        debug!(
+            "Using cached ROM file for {}",
+            file_for_display(file_to_retrieve)
+        );
         bytes::Bytes::from(file.to_vec())
     };
 
@@ -145,11 +151,14 @@ pub async fn fetch_rom_file_async(
 ) -> Result<(Vec<u8>, Vec<u8>), Error> {
     let bytes = if file.is_empty() {
         // Get the file itself
-        debug!("Fetching ROM file from {}", file_to_retrieve);
+        debug!(
+            "Fetching ROM file from {}",
+            file_for_display(file_to_retrieve)
+        );
 
-        if file_to_retrieve.starts_with("base64:") {
+        if file_to_retrieve.starts_with(INLINE_BASE64) {
             // Base64 encoded file
-            let b64_data = file_to_retrieve.trim_start_matches("base64:");
+            let b64_data = file_to_retrieve.trim_start_matches(INLINE_BASE64);
             let data = base64_engine
                 .decode(b64_data)
                 .map_err(|_| Error::parse(GenError::Base64))?;
@@ -190,7 +199,10 @@ pub async fn fetch_rom_file_async(
             bytes::Bytes::from(data)
         }
     } else {
-        debug!("Using cached ROM file for {}", file_to_retrieve);
+        debug!(
+            "Using cached ROM file for {}",
+            file_for_display(file_to_retrieve)
+        );
         bytes::Bytes::from(file.to_vec())
     };
 

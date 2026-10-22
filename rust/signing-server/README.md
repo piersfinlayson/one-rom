@@ -14,13 +14,15 @@ A key's URL is `https://HOST:PORT/v1/ID`, where `ID` is the key's ID.
 A `/sign` request body:
 
 ```json
-{"chip_id": "E126C9F97C10ADAC", "board": "fire-24-f", "manufacturer": "piers.rocks", "date": "20260926"}
+{"chip_id": "E126C9F97C10ADAC", "board": "fire-24-f", "size": "M", "manufacturer": "piers.rocks", "date": "20260926"}
 ```
 
 - `chip_id` is the CHIPID in the form the bootloader's USB serial number uses.
   It's 16 uppercase hex digits.
+- `size` is optional and is the board's size, `M` or `L`.
+- `revision` and `batch` are optional strings.
 - `date` is the UTC commissioning date in the form `YYYYMMDD`.
-- `dry_run` is optional and `false` when left out. A dry run returns the
+- `dry_run` is optional and `false` when omitted. A dry run returns the
   signature without adding it to the public record. It's still added to the
   private record.
 
@@ -133,11 +135,12 @@ records every signature the server makes, dry runs included, with the values it
 covers. Key n's file is `signatures/n.jsonl`. A line is a JSON object:
 
 ```json
-{"request":"live","chip_id":"FB8E5D8DD18D5EF7","board":"fire-40-a","manufacturer":"piers.rocks","date":"20260928","signature":"<128 lowercase hex digits>"}
+{"request":"live","chip_id":"FB8E5D8DD18D5EF7","board":"fire-40-a","size":"L","manufacturer":"piers.rocks","date":"20260928","signature":"<128 lowercase hex digits>"}
 ```
 
 - `request` is `live` or `dry-run`.
-- `chip_id`, `manufacturer` and `date` are as the request provided them.
+- `chip_id`, `size`, `revision`, `manufacturer`, `date` and `batch` are as the
+  request provided them. An optional value missing from the request is omitted.
 - `board` is the board's canonical name.
 - `signature` is the signature in lowercase hex.
 

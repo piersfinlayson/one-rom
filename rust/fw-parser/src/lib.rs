@@ -34,7 +34,8 @@ use esp_println as _;
 #[cfg(not(feature = "std"))]
 use alloc::string::ToString;
 
-use airfrog_rpc::io::Reader;
+/// Reads a One ROM's memory.
+pub use airfrog_rpc::io::Reader;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, Variant as McuVariant};
@@ -78,7 +79,8 @@ use core::fmt;
 use log::{debug, error, info, trace, warn};
 
 pub use device::{
-    ImageFileError, ParsedDevice, RomView, SlotKind, SlotView, Slots, parse_image_file,
+    ImageFileError, ParsedDevice, RomView, SlotKind, SlotReadError, SlotView, Slots,
+    image_file_reader, parse_image_file,
 };
 pub use info::{Sdrr, SdrrExtraInfo, SdrrInfo, SdrrPins, SdrrRomInfo, SdrrRomSet, SdrrRuntimeInfo};
 pub use onerom::{FirmwareFormat, NewerGeneration, OneRom, RuntimeAbsence};
@@ -398,6 +400,10 @@ impl<'a, R: Reader> Parser<'a, R> {
             Some(FirmwareFormat::Schema) => match self.parse_schema_device().await {
                 Ok(SchemaDevice::OneRom(onerom)) => ParsedDevice::Schema(onerom),
                 Ok(SchemaDevice::Lab) => ParsedDevice::Lab,
+                Ok(SchemaDevice::Newer(version, e)) => ParsedDevice::Schema(OneRom::newer(
+                    version,
+                    vec![ParseError::new("parse_format_schema", e)],
+                )),
                 Err(e) => ParsedDevice::Schema(OneRom::new(
                     None,
                     vec![ParseError::new("parse_format_schema", e)],
@@ -702,6 +708,7 @@ impl<'a, R: Reader> Parser<'a, R> {
         match self.parse_schema_device().await? {
             SchemaDevice::OneRom(onerom) => Ok(onerom),
             SchemaDevice::Lab => Err("This is One ROM Lab firmware, not One ROM".into()),
+            SchemaDevice::Newer(_, e) => Err(e),
         }
     }
 
@@ -796,8 +803,11 @@ impl<'a, R: Reader> Parser<'a, R> {
         // One ROM's metadata and runtime, read below, are only known to be laid
         // out as this build expects up to MAX_VERSION.
         if version > MAX_VERSION {
-            return Err(format!(
-                "One ROM firmware version v{version} unsupported - max version v{MAX_VERSION}"
+            return Ok(SchemaDevice::Newer(
+                version,
+                format!(
+                    "One ROM firmware version v{version} unsupported - max version v{MAX_VERSION}"
+                ),
             ));
         }
 
@@ -1024,6 +1034,8 @@ fn info_clear_u32(buf: &mut [u8; ONEROM_INFO_SIZE], offset: usize) {
 enum SchemaDevice {
     OneRom(OneRom),
     Lab,
+    /// One ROM firmware newer than [`MAX_VERSION`], with the parse error.
+    Newer(FirmwareVersion, String),
 }
 
 /// Parse `onerom_info_t` without following `metadata` or `runtime`, which

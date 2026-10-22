@@ -147,23 +147,16 @@ impl std::fmt::Display for Hdr {
     }
 }
 
-/// The response header is 8 bytes; the data section follows it.
-pub const HDR_SIZE: u32 = 8;
-
-/// The knock this device implementation uses.  Not defined by the protocol —
-/// the specification requires only that device and host agree in advance.
-pub const KNOCK: [u8; 6] = *b"!RBCP!";
-
-/// Protocol-recommended defaults for the two boolean values the host chooses
-/// when entering command-response mode ("Protocol Defaults").
-pub const DEFAULT_COMPLETE: u8 = 0xBB;
-pub const DEFAULT_STATUS_OK: u8 = 0xCC;
+pub use onerom_rbcp_host::{
+    DEFAULT_COMPLETE, DEFAULT_STATUS_OK, HDR_SIZE, KNOCK, aux, control, group, led, modify, nv,
+    pipes, read, reset,
+};
 
 /// How many polls the host makes before giving up on a device response.
 ///
 /// The reference host uses a platform-tuned loop count; here it bounds a test,
 /// so it only has to be larger than any legitimate response.
-const POLL_LIMIT: u32 = 512;
+pub const POLL_LIMIT: u32 = 512;
 
 /// The fewest cycles from asserting CS to sampling the data pins.
 ///
@@ -573,6 +566,30 @@ impl<'a> Bus<'a> {
         r.is_ok().then_some(info.gpio_use)
     }
 
+    /// The firmware's version string, read through the plugin API.
+    pub fn device_version(&self) -> Result<String, String> {
+        match self.emu.get_device_version(24) {
+            (OraResult::Ok, Some(v)) => Ok(v),
+            (r, _) => Err(format!("get_device_version returned {r:?}")),
+        }
+    }
+
+    /// A metadata string, read through the plugin API.  `None` where it is
+    /// unset.
+    pub fn metadata_str(&self, key: fw_ffi::ora_metadata_key_t) -> (OraResult, Option<String>) {
+        self.emu.get_metadata_str(key)
+    }
+
+    /// A commissioning value, read through the plugin API.
+    pub fn commissioning_value(&self, key: u16) -> (OraResult, Option<Vec<u8>>) {
+        self.emu.get_commissioning_value(key)
+    }
+
+    /// A metadata number, read through the plugin API.
+    pub fn metadata_uint(&self, key: fw_ffi::ora_metadata_key_t) -> (OraResult, Option<u32>) {
+        self.emu.get_metadata_uint(key)
+    }
+
     /// Put the millisecond counter the device times with at `us`
     /// microseconds.
     ///
@@ -588,6 +605,20 @@ impl<'a> Bus<'a> {
     /// Move that counter on by `delta_us`.
     pub fn advance_clock_us(&self, delta_us: u64) {
         self.emu.advance_timer_us(delta_us);
+    }
+
+    /// The bootrom reboot the firmware scheduled since the last call, as
+    /// `(bootloader, delay_ms)`, or `None` if it scheduled none.
+    ///
+    /// In this process the reboot is recorded and never happens.  Reading
+    /// clears the record.
+    pub fn rom_reboot(&self) -> Option<(bool, u32)> {
+        self.emu.rom_reboot()
+    }
+
+    /// Make the firmware's bootrom reboot fail.  Cleared on boot.
+    pub fn set_rom_reboot_fails(&self, fails: bool) {
+        self.emu.set_rom_reboot_fails(fails);
     }
 
     /// Run one frame of the firmware's LED engine.
@@ -1372,95 +1403,4 @@ fn hex_window(bytes: &[u8], centre: usize) -> String {
         out.push_str(" …");
     }
     out
-}
-
-// The command constants below are the protocol's complete command surface,
-// transcribed from the specification's Command Reference so that the whole set
-// is visible in one place and can be checked against it.  Scenarios are added
-// section by section, so some are not referenced yet.
-
-/// Command groups.
-#[allow(dead_code)]
-pub mod group {
-    pub const CONTROL: u8 = 0x00;
-    pub const READ: u8 = 0x01;
-    pub const MODIFY: u8 = 0x02;
-    pub const NV_STORAGE: u8 = 0x03;
-    pub const PIPES: u8 = 0x04;
-    pub const AUX: u8 = 0x05;
-    pub const LED: u8 = 0x06;
-    pub const RESET: u8 = 0xAA;
-}
-
-#[allow(dead_code)]
-pub mod control {
-    pub const NOP: u8 = 0x00;
-    pub const ENTER_CMD_RESP: u8 = 0x01;
-    pub const EXIT_CMD_RESP_ACK: u8 = 0x02;
-    pub const EXIT_CMD_RESP_SILENT: u8 = 0x03;
-    pub const SWITCH_AND_EXIT: u8 = 0x04;
-    pub const LOAD_AND_EXIT: u8 = 0x05;
-    pub const EXIT_CMD_RESP_RESTORE: u8 = 0x06;
-}
-
-#[allow(dead_code)]
-pub mod read {
-    pub const GET_FLASH_SLOT_COUNT: u8 = 0x00;
-    pub const GET_FLASH_SLOT_INFO: u8 = 0x01;
-    pub const GET_FLASH_SLOT_INFO_ALL: u8 = 0x02;
-    pub const GET_RAM_SLOT_INFO_ALL: u8 = 0x03;
-    pub const GET_DEVICE_TYPE: u8 = 0x04;
-    pub const GET_DEVICE_VERSION: u8 = 0x05;
-    pub const GET_PROTOCOL_VERSION: u8 = 0x06;
-    pub const SLOT_PEEK: u8 = 0x07;
-    pub const GET_BOOT_SLOT_INFO: u8 = 0x08;
-}
-
-#[allow(dead_code)]
-pub mod modify {
-    pub const SLOT_POKE: u8 = 0x00;
-    pub const SWITCH_SLOT: u8 = 0x01;
-    pub const LOAD_SLOT: u8 = 0x02;
-    pub const SLOT_POKE_ALL_BYTE: u8 = 0x03;
-}
-
-#[allow(dead_code)]
-pub mod nv {
-    pub const GET_NV_CAPABILITY: u8 = 0x00;
-    pub const NV_PEEK: u8 = 0x01;
-    pub const NV_POKE_BEGIN: u8 = 0x02;
-    pub const NV_POKE: u8 = 0x03;
-    pub const NV_POKE_COMMIT: u8 = 0x04;
-    pub const NV_POKE_DISCARD: u8 = 0x05;
-    pub const NV_POKE_COMMIT_BYTE: u8 = 0x06;
-}
-
-#[allow(dead_code)]
-pub mod pipes {
-    pub const GET_PIPE_CAPABILITY: u8 = 0x00;
-    pub const GET_PIPE_INFO: u8 = 0x01;
-    pub const PIPE_WRITE: u8 = 0x02;
-    pub const PIPE_READ: u8 = 0x03;
-}
-
-#[allow(dead_code)]
-pub mod aux {
-    pub const GET_AUX_CAPABILITY: u8 = 0x00;
-    pub const GET_AUX_GROUP_INFO: u8 = 0x01;
-    pub const GET_AUX_PIN_INFO: u8 = 0x02;
-    pub const SET_AUX: u8 = 0x03;
-    pub const SET_AUX_AND_EXIT: u8 = 0x04;
-    pub const SET_AUX_SWITCH_EXIT: u8 = 0x05;
-}
-
-pub mod led {
-    pub const GET_LED_CAPABILITY: u8 = 0x00;
-    pub const GET_LED_INFO: u8 = 0x01;
-    pub const GET_LED_MODE_INFO: u8 = 0x02;
-    pub const SET_LED: u8 = 0x03;
-}
-
-#[allow(dead_code)]
-pub mod reset {
-    pub const RBCP_RESET: u8 = 0xAA;
 }

@@ -22,6 +22,7 @@ void ffi_set_plugins_started(void);
 
 // The firmware flags in runtime info, as onerom_firmware_flag_t bits.
 uint8_t ffi_firmware_flags(void);
+void ffi_set_firmware_flags(uint8_t flags);
 
 // The generation recorded in the metadata header, and a way to change it.
 //
@@ -67,6 +68,13 @@ void ffi_restore_rom_slots(void);
 // without overrides gains overrides with only override_states set.
 void ffi_set_rom_slot_override_states(uint8_t index, uint8_t states);
 
+// Remove ROM slot `index`'s image until ffi_restore_rom_slots().
+void ffi_set_rom_slot_no_image(uint8_t index);
+
+// As ffi_install_plugin_slots(), keeping the metadata's other slots.  The
+// metadata must have at least three slots.
+void ffi_overlay_plugin_slots(void);
+
 // Write a valid header to plugin slot `index` with its entry point at device
 // address `entry`.
 void ffi_set_plugin_header(
@@ -75,6 +83,42 @@ void ffi_set_plugin_header(
     uint8_t overrides1,
     uint8_t properties1
 );
+
+// Set a field of the header ffi_set_plugin_header() wrote.
+void ffi_set_plugin_boot_slot_addr(uint8_t index, uint32_t addr);
+void ffi_set_plugin_magic(uint8_t index, uint32_t magic);
+void ffi_set_plugin_api_version(uint8_t index, uint32_t api_version);
+void ffi_set_plugin_min_fw_version(
+    uint8_t index,
+    uint16_t major,
+    uint16_t minor,
+    uint16_t patch
+);
+
+// The filename is NULL until set.  It outlives a boot, so a test puts it back.
+void ffi_set_plugin_filename(uint8_t index, const char *filename);
+
+// Reduce the slot count after ffi_install_plugin_slots() or
+// ffi_overlay_plugin_slots(), until ffi_restore_rom_slots().
+void ffi_set_rom_slot_count(uint8_t count);
+
+uint8_t ffi_user_plugin_to_start(void);
+
+uint8_t ffi_system_plugin_to_launch(void);
+uint8_t ffi_user_plugin_to_launch(uint8_t system_launched);
+
+// The RTT control block's up[index].  Returns 0 if its buffer is NULL.
+typedef struct ffi_rtt_up_t {
+    uint8_t is_usb_dpram_log;
+    uint32_t size;
+    uint32_t write_offset;
+    uint32_t read_offset;
+} ffi_rtt_up_t;
+uint8_t ffi_rtt_up(uint8_t index, ffi_rtt_up_t *out);
+
+// Write and read One ROM's log.  LOG() writes to stdout in a test build.
+uint32_t ffi_log_write(const uint8_t *buf, uint32_t len);
+uint32_t ffi_log_read(uint8_t *buf, uint32_t max_len);
 
 // The serving algorithms and address window the current ROM slot is running.
 //

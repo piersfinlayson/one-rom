@@ -49,5 +49,6 @@ pub mod build_options {
 
 pub use emulator::{
     Emulator, FlashSlotInfo, GpioInfo, LedState, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS,
-    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS, OraResult, RamSlotInfo, ServingAlg,
+    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS, OraResult, RamSlotInfo, RttUp, ServingAlg, UsbReset,
+    UsbResetStep,
 };

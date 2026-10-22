@@ -1,10 +1,10 @@
 [package]
 name = "onerom-fw"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
-description = "Firmware generator for One ROM - the flexible retro ROM replacement"
+description = "Fetches One ROM base firmware and ROM images"
 repository = "https://github.com/piersfinlayson/one-rom"
 homepage = "https://onerom.org"
 documentation = "https://docs.rs/onerom-fw"

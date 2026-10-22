@@ -5,28 +5,26 @@
 //! The firmware's check that a ROM slot lies within the flash before it reads
 //! the slot.
 //!
-//! - The check at the edges of each chip, and at the plugin regions on a first
+//! - The check at the edges of each chip and at the plugin regions on a first
 //!   chip too small to hold them.
 //! - Serving a slot on chip select 1 of an M board enters limp mode with
 //!   `LIMP_MODE_INVALID_CONFIG`. On an L board the same slot serves where the
 //!   board has a secondary flash chip select.
-//! - A plugin slot outside the flash fails the firmware's plugin check. A host
-//!   build can't show that the header goes unread, only that the check fails.
+//! - A plugin slot outside the flash fails the firmware's plugin check.
 //! - A valid plugin header passes the plugin check with its slot in its region
 //!   and fails with the slot on chip select 1 of an M board or its entry point
 //!   past its region.
-//! - The boot plugin parse applies a valid header's VBUS detect override only
-//!   where its slot lies within the flash.
+//! - The boot plugin parse applies a VBUS detect override only from a plugin
+//!   the firmware starts.
 //! - A plugin's yield capability comes from its header only where its slot
 //!   lies within the flash.
-//!
-//! A host build's slot data is a host pointer, so a test places a slot by
-//! moving its flash address, as the CLI would by writing a device's metadata.
-//! The address and OTP outlive a boot in this process, so [`run`] puts both
-//! back.
 
+use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
-use onerom_fw_emulator::{Emulator, ffi};
+use onerom_fw_emulator::{
+    Emulator, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+    OraResult, ffi,
+};
 use onerom_metadata::otp::flash_size_bytes;
 use onerom_metadata::{
     FLASH_CS0_BASE_ADDR, FLASH_CS1_BASE_ADDR, LimpModePattern,
@@ -50,15 +48,15 @@ const L_CHIPS: Chips = Some((OneromFlashSize::FlashSize2mb, OneromFlashSize::Fla
 
 /// A plugin slot [`Emulator::install_plugin_slots`] makes. `index` is both its
 /// ROM slot index and its plugin index.
-struct Plugin {
-    label: &'static str,
-    index: u8,
-    plugin_type: ffi::ora_plugin_type_t,
-    region: u32,
-    size: u32,
+pub(crate) struct Plugin {
+    pub(crate) label: &'static str,
+    pub(crate) index: u8,
+    pub(crate) plugin_type: ffi::ora_plugin_type_t,
+    pub(crate) region: u32,
+    pub(crate) size: u32,
 }
 
-const PLUGINS: [Plugin; 2] = [
+pub(crate) const PLUGINS: [Plugin; 2] = [
     Plugin {
         label: "system",
         index: 0,
@@ -88,7 +86,7 @@ impl Plugin {
 
     /// Write a valid header and place the slot in its region or on chip
     /// select 1.
-    fn place(&self, in_region: bool, overrides1: u8, properties1: u8) {
+    pub(crate) fn place(&self, in_region: bool, overrides1: u8, properties1: u8) {
         Emulator::set_plugin_header(self.index, self.entry(), overrides1, properties1);
         let addr = if in_region {
             self.region
@@ -97,6 +95,64 @@ impl Plugin {
         };
         Emulator::set_rom_slot_flash_addr(self.index, addr);
     }
+}
+
+/// Check the flash slot calls with the plugin slots in their regions.
+/// `num_slots` is the metadata's slot count.
+pub(crate) fn check_plugin_flash_slots(emu: &Emulator, num_slots: u8) -> Result<(), String> {
+    let counts = [
+        ("all slots", 0, num_slots),
+        ("plugins", ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS, 2),
+        (
+            "ROM slots",
+            ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+            num_slots - 2,
+        ),
+    ];
+    for (label, flags, expected) in counts {
+        let found = emu.get_flash_slot_count(flags);
+        if found != expected {
+            return Err(format!("{label}: {found} flash slots, not {expected}"));
+        }
+    }
+
+    let flags = ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS;
+    for (p, name, chip_type) in [
+        (&PLUGINS[0], c"system_plugin", ChipType::SystemPlugin),
+        (&PLUGINS[1], c"user_plugin", ChipType::UserPlugin),
+    ] {
+        let rbcp = u32::from(chip_type.rbcp_chip_type());
+        let (r, info) = emu.get_flash_slot_info(p.index, flags);
+        let info = info.ok_or(format!("the {} plugin slot's info: {r:?}", p.label))?;
+        if (info.rom_type, info.rom_count, info.name) != (rbcp, 1, None) {
+            return Err(format!(
+                "the {} plugin slot's info: type {}, {} ROMs, name {:?}",
+                p.label, info.rom_type, info.rom_count, info.name
+            ));
+        }
+
+        let (r, ext) = emu.get_flash_slot_ext_info(p.index, 0, flags);
+        let ext = ext.ok_or(format!("the {} plugin slot's ROM: {r:?}", p.label))?;
+        if (ext.rom_type, ext.chip_size, ext.rbcp_rom_type) != (Some(name), p.size, rbcp) {
+            return Err(format!(
+                "the {} plugin slot's ROM: {:?}, {} bytes, type {}",
+                p.label, ext.rom_type, ext.chip_size, ext.rbcp_rom_type
+            ));
+        }
+        let (r, _) = emu.get_flash_slot_ext_info(p.index, 1, flags);
+        if r != OraResult::InvalidArg {
+            return Err(format!("the {} plugin slot's second ROM: {r:?}", p.label));
+        }
+
+        let found = emu.get_flash_slot_addr(p.index, flags);
+        if found != (OraResult::Ok, p.region, p.size) {
+            return Err(format!(
+                "the {} plugin slot's address: {:?} {:#010x} {:#x}",
+                p.label, found.0, found.1, found.2
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn placement(in_region: bool) -> &'static str {
@@ -316,25 +372,27 @@ fn check_plugin_parse() -> Result<(), String> {
     let cases = [
         (
             "the system plugin disabling VBUS detect, both in their regions",
-            true,
-            [off, 0],
+            [(true, off), (true, 0)],
             true,
         ),
         (
             "the user plugin disabling VBUS detect, both in their regions",
-            true,
-            [0, off],
+            [(true, 0), (true, off)],
             true,
         ),
         (
             "both disabling VBUS detect on chip select 1 of an M board",
+            [(false, off), (false, off)],
             false,
-            [off, off],
+        ),
+        (
+            "the user plugin disabling VBUS detect, the system plugin on chip select 1",
+            [(false, 0), (true, off)],
             false,
         ),
     ];
-    for (label, in_region, overrides, disabled) in cases {
-        for (p, overrides1) in PLUGINS.iter().zip(overrides) {
+    for (label, placements, disabled) in cases {
+        for (p, (in_region, overrides1)) in PLUGINS.iter().zip(placements) {
             p.place(in_region, overrides1, 0);
         }
         let (plugins, count, found) = Emulator::initial_plugin_parse();

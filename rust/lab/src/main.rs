@@ -24,12 +24,16 @@ use static_cell::StaticCell;
 
 mod cdc;
 mod cli;
+mod commissioning;
+mod drive;
 mod error;
+mod fast_read;
 mod hw;
 mod logs;
 mod metadata;
 mod output;
 mod picoboot;
+mod rbcp;
 mod rom;
 mod usb;
 
@@ -74,7 +78,8 @@ async fn main(spawner: Spawner) -> ! {
     // Heap
     {
         use core::mem::MaybeUninit;
-        const HEAP_SIZE: usize = 4096;
+        // Sized for the commissioning signature check.
+        const HEAP_SIZE: usize = 16 * 1024;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
     }

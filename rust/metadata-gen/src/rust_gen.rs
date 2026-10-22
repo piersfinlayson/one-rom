@@ -27,7 +27,9 @@ pub fn generate(schema: &Schema) -> String {
     let mut out = String::with_capacity(128 * 1024);
     push_file_header(&mut out, schema);
     push_generations(&mut out, schema);
+    push_firmware_release(&mut out, schema);
     push_constants(&mut out, schema);
+    push_metadata_keys(&mut out, schema);
     push_metadata_generation_table(&mut out, schema);
     push_type_aliases(&mut out, schema);
     push_enums(&mut out, schema);
@@ -174,6 +176,17 @@ fn release_struct(schema: &Schema) -> Option<&str> {
         return None;
     }
     schema.struct_in_slot(SLOT_INFO).map(|s| s.name.as_str())
+}
+
+/// Emit `[schema] firmware_release` as `FIRMWARE_RELEASE`.
+fn push_firmware_release(out: &mut String, schema: &Schema) {
+    let (major, minor, patch) = release_parts(&schema.schema.firmware_release)
+        .expect("validate_release_strings has already refused a malformed release");
+    out.push_str(&format!(
+        "/// The schema's firmware release.\n\
+         pub const FIRMWARE_RELEASE: FirmwareVersion = \
+         FirmwareVersion::new({major}, {minor}, {patch}, 0);\n\n"
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -772,6 +785,32 @@ fn push_constants(out: &mut String, schema: &Schema) {
     push_constant_table(out, schema);
 }
 
+/// Emit `metadata_key`, a constant per plugin key.
+fn push_metadata_keys(out: &mut String, schema: &Schema) {
+    let keys = schema.plugin_keys();
+    if keys.is_empty() {
+        return;
+    }
+    out.push_str(
+        "// ---------------------------------------------------------------------------\n\
+         // Plugin metadata keys\n\
+         // ---------------------------------------------------------------------------\n\n\
+         /// The `ora_metadata_key_t` values.\n\
+         pub mod metadata_key {\n",
+    );
+    for entry in &keys {
+        if let Some(comment) = entry.comment {
+            push_doc_comment(out, "    ", comment);
+            out.push_str("    ///\n");
+        }
+        out.push_str(&format!(
+            "    /// Since firmware {}.\n    pub const {}: u32 = {:#X};\n\n",
+            entry.key.first_release, entry.key.name, entry.key.id
+        ));
+    }
+    out.push_str("}\n\n");
+}
+
 /// Emit the `[[versions]]` entries for the metadata header, as the release
 /// each generation arrived in.  A tool composing an image turns the target
 /// firmware's version into a generation, and the schema is the only answer.
@@ -971,6 +1010,9 @@ fn push_enum(out: &mut String, e: &Enum) {
         "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n",
     );
     out.push_str(&format!("#[repr({repr})]\n"));
+    if e.non_exhaustive {
+        out.push_str("#[non_exhaustive]\n");
+    }
     out.push_str(&format!("pub enum {tn} {{\n"));
     for v in e.variants.iter().filter(|v| !v.is_sentinel()) {
         if let Some(doc) = v.documentation() {
@@ -1953,6 +1995,9 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     };
     out.push_str(derives);
     out.push('\n');
+    if tf.non_exhaustive {
+        out.push_str("#[non_exhaustive]\n");
+    }
     out.push_str(&format!("pub enum {tn} {{\n"));
 
     for v in &tf.variants {

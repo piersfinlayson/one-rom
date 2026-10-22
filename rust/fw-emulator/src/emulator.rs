@@ -227,6 +227,27 @@ macro_rules! plugin_call {
 pub const ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS: u32 = 0x00000001;
 pub const ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS: u32 = 0x00000002;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RttUp {
+    pub is_usb_dpram_log: bool,
+    pub size: u32,
+    pub write_offset: u32,
+    pub read_offset: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsbResetStep {
+    Assert,
+    Release,
+    ReleaseAndWait,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UsbReset {
+    pub step: UsbResetStep,
+    pub log_moved: bool,
+}
+
 /// A handle to a running One ROM firmware emulator instance.
 pub struct Emulator {
     /// Non-null after [`Self::setup_epio`] has been called.
@@ -559,6 +580,24 @@ impl Emulator {
         unsafe { ffi::stub_bootloader_entered() != 0 }
     }
 
+    /// The bootrom reboot the firmware scheduled since the last call, as
+    /// `(bootloader, delay_ms)`, or `None` if it scheduled none.
+    ///
+    /// The stub records the reboot and never reboots.  Reading clears the
+    /// record.
+    pub fn rom_reboot(&self) -> Option<(bool, u32)> {
+        let mut bootloader: u8 = 0;
+        let mut delay_ms: u32 = 0;
+        let rebooted = unsafe { ffi::stub_rom_reboot(&mut bootloader, &mut delay_ms) };
+        (rebooted != 0).then_some((bootloader != 0, delay_ms))
+    }
+
+    /// Make the firmware's bootrom reboot fail, as it does on a device whose
+    /// bootrom has no reboot function.  Cleared on boot.
+    pub fn set_rom_reboot_fails(&self, fails: bool) {
+        unsafe { ffi::stub_set_rom_reboot_fails(u8::from(fails)) };
+    }
+
     /// The serving algorithms and address window the current ROM slot runs.
     ///
     /// `None` before a slot is being served.  Read from the live slot config,
@@ -641,12 +680,24 @@ impl Emulator {
         unsafe { ffi::ffi_firmware_flags() }
     }
 
+    pub fn set_firmware_flags(&self, flags: u8) {
+        unsafe { ffi::ffi_set_firmware_flags(flags) };
+    }
+
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
     /// device. Plugin launch is compiled out of a test build.
     ///
     /// Doesn't take `&self` so a yield hook can call it.
     pub fn set_plugins_started() {
         unsafe { ffi::ffi_set_plugins_started() };
+    }
+
+    /// The firmware's reading of `key`'s commissioning value: its first row and
+    /// its length in bytes.
+    pub fn otp_commissioning_value(key: u16) -> Option<(u16, u16)> {
+        let (mut row, mut len) = (0, 0);
+        (unsafe { ffi::otp_commissioning_value(key, &mut row, &mut len) } != 0)
+            .then_some((row, len))
     }
 
     /// The firmware's reading of the board OTP commissions the chip as: the
@@ -736,10 +787,88 @@ impl Emulator {
         unsafe { ffi::ffi_set_rom_slot_override_states(index, states) };
     }
 
+    /// Lasts until [`Self::restore_rom_slots`].
+    pub fn set_rom_slot_no_image(index: u8) {
+        unsafe { ffi::ffi_set_rom_slot_no_image(index) };
+    }
+
     /// Write a valid header to plugin slot `index` with its entry point at
     /// device address `entry`.
     pub fn set_plugin_header(index: u8, entry: u32, overrides1: u8, properties1: u8) {
         unsafe { ffi::ffi_set_plugin_header(index, entry, overrides1, properties1) };
+    }
+
+    /// As [`Self::install_plugin_slots`], keeping the metadata's other slots.
+    /// The metadata must have at least three slots.
+    pub fn overlay_plugin_slots() {
+        unsafe { ffi::ffi_overlay_plugin_slots() };
+    }
+
+    pub fn set_plugin_boot_slot_addr(index: u8, addr: u32) {
+        unsafe { ffi::ffi_set_plugin_boot_slot_addr(index, addr) };
+    }
+
+    pub fn set_plugin_magic(index: u8, magic: u32) {
+        unsafe { ffi::ffi_set_plugin_magic(index, magic) };
+    }
+
+    pub fn set_plugin_api_version(index: u8, api_version: u32) {
+        unsafe { ffi::ffi_set_plugin_api_version(index, api_version) };
+    }
+
+    pub fn set_plugin_min_fw_version(index: u8, major: u16, minor: u16, patch: u16) {
+        unsafe { ffi::ffi_set_plugin_min_fw_version(index, major, minor, patch) };
+    }
+
+    /// A boot doesn't clear the filename.
+    pub fn set_plugin_filename(index: u8, filename: Option<&'static std::ffi::CStr>) {
+        let filename = filename.map_or(std::ptr::null(), std::ffi::CStr::as_ptr);
+        unsafe { ffi::ffi_set_plugin_filename(index, filename) };
+    }
+
+    /// Reduce the slot count after [`Self::install_plugin_slots`] or
+    /// [`Self::overlay_plugin_slots`], until [`Self::restore_rom_slots`].
+    pub fn set_rom_slot_count(count: u8) {
+        unsafe { ffi::ffi_set_rom_slot_count(count) };
+    }
+
+    /// An unset byte reads 0xFF. A set byte lasts until [`Self::clear_flash`].
+    /// `STUB_FLASH_BYTES` in `firmware/test/stub_rp235x.c` limits how many
+    /// bytes can be set.
+    pub fn set_flash_byte(addr: u32, value: u8) {
+        unsafe { ffi::stub_flash_set8(addr, value) };
+    }
+
+    pub fn clear_flash() {
+        unsafe { ffi::stub_flash_clear() };
+    }
+
+    pub fn user_plugin_to_start() -> bool {
+        unsafe { ffi::ffi_user_plugin_to_start() != 0 }
+    }
+
+    pub fn plugin_entry_flags() -> u8 {
+        unsafe { ffi::plugin_entry_flags() }
+    }
+
+    pub fn system_plugin_to_launch() -> bool {
+        unsafe { ffi::ffi_system_plugin_to_launch() != 0 }
+    }
+
+    pub fn user_plugin_to_launch(system_launched: bool) -> bool {
+        unsafe { ffi::ffi_user_plugin_to_launch(system_launched as u8) != 0 }
+    }
+
+    pub fn plugin_entry_args(
+        plugin_type: ffi::ora_plugin_type_t,
+        entry_flags: u8,
+    ) -> ffi::ora_entry_args_t {
+        unsafe { *ffi::plugin_entry_args(plugin_type, entry_flags) }
+    }
+
+    pub fn plugin_boot_slot(num_plugins: u8) -> Option<u8> {
+        let mut slot = 0u8;
+        (unsafe { ffi::plugin_boot_slot(num_plugins, &mut slot) } != 0).then_some(slot)
     }
 
     /// The firmware's boot parse of the plugin slots. Returns the plugins found
@@ -1037,6 +1166,42 @@ impl Emulator {
             }
         });
         (r, info)
+    }
+
+    /// `ORA_ID_GET_FLASH_SLOT_ADDR`, returning the result, address and size. An
+    /// output the call doesn't write reads `u32::MAX`.
+    pub fn get_flash_slot_addr(&self, flash_slot: u8, flags: u32) -> (OraResult, u32, u32) {
+        self.get_flash_slot_addr_null_out(flash_slot, flags, false, false)
+    }
+
+    pub fn get_flash_slot_addr_null_out(
+        &self,
+        flash_slot: u8,
+        flags: u32,
+        null_addr: bool,
+        null_size: bool,
+    ) -> (OraResult, u32, u32) {
+        let mut addr = u32::MAX;
+        let mut size = u32::MAX;
+        let addr_out = if null_addr {
+            std::ptr::null_mut()
+        } else {
+            &mut addr as *mut u32
+        };
+        let size_out = if null_size {
+            std::ptr::null_mut()
+        } else {
+            &mut size as *mut u32
+        };
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_FLASH_SLOT_ADDR,
+            ffi::ora_get_flash_slot_addr_fn_t,
+            flash_slot,
+            flags,
+            addr_out,
+            size_out
+        ));
+        (r, addr, size)
     }
 
     pub fn reprogram_ram_rom_slot(
@@ -1479,6 +1644,71 @@ impl Emulator {
         ))
     }
 
+    pub fn log_moved(&self) -> bool {
+        unsafe { ffi::onerom_rtt_log_moved() != 0 }
+    }
+
+    /// Returns whether the log moved.
+    pub fn launch_log_move(&self, entry_flags: u8) -> bool {
+        unsafe { ffi::launch_log_move(entry_flags) != 0 }
+    }
+
+    /// The first `STUB_USB_RESETS_MAX` changes to the USB controller's reset
+    /// since the last boot.
+    pub fn usb_resets(&self) -> Vec<UsbReset> {
+        let mut steps = [0u8; ffi::STUB_USB_RESETS_MAX as usize];
+        let count = unsafe { ffi::stub_usb_resets(steps.as_mut_ptr(), steps.len() as u8) };
+        steps[..(count as usize).min(steps.len())]
+            .iter()
+            .map(|&s| UsbReset {
+                step: match u32::from(s) & !ffi::STUB_USB_RESET_LOG_MOVED {
+                    ffi::STUB_USB_RESET_ASSERT => UsbResetStep::Assert,
+                    ffi::STUB_USB_RESET_RELEASE => UsbResetStep::Release,
+                    ffi::STUB_USB_RESET_RELEASE_WAIT => UsbResetStep::ReleaseAndWait,
+                    other => panic!("unknown USB reset step {other:#04x}"),
+                },
+                log_moved: u32::from(s) & ffi::STUB_USB_RESET_LOG_MOVED != 0,
+            })
+            .collect()
+    }
+
+    pub fn unmove_log(&self) {
+        unsafe { ffi::onerom_rtt_test_unmove_log() };
+    }
+
+    /// A boot doesn't release the log channels.
+    pub fn reset_log_claims(&self) {
+        unsafe { ffi::ora_log_reset_claims() };
+    }
+
+    pub fn rtt_up(&self, index: u8) -> Option<RttUp> {
+        let mut up = ffi::ffi_rtt_up_t {
+            is_usb_dpram_log: 0,
+            size: 0,
+            write_offset: 0,
+            read_offset: 0,
+        };
+        (unsafe { ffi::ffi_rtt_up(index, &mut up) } != 0).then_some(RttUp {
+            is_usb_dpram_log: up.is_usb_dpram_log != 0,
+            size: up.size,
+            write_offset: up.write_offset,
+            read_offset: up.read_offset,
+        })
+    }
+
+    /// Returns `buf.len()` if the record was stored, 0 if it was dropped.
+    pub fn fw_log_write(&self, buf: &[u8]) -> u32 {
+        unsafe { ffi::ffi_log_write(buf.as_ptr(), buf.len() as u32) }
+    }
+
+    /// Read One ROM's log as a debug probe does, consuming the bytes.
+    pub fn fw_log_read(&self, max_len: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; max_len as usize];
+        let n = unsafe { ffi::ffi_log_read(buf.as_mut_ptr(), max_len) };
+        buf.truncate(n as usize);
+        buf
+    }
+
     /// `ORA_ID_SET_PLUGIN_CONTEXT`.
     ///
     /// `context` is an opaque value the firmware only stores, so a test can
@@ -1841,6 +2071,131 @@ impl Emulator {
             unsafe { ffi::ffi_epio_update_from_apio(self.epio_or_panic()) };
         }
         result
+    }
+
+    // ── Reboot ───────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_REBOOT`.
+    ///
+    /// The request is passed exactly as given, size field included, so a caller
+    /// exercising the size contract states its own.
+    pub fn reboot(&self, req: &ffi::ora_reboot_request_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT,
+            ffi::ora_reboot_fn_t,
+            req as *const ffi::ora_reboot_request_t
+        ))
+    }
+
+    /// `ORA_ID_REBOOT_BOOTSEL`.
+    ///
+    /// On a device this never returns.  In a test build it returns after
+    /// scheduling the reboot.
+    pub fn reboot_bootsel(&self) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT_BOOTSEL,
+            ffi::ora_reboot_bootsel_fn_t
+        );
+    }
+
+    /// `ORA_ID_REBOOT` with a NULL request.
+    pub fn reboot_null(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT,
+            ffi::ora_reboot_fn_t,
+            std::ptr::null()
+        ))
+    }
+
+    // ── Commissioning ────────────────────────────────────────────────────────
+
+    /// `ORA_ID_GET_COMMISSIONING_VALUE`, returning the result and a copy of the
+    /// value where it succeeded.
+    pub fn get_commissioning_value(&self, key: u16) -> (OraResult, Option<Vec<u8>>) {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
+            ffi::ora_get_commissioning_value_fn_t,
+            key,
+            &mut ptr as *mut *const u8,
+            &mut len as *mut u16
+        ));
+        let value = (r.is_ok() && !ptr.is_null())
+            .then(|| unsafe { std::slice::from_raw_parts(ptr, usize::from(len)) }.to_vec());
+        (r, value)
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_VALUE` with a NULL value pointer, a NULL
+    /// length pointer, or both.
+    pub fn get_commissioning_value_null_out(
+        &self,
+        key: u16,
+        null_value: bool,
+        null_len: bool,
+    ) -> OraResult {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let value_out = if null_value {
+            std::ptr::null_mut()
+        } else {
+            &mut ptr as *mut *const u8
+        };
+        let len_out = if null_len {
+            std::ptr::null_mut()
+        } else {
+            &mut len as *mut u16
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
+            ffi::ora_get_commissioning_value_fn_t,
+            key,
+            value_out,
+            len_out
+        ))
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_INSTANCE`, returning the result and a copy of
+    /// the instance where it succeeded.
+    pub fn get_commissioning_instance(&self) -> (OraResult, Option<Vec<u8>>) {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_INSTANCE,
+            ffi::ora_get_commissioning_instance_fn_t,
+            &mut ptr as *mut *const u8,
+            &mut len as *mut u16
+        ));
+        let instance = (r.is_ok() && !ptr.is_null())
+            .then(|| unsafe { std::slice::from_raw_parts(ptr, usize::from(len)) }.to_vec());
+        (r, instance)
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_INSTANCE` with a NULL instance pointer, a
+    /// NULL length pointer, or both.
+    pub fn get_commissioning_instance_null_out(
+        &self,
+        null_instance: bool,
+        null_len: bool,
+    ) -> OraResult {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let instance_out = if null_instance {
+            std::ptr::null_mut()
+        } else {
+            &mut ptr as *mut *const u8
+        };
+        let len_out = if null_len {
+            std::ptr::null_mut()
+        } else {
+            &mut len as *mut u16
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_INSTANCE,
+            ffi::ora_get_commissioning_instance_fn_t,
+            instance_out,
+            len_out
+        ))
     }
 
     // ── Yield ────────────────────────────────────────────────────────────────

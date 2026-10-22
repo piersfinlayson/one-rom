@@ -54,7 +54,7 @@ its C and Rust definitions. A key keeps its number permanently.
 A key can be deprecated in the schema. Its number stays reserved. Parsers keep
 reading it because commissioned boards still contain it.
 
-A parser skips an unknown key using its length. A host tool reports each key it
+A parser skips an unknown key using its length. A host tool reports the keys it
 skips.
 
 ### Commissioning Store Keys
@@ -66,8 +66,15 @@ skips.
 | 3 | `COMMISSIONING_MANUFACTURER` | Manufacturer's name in printable ASCII without `*` or a leading or trailing space |
 | 4 | `COMMISSIONING_DATE` | UTC commissioning date as 8 ASCII digits, `YYYYMMDD` |
 | 5 | `COMMISSIONING_SIGNER` | 16-bit ID of the signing key |
+| 6 | `COMMISSIONING_REVISION` | Board revision in printable ASCII without a leading or trailing space |
+| 7 | `COMMISSIONING_BATCH` | Manufacturing batch in printable ASCII without a leading or trailing space |
+| 8 | `COMMISSIONING_SIZE` | 16-bit size the board was commissioned as: 1 for M, 2 for L |
 
-All of these keys are required in every commissioning instance.
+Keys 1–5 are required in every commissioning instance. Keys 6–8 are optional.
+
+From CLI v0.6.0, `onerom hardware commission` writes `COMMISSIONING_SIZE` in
+every instance. A board can have its size modified later without
+re-commissioning. See [Board Sizes](#board-sizes).
 
 ### General Store Keys
 
@@ -180,6 +187,7 @@ describes. The request provides:
 - the public key
 - a proof
 - the manufacturer strings the key may sign
+- a contact for each manufacturer string
 - a description of what the key is used for
 
 The maintainers assign the key's ID.
@@ -194,13 +202,26 @@ address in `https://images.onerom.org/signers.json`.
 `onerom hardware commission` refuses to use a signing key that isn't in the
 table, is retired or doesn't allow the manufacturer.
 
-ID 0 is invalid. IDs 1–255 are reserved for piers.rocks. Other signers' keys
-are assigned IDs from 256 onwards.
+ID 0 is invalid. IDs 1–4095 are reserved for piers.rocks. Other signers' keys
+are assigned IDs from 4096 onwards.
 
 Each key lists the manufacturers it may sign, which must be a byte exact match.
-A piers.rocks key (1-255) may allow any manufacturer in place of a list by
-specifying `*`. A manufacturer stays in a key's list permanently so that boards
-already signed continue to validate.
+A piers.rocks key with an ID from 1 to 255 may allow any manufacturer in place
+of a list by specifying `*`. A manufacturer stays in a key's list permanently so
+that boards already signed continue to validate.
+
+A contact is an email address or URL at which a manufacturer can be contacted.
+It is printable ASCII and isn't empty.
+
+A key that lists its manufacturers has exactly one contact for each of them.
+
+A key that allows any manufacturer has a contact for each manufacturer whose
+boards are signed with it. The maintainers add a manufacturer's contact before
+the first of its boards is signed with the key.
+
+A manufacturer's contact stays in the table permanently but may be updated. A
+board's contact is its signing key's contact for the board's
+`COMMISSIONING_MANUFACTURER`.
 
 CI rejects the row if:
 - the proof fails to verify
@@ -208,7 +229,12 @@ CI rejects the row if:
 - the key is weak
 - the key doesn't list a manufacturer
 - a listed manufacturer isn't a valid `COMMISSIONING_MANUFACTURER` value
-- a key with ID 256 or above allows any manufacturer.
+- a key with ID 256 or above allows any manufacturer
+- a key doesn't have exactly one contact for each manufacturer
+- a key has two contacts for one manufacturer
+- a contact isn't printable ASCII or is empty
+- a key that allows any manufacturer has a contact for a name that isn't a
+  valid `COMMISSIONING_MANUFACTURER` value.
 
 A weak key is one of Ed25519's small-order points.
 
@@ -299,6 +325,12 @@ configure:
   above 16MB counts as no chip.
 - 2MB in total is M, 4MB is L and any other total is neither M nor L.
 
+`COMMISSIONING_SIZE` in the current commissioning instance differs from the
+size these rows configure when the size was set with `onerom hardware set-size`
+after commissioning, or when a commissioning run stopped after writing the
+instance and before setting `FLASH_DEVINFO_ENABLE`. Host tools then display
+both.
+
 The firmware counts chip select 1 only on a board with a secondary flash chip
 select. Host tools reading a stopped One ROM's OTP count it on every board.
 
@@ -333,6 +365,11 @@ leaves it at a nominal 11MHz and at most 24MHz.
 It reports every instance. It reports a pass or failure based on the current
 instance. When it can't download the signer table, it uses the table built into
 the tool and indicates this.
+
+It also fails where the current instance's `COMMISSIONING_SIZE` is L but the
+board's size isn't L. Where a commissioning run stopped before it set
+`FLASH_DEVINFO_ENABLE`, `onerom hardware set-size` with `--size L` writes the
+missing rows.
 
 On a commissioned One ROM the board type is read from `COMMISSIONING_BOARD` in
 the current commissioning instance unless `--board` is supplied. An image built

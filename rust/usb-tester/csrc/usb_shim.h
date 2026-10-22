@@ -31,9 +31,9 @@
 // full, which is what a host that has stopped reading looks like.
 void usb_host_test_set_tx_capacity(uint32_t capacity);
 
-// Whether the bus can carry data, which is what tud_cdc_n_connected reports.
-// False models a suspended or unconfigured bus, where a terminal is still
-// attached but nothing can be sent.
+// Whether the bus is ready, which is what tud_ready reports.  False models a
+// suspended or unconfigured bus, where a terminal is still attached but nothing
+// can be sent.  tud_cdc_n_connected also requires DTR.
 void usb_host_test_set_connected(uint8_t connected);
 
 // Raise or drop DTR, which is a terminal opening or closing the port.  Calls
@@ -103,5 +103,20 @@ uint32_t usb_host_test_control_xfer_count(void);
 // too small a buffer is told so by the return value rather than silently seeing
 // a short descriptor.
 uint32_t usb_host_test_take_control_xfer(uint8_t *buf, uint32_t max_len);
+
+// ---------------------------------------------------------------------------
+// Plugin entry
+// ---------------------------------------------------------------------------
+
+// The ORA_ENTRY_FLAG_ values the plugin starts with.  Zero after
+// usb_host_test_reset_plugin().
+void usb_host_test_set_entry_flags(uint8_t flags);
+
+// How many times the plugin has initialised tinyusb, and how many of those
+// reset the USB controller, since usb_host_test_reset_plugin().
+uint32_t usb_host_test_tinyusb_inits(void);
+uint32_t usb_host_test_controller_resets(void);
+
+const volatile uint8_t *usb_host_test_dpram(void);
 
 #endif // ORA_USB_SHIM_H

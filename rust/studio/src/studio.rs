@@ -8,6 +8,7 @@ use iced::{Element, Subscription, Task, time};
 use log::{debug, error, info, trace, warn};
 use std::time::Duration;
 
+use onerom_app::assemble_image;
 use onerom_cli::CliFetch;
 use onerom_cli::plugin::{PluginNote, check_config_plugins, resolve_config_plugins};
 use onerom_cli::slot::has_system_plugin;
@@ -16,9 +17,7 @@ use onerom_config::hw::Board;
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw::get_rom_files_async;
 use onerom_fw::net::{Release, Releases};
-use onerom_gen::{
-    Builder, Error as GenError, FIRMWARE_SIZE, FlashChips, MAX_METADATA_LEN, second_chip_supported,
-};
+use onerom_gen::{Builder, Error as GenError, FlashChips, second_chip_supported};
 
 use crate::analyse::Analyse;
 use crate::app::AppMessage;
@@ -61,8 +60,8 @@ pub enum Message {
     FetchReleases,
     Releases(Releases),
     DownloadRelease(Release, Board, McuVariant),
-    ReleaseDownloaded(Result<Vec<u8>, String>),
-    ReleaseDoesntExist,
+    ReleaseDownloaded(Download, Result<Vec<u8>, String>),
+    ReleaseDoesntExist(Download),
     ClearDownloadedRelease,
     FetchConfigs,
     ConfigManifest(ConfigManifest),
@@ -94,11 +93,11 @@ impl std::fmt::Display for Message {
             Message::DownloadRelease(release, board, mcu) => {
                 write!(f, "DownloadRelease({}, {board}, {mcu})", release.version)
             }
-            Message::ReleaseDownloaded(result) => match result {
-                Ok(data) => write!(f, "ReleaseDownloaded({} bytes)", data.len()),
-                Err(_) => write!(f, "ReleaseDownloaded(Err)"),
+            Message::ReleaseDownloaded(download, result) => match result {
+                Ok(data) => write!(f, "ReleaseDownloaded({download}, {} bytes)", data.len()),
+                Err(_) => write!(f, "ReleaseDownloaded({download}, Err)"),
             },
-            Message::ReleaseDoesntExist => write!(f, "ReleaseDoesntExist"),
+            Message::ReleaseDoesntExist(download) => write!(f, "ReleaseDoesntExist({download})"),
             Message::ClearDownloadedRelease => write!(f, "ClearDownloadedRelease"),
             Message::FetchConfigs => write!(f, "FetchConfigs"),
             Message::ConfigManifest(configs) => {
@@ -178,11 +177,13 @@ impl StudioTab {
 /// Image built by Studio
 #[derive(Debug, Clone)]
 pub struct Image {
-    firmware: Vec<u8>,
+    data: Vec<u8>,
 
-    metadata: Vec<u8>,
+    firmware_len: usize,
 
-    roms: Vec<u8>,
+    metadata_len: usize,
+
+    roms_len: usize,
 
     usb_run_capable: bool,
 }
@@ -192,23 +193,15 @@ impl std::fmt::Display for Image {
         write!(
             f,
             "Image({}/{}/{}",
-            self.firmware.len(),
-            self.metadata.len(),
-            self.roms.len()
+            self.firmware_len, self.metadata_len, self.roms_len
         )
     }
 }
 
-#[allow(dead_code)]
 impl Image {
-    /// Returns just the required portion of the firmware image
-    pub fn firmware_skinny(&self) -> &[u8] {
-        &self.firmware
-    }
-
     /// Returns the length of the firmware portion
     pub fn firmware_len(&self) -> usize {
-        self.firmware.len()
+        self.firmware_len
     }
 
     /// Whether the image includes a system plugin, which keeps a running
@@ -217,79 +210,24 @@ impl Image {
         self.usb_run_capable
     }
 
-    /// Returns the maximum firmware length (48KB)
-    pub const fn max_firmware_len() -> usize {
-        FIRMWARE_SIZE
-    }
-
-    /// Returns offset from start of flash the firmware is located
-    pub const fn firmware_offset() -> usize {
-        0
-    }
-
-    /// Returns the full firmware portion padded to 48KB
-    pub fn firmware_full(&self) -> Vec<u8> {
-        let mut fw = vec![0xFF_u8; Self::max_firmware_len()];
-        let skinny = self.firmware_skinny();
-        fw[..skinny.len()].copy_from_slice(skinny);
-        fw
-    }
-
-    /// Returns the metadata portion
-    pub fn metadata_skinny(&self) -> &[u8] {
-        &self.metadata
-    }
-
     /// Returns the length of the metadata portion
     pub fn metadata_len(&self) -> usize {
-        self.metadata.len()
-    }
-
-    /// Returns maximum metadata length (16KB)
-    pub const fn max_metadata_len() -> usize {
-        MAX_METADATA_LEN
-    }
-
-    /// Returns offset from start of flash the metadata is located
-    pub const fn metadata_offset() -> usize {
-        FIRMWARE_SIZE
-    }
-
-    /// Returns the full metadata portion padded to 16KB
-    pub fn metadata_full(&self) -> Vec<u8> {
-        let mut md = vec![0xFF_u8; Self::max_metadata_len()];
-        let skinny = self.metadata_skinny();
-        md[..skinny.len()].copy_from_slice(skinny);
-        md
-    }
-
-    /// Returns the ROMs portion
-    pub fn roms(&self) -> &[u8] {
-        &self.roms
+        self.metadata_len
     }
 
     /// Returns the length of the ROMs portion
     pub fn roms_len(&self) -> usize {
-        self.roms.len()
-    }
-
-    /// Returns offset from start of flash the ROMs are located
-    pub const fn roms_offset() -> usize {
-        FIRMWARE_SIZE + MAX_METADATA_LEN
+        self.roms_len
     }
 
     /// Returns full image as would be flashed to device
-    pub fn full_image(&self) -> Vec<u8> {
-        let mut image = Vec::new();
-        image.extend_from_slice(&self.firmware_full());
-        image.extend_from_slice(&self.metadata_full());
-        image.extend_from_slice(&self.roms);
-        image
+    pub fn full_image(&self) -> &[u8] {
+        &self.data
     }
 
     /// Returns size of full image as would be flashed to device
     pub fn full_image_len(&self) -> usize {
-        Self::max_firmware_len() + Self::max_metadata_len() + self.roms_len()
+        self.data.len()
     }
 }
 
@@ -308,6 +246,20 @@ impl NetworkState {
     }
 }
 
+/// A firmware download's release version and hardware
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Download {
+    version: FirmwareVersion,
+    board: Board,
+    mcu: McuVariant,
+}
+
+impl std::fmt::Display for Download {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "v{} for {} {}", self.version, self.board, self.mcu)
+    }
+}
+
 /// Contains information retrieved/computed at runtime
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeInfo {
@@ -322,6 +274,9 @@ pub struct RuntimeInfo {
 
     // Selected firmware
     selected_firmware: Option<Release>,
+
+    // Download of the selected firmware
+    download: Option<Download>,
 
     // Available configs
     config_manifest: Option<ConfigManifest>,
@@ -359,7 +314,7 @@ impl RuntimeInfo {
         self.releases.as_ref()
     }
 
-    fn set_releases(&mut self, releases: Releases) {
+    pub(crate) fn set_releases(&mut self, releases: Releases) {
         self.releases = Some(releases);
     }
 
@@ -384,10 +339,6 @@ impl RuntimeInfo {
         self.firmware.as_ref().map(|f| f.len())
     }
 
-    pub fn selected_config_len(&self) -> Option<usize> {
-        self.selected_config.as_ref().map(|c| c.data.len())
-    }
-
     fn set_firmware(&mut self, firmware: Vec<u8>) {
         self.firmware = Some(firmware);
     }
@@ -404,12 +355,14 @@ impl RuntimeInfo {
         self.selected_firmware.as_ref()
     }
 
-    fn set_selected_firmware(&mut self, release: Release) {
+    fn set_selected_firmware(&mut self, release: Release, download: Download) {
         self.selected_firmware = Some(release);
+        self.download = Some(download);
     }
 
     fn clear_selected_firmware(&mut self) {
         self.selected_firmware = None;
+        self.download = None;
         self.firmware = None;
     }
 
@@ -515,7 +468,15 @@ impl Studio {
             Message::DownloadRelease(release, board, mcu) => {
                 self.download_release(release, board, mcu)
             }
-            Message::ReleaseDownloaded(result) => {
+            // Downloads aren't cancelled so a stale one can finish after the
+            // selected one
+            Message::ReleaseDownloaded(download, _) | Message::ReleaseDoesntExist(download)
+                if self.runtime_info.download != Some(download) =>
+            {
+                debug!("Dropping the download of {download}, which isn't the selected firmware");
+                Task::none()
+            }
+            Message::ReleaseDownloaded(_, result) => {
                 match &result {
                     Ok(data) => {
                         self.download_succeeded();
@@ -529,7 +490,7 @@ impl Studio {
                 let result = result.map(drop);
                 task_from_msg!(CreateMessage::ReleaseDowloaded(result))
             }
-            Message::ReleaseDoesntExist => {
+            Message::ReleaseDoesntExist(_) => {
                 self.runtime_info.clear_firmware();
                 task_from_msg!(CreateMessage::ReleaseDowloaded(Err(
                     "Requested firmware release does not exist".to_string()
@@ -798,17 +759,28 @@ impl Studio {
             }
         };
 
+        let (fw_len, md_len, roms_len) = (firmware.len(), metadata.len(), roms.len());
+        let checked = match assemble_image(&props, firmware, metadata, roms).await {
+            Ok(checked) => checked,
+            Err(e) => {
+                warn!("Failed to assemble image: {e}");
+                return CreateMessage::BuildImageResult(Err(e.to_string())).into();
+            }
+        };
+        if let Some(problem) = checked.problems.first() {
+            warn!("Built image failed its check: {problem}");
+            return CreateMessage::BuildImageResult(Err(problem.to_string())).into();
+        }
+
         // Store image
         let image = Image {
-            firmware,
-            metadata,
-            roms,
+            data: checked.image,
+            firmware_len: fw_len,
+            metadata_len: md_len,
+            roms_len,
             usb_run_capable: has_system_plugin(builder.config()),
         };
         let total_len = image.full_image_len();
-        let fw_len = image.firmware_len();
-        let md_len = image.metadata_len();
-        let roms_len = image.roms_len();
 
         // Get description
         let desc = builder.description();
@@ -866,10 +838,16 @@ impl Studio {
         };
 
         // Set the selected firmware
-        self.runtime_info.set_selected_firmware(release.clone());
+        let download = Download {
+            version: fw_ver,
+            board,
+            mcu,
+        };
+        self.runtime_info
+            .set_selected_firmware(release.clone(), download);
 
         // Download the firmware
-        Task::future(Self::download_release_async(releases, fw_ver, board, mcu))
+        Task::future(Self::download_release_async(releases, download))
     }
 
     fn load_config(&mut self, config: Config) -> Task<AppMessage> {
@@ -887,6 +865,9 @@ impl Studio {
                 return Task::none();
             }
             Config::Built { .. } => Task::done(generate_built_config(config.clone())),
+            Config::ReadBack { json, .. } => {
+                Task::done(Message::ConfigLoaded(Ok(config.clone().with_data(json.clone()))).into())
+            }
         };
 
         // Set the selected config
@@ -896,12 +877,13 @@ impl Studio {
         task
     }
 
-    async fn download_release_async(
-        releases: Releases,
-        fw_ver: FirmwareVersion,
-        board: Board,
-        mcu: McuVariant,
-    ) -> AppMessage {
+    async fn download_release_async(releases: Releases, download: Download) -> AppMessage {
+        let Download {
+            version: fw_ver,
+            board,
+            mcu,
+        } = download;
+
         // Download the firmware
         let result = match releases
             .download_firmware_async(&fw_ver, &board, &mcu)
@@ -910,13 +892,13 @@ impl Studio {
             Ok(data) => Ok(data),
             Err(onerom_fw::Error::ReleaseNotFound) => {
                 trace!("Release {fw_ver:?} does not exist for {board} {mcu}");
-                return Message::ReleaseDoesntExist.into();
+                return Message::ReleaseDoesntExist(download).into();
             }
             Err(onerom_fw::Error::Http { url, status }) => {
                 info!(
                     "Failed to download release {fw_ver:?} for {board} {mcu} from {url}: HTTP error {status}"
                 );
-                return Message::ReleaseDoesntExist.into();
+                return Message::ReleaseDoesntExist(download).into();
             }
             Err(e) => {
                 let log = format!("Failed to download release {fw_ver} for {board} {mcu}:\n  {e}");
@@ -925,7 +907,7 @@ impl Studio {
             }
         };
 
-        Message::ReleaseDownloaded(result).into()
+        Message::ReleaseDownloaded(download, result).into()
     }
 
     pub fn top_level_buttons(&self, serious_errors: bool) -> iced::Element<'_, AppMessage> {
@@ -948,5 +930,54 @@ impl Studio {
             time::every(check_releases_duration).map(|_| Message::FetchReleases),
             time::every(check_configs_duration).map(|_| Message::FetchConfigs),
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A download result for another release, or for the selected release
+    /// on other hardware, leaves the selected firmware in place.
+    #[test]
+    fn a_stale_download_is_dropped() {
+        let releases = Releases::from_json(
+            r#"{ "version": 1, "latest": "0.8.1", "releases": [
+                { "version": "0.8.1", "boards": [{ "name": "fire-24-f", "mcus": [{ "name": "rp2350" }] }] },
+                { "version": "0.8.0", "boards": [{ "name": "fire-24-f", "mcus": [{ "name": "rp2350" }] }] }
+            ] }"#,
+        )
+        .unwrap();
+        let mut studio = Studio::new();
+        studio.runtime_info.set_releases(releases.clone());
+        let release = releases.release_from_string("0.8.0").unwrap().clone();
+        let _ = studio.update(Message::DownloadRelease(
+            release,
+            Board::Fire24F,
+            McuVariant::RP2350,
+        ));
+
+        let selected = Download {
+            version: FirmwareVersion::new(0, 8, 0, 0),
+            board: Board::Fire24F,
+            mcu: McuVariant::RP2350,
+        };
+        let other_version = Download {
+            version: FirmwareVersion::new(0, 8, 1, 0),
+            ..selected
+        };
+        let other_board = Download {
+            board: Board::Fire40A,
+            ..selected
+        };
+        let _ = studio.update(Message::ReleaseDownloaded(selected, Ok(vec![0x80])));
+        for stale in [other_version, other_board] {
+            let _ = studio.update(Message::ReleaseDownloaded(stale, Ok(vec![0x81])));
+            let _ = studio.update(Message::ReleaseDoesntExist(stale));
+        }
+
+        assert_eq!(studio.runtime_info.firmware(), Some(&vec![0x80]));
+        let version = studio.runtime_info.selected_firmware().map(|r| &r.version);
+        assert_eq!(version.map(String::as_str), Some("0.8.0"));
     }
 }

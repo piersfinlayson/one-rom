@@ -63,8 +63,8 @@ go-ahead before editing this file.
 - **One entry per user-visible change, not per commit.** A feature built over
   several commits — device side, plugin, CLI — is one entry. A correction made
   before release folds into the entry for the thing it corrects.
-- An entry exists where a user or a downstream crate can see the change.
-  Refactors, test-harness fixes, CI and this file are invisible to both.
+- An entry exists where a user can see the change.
+  Refactors, test-harness fixes, CI and this file are invisible to a user.
 - A user-facing change goes under the current in-development heading in the
   repo-root [CHANGELOG.md](/CHANGELOG.md) **and** in the affected component's
   own: `rust/cli/CHANGELOG.md`, `rust/studio/CHANGELOG.md`,
@@ -78,7 +78,8 @@ go-ahead before editing this file.
   Its "To publish" list under the current in-development heading owns in-flight
   bumps. A crate already listed there is bumped-but-unpublished: add the
   CHANGELOG entry and leave the version as it stands. Crates without their own
-  `CHANGELOG.md` (`onerom-metadata`, `onerom-gen`, …) are tracked there alone.
+  `CHANGELOG.md` (`onerom-metadata`, `onerom-gen`, …) appear there only in the
+  "To publish" list.
 - These crates are on crates.io with external consumers, so **SemVer governs**.
   A non-backwards-compatible public-API change takes a **minor** bump (pre-1.0:
   `0.6.x → 0.7.0`). Breaking means altering or removing a public item's
@@ -260,10 +261,11 @@ onerom-cli`. Ask me before flashing, since it changes device state.
   the CLI downloads the *released* base firmware and your changes sit outside
   the test.
 - A stopped One ROM sits in the RP2350 bootloader, so `scan` finds it and
-  `scan --slots` reads its slot metadata with no plugins flashed. Add
-  `--plugin usb` where the test needs the device to **serve while staying on
-  the USB bus**. One system plus one user plugin is the maximum: `usb` is
-  system, `host-control` and `blink` are user.
+  `scan --slots` reads its slot metadata with no plugins flashed. `program`
+  adds `--plugin usb` unless another system plugin is specified, so the device
+  **serves while staying on the USB bus**. Use `--no-plugin` to test without
+  plugins. One system plus one user plugin is the maximum: `usb` is system,
+  `host-control` and `blink` are user.
 - `--plugin` combines with `--config` as well as `--slot` — the plugins go
   ahead of the config's ROM slots, and a config defining its own plugin is an
   error. To pass plugins alongside command-line ROMs, use `--slot`:
@@ -271,7 +273,7 @@ onerom-cli`. Ask me before flashing, since it changes device state.
       onerom program \
         --slot file=<path|url>,type=23128,cs1=active-low,cs2=active-low,cs3=active-high \
         --base-firmware firmware/build/onerom-rp235x.bin \
-        --plugin usb \
+        --plugin host-control \
         --out /tmp/fw.bin
 
   Per-slot firmware overrides go in the spec — `,led=off`, `,cpu-freq=200MHz`,
@@ -328,6 +330,9 @@ mechanically.
   `supported_values()` (see `args/image.rs`'s `ImageFormatParser`) so a new
   variant flows through with no CLI change. `onerom-gen` stays clap-free.
 - clap already requires a non-`Option` field, so leave `required = true` off.
+- **Adding or removing an option changes `TOTAL_OPTIONS`** in
+  `prototypes/studiov2/commands/tests/description.rs`. Run that crate's
+  `description` test.
 - **Examples in doc comments are runnable.** `firmware inspect firmware.bin`
   sat in the help for months describing an argument form the command never had.
 

@@ -21,7 +21,9 @@ onerom-config = { workspace = true }
 onerom-fw-emulator = { workspace = true }
 onerom-fw-tester = { workspace = true }
 onerom-gen = { workspace = true }
+onerom-metadata = { workspace = true }
 onerom-plugin-tester = { workspace = true }
+onerom-rbcp-host = { workspace = true }
 
 serde_json = "1"
 log = "0.4"

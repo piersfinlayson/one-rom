@@ -75,7 +75,12 @@ breaks an existing command line lands in a minor release — v0.3.0 to v0.4.0 �
 and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
-None in this release.
+- `program` and `firmware build` automatically add the USB plugin when a system
+  plugin isn't specified (or a config file doesn't define a plugin). Use
+  `--no-plugin` to build without plugins.
+- An unused signature from an earlier CLI fails with
+  `hardware commission --signature`. One ROMs already commissioned aren't
+  affected. Raise a new signing request, or sign again with `hardware sign`.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -168,6 +173,10 @@ anticipated.
 - **Configuration** - the description of what a One ROM should do, provided to
   the programmer.  It names the ROM images to serve, the chip type and chip
   select behaviour of each, and any settings.
+
+- **Firmware** - the complete image a One ROM runs.  Every One ROM is built
+  from a combination of configuration and ROM images.  A programmer turns them
+  into firmware together with the Base Firmware, metadata and any plugins.
 
 - **Programmer** - a tool that composes ROM images, configuration, Base Firmware
   and metadata into a complete image, and flashes it to the device.  There are
@@ -419,13 +428,17 @@ per-slot CPU frequency/voltage, the status LED and 16-bit forcing.
 ### Program with a plugin
 
 Plugins masquerade as ROMs. At most one system plugin and one user plugin are
-supported; a user plugin requires a system plugin. The system plugin lands in
-slot 0, the user plugin in slot 1:
+supported. A user plugin requires a system plugin. A system plugin uses slot 0
+and a user plugin in slot 1.
+
+The USB plugin is automatically added when a system plugin isn't specified (or
+the config file doesn't define a plugin). Therefore this adds both the USB plugin
+and the host-control plugin:
 
 ```
 onerom program --board fire-24-e \
     --slot file=kernal.bin,type=2364,cs1=active-low \
-    --plugin usb
+    --plugin host-control
 ```
 
 `--plugin` may also be combined with `--config`. The plugins are inserted
@@ -433,11 +446,21 @@ ahead of the config's ROM slots (which shift up accordingly), so you can add a
 plugin to a stock config without editing it:
 
 ```
-onerom program --config c64.json --plugin usb
+onerom program --config c64.json --plugin host-control
 ```
 
 It is an error if the config already defines a plugin of its own — remove it
 from the config, or drop `--plugin`.
+
+Use `--no-plugin` to build without plugins. Where the USB plugin doesn't have a
+version that supports the firmware, the image is built without it:
+
+```
+$ onerom firmware build --board fire-24-c --version 0.5.10 --slot file=kernal.bin,type=2364,cs1=active-low --out firmware.bin
+No version of plugin 'usb' supports the selected firmware version 0.5.10.
+  Building without a plugin.
+Firmware written to firmware.bin
+```
 
 Plugin spec forms are listed under [Plugin
 specification](#plugin-specification).
@@ -474,7 +497,9 @@ Plugin /home/me/my-plugin.bin is not an official One ROM plugin - no published c
 
 If the images server cannot be reached the build is not blocked — an offline
 build of an otherwise valid config still works — but a `Warning:` line naming
-the plugin says the check was skipped.
+the plugin says the check was skipped. The USB plugin that is added
+automatically is downloaded from the images server, so an offline build needs
+`--no-plugin`.
 
 ### Build firmware without flashing
 
@@ -721,11 +746,13 @@ hardware take them; each command's own entry below states what it accepts, and
 |---|---|---|
 | [`scan`](#scan) | Discover connected One ROMs | No |
 | [`program`](#program) | Build and flash firmware to a One ROM | Yes |
+| [`save`](#save) | Save a One ROM's configuration and ROM images to files | Varies |
 | [`inspect`](#inspect) | Read-only device state and information | Yes |
 | [`monitor`](#monitor) | Watch a running One ROM as it works | Yes |
 | [`console`](#console) | Send data to and receive data from the machine One ROM is fitted in | Yes |
 | [`control`](#control) | Transient (non-persistent) device actions | Yes |
 | [`update`](#update) | Persistent device modifications | Yes |
+| [`clone`](#clone) | Copy a One ROM or firmware file to another One ROM | Yes |
 | [`hardware`](#hardware) | Commission and check a One ROM's hardware | Varies |
 | [`image`](#image) | ROM image file manipulation | No |
 | [`firmware`](#firmware) | Build, inspect and manage firmware binaries | Varies |
@@ -827,14 +854,15 @@ onerom program --config c64.json --out firmware.bin
 | `--config, -j <FILE>` (aliases `--config-file`, `--config-json`, `--json`) | ROM configuration JSON file or http(s) URL. Conflicts with `--slot`, `--config-name`, `--config-description`, `--save-config`, `--no-config`, `--firmware`. |
 | `--slot <SPEC>` (alias `--rom`) | ROM slot specification; repeatable. See [ROM slot specification](#rom-slot-specification). Conflicts with `--config`, `--no-config`, `--firmware`. |
 | `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config`, `--slot`, `--base-firmware` and `--plugin` because a pre-built firmware already contains all ROMs/plugins. Also conflicts with `--version`. |
-| `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. With `--slot`, ROMs are built into it; alone, requires `--no-config`. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--firmware`, `--version`. |
+| `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. With `--slot`, ROMs are built into it; alone, requires `--no-config`. Conflicts with `--firmware`, `--version`. |
 | `--no-config` | Confirm flashing a base firmware with no ROM configuration. Only valid with `--config-name` and/or `--config-description`. Conflicts with `--config`, `--slot`, `--firmware`, and the config-override options below. |
 
 ### Configuration metadata
 
 | Option | Description |
 |---|---|
-| `--plugin <SPEC>` | Plugin specification; repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Conflicts with `--firmware`. |
+| `--plugin <SPEC>` | Plugin specification. Repeatable. See [Plugin specification](#plugin-specification). May be combined with `--config`: the plugins are inserted ahead of the config's ROM slots (which shift up), and it is an error if the config already defines a plugin of its own. Without it, the USB plugin is added where the config doesn't define a plugin. Conflicts with `--firmware`. |
+| `--no-plugin` | Build without plugins. It is an error if the config defines a plugin. Conflicts with `--plugin` and `--firmware`. |
 | `--config-name <NAME>` | Name for the generated ROM configuration. Conflicts with `--config`. |
 | `--config-description <DESC>` (aliases `--desc`, `--description`) | Description for the generated configuration. Defaults to *"Created by the One ROM CLI"*. Conflicts with `--config`. |
 | `--save-config <FILE>` | Save the generated configuration to JSON. Only valid with `--slot` or `--no-config`. Conflicts with `--config`. `--plugin usb` is saved as `"plugin": "usb"`. |
@@ -874,14 +902,85 @@ These are rejected with `--no-config`.
 | `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
 | `--batch` (aliases `--multiple`, `--multi`) | Program multiple devices, pausing for confirmation between each. Every board is programmed with the same configuration as the first. |
 | `--scan-slots` | After programming, run `onerom scan --slots` to show the result. Conflicts with `--fast`. |
-| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--batch`. |
-| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->. Use `control reset` for a different hold time. A warning is displayed if the pin isn't reserved. Conflicts with `--fast`, `--stopped` and `--no-reboot`. |
+| `--follow` | After programming, monitor the One ROM's log, as [`monitor log`](#monitor-log) does. Runs after `--scan-slots`, and only once the One ROM is back on the USB bus, so it shows the boot log of the firmware just flashed. Refused before anything is flashed if the image has no USB system plugin, since such a One ROM leaves the bus as soon as it serves. Conflicts with `--fast`, `--stopped`, `--no-reboot`, `--no-plugin` and `--batch`. |
+| `--reset-host <PIN>` (alias `--host-reset`) | After programming, pulse this pin low to reset the host system, as [`control reset`](#control-reset) does. Written as `gpio<N>` or as a header pin (see [Pin values](#pin-values)). Runs after `--scan-slots` and before `--follow`, once the One ROM is back on the USB bus, and for each device in a `--batch`. The pulse is <!--[const:GPIO_RESET_DEFAULT_HOLD_MS:ms]-->100ms<!--[/]-->. Use `control reset` for a different hold time. A warning is displayed if the pin isn't reserved. Conflicts with `--fast`, `--stopped`, `--no-reboot` and `--no-plugin`. |
 
 An image is built for the One ROM's [size](#board-sizes). For a
 [commissioned](#hardware) One ROM it must also be built for the board type it
 is commissioned as, unless `--force` is used.
 
 Device required: yes.
+
+---
+
+## save
+
+Save a One ROM's configuration and ROM images to files.
+
+Use `--path` to save the config and every ROM image, or `--slot` to save one ROM
+image. The file paths in `config.json` start with the `--path` directory. Use
+`onerom program --config` in the directory where `onerom save` was used. A
+published plugin is listed in `config.json` by name and isn't saved.
+
+```
+onerom save --slot 4 --output basic.bin
+onerom save --slot 3 --chip 1 --output char.bin
+onerom save --path c64
+onerom save --firmware old.bin --path c64
+```
+
+With `--path`, each ROM image is saved as `slot<N>[-chip<M>][-<name>].bin`, for
+example `slot2-kernal.bin`:
+
+- `-chip<M>` is added for a slot with multiple chips.
+- `<name>` is the ROM image's original file name without its extension.
+
+A plugin that isn't published is saved as `<type>-plugin[-<name>].bin`, for
+example `system-plugin.bin`.
+
+A saved ROM image may differ from the original file as it includes any padding
+or duplication of the original image.
+
+An example showing a fire-24-f firmware file with:
+- two single 2364 ROM images `a.bin` and `b.bin`
+- a banked pair `c.bin` and `d.bin`:
+
+```
+$ onerom save --firmware image.bin --path c64
+Saved c64/slot0-a.bin
+Saved c64/slot1-b.bin
+Saved c64/slot2-chip0-c.bin
+Saved c64/slot2-chip1-d.bin
+Saved c64/config.json
+```
+
+The command fails if a file it would write already exists.  `--force` overwrites.
+
+```
+$ onerom save --firmware image.bin --path c64
+Failed to execute command.
+File already exists: c64/config.json
+  Use --force to overwrite it.
+```
+
+A number of fields that can be put in a config file don't exist in the firmware,
+so are not written.  These include:
+- name
+- descriptions
+- notes
+- categories
+- licences
+
+| Option | Description |
+|---|---|
+| `--slot <INDEX>` | Slot to save the ROM image from. Slots are numbered as in [`onerom inspect slots`](#inspect-slots). Requires `--output`. |
+| `--chip <INDEX>` | Chip to save from a slot with multiple chips. Chips are numbered from 0. Requires `--slot`. |
+| `--output, -o <FILE>` (alias `--out`) | File to save the ROM image to. Requires `--slot`. |
+| `--path <DIR>` | Directory to save `config.json` and a file for each ROM image to. Created if it doesn't exist. |
+| `--firmware <FILE>` (aliases `--fw`, `--in`, `--input`) | Firmware file to read instead of a connected One ROM. |
+| `--force, -f` | Overwrite existing files. |
+
+Device required: yes, unless `--firmware` is provided.
 
 ---
 
@@ -898,7 +997,6 @@ onerom inspect <COMMAND>
 | [`info`](#inspect-info) | Identity and configuration | Yes |
 | [`telemetry`](#inspect-telemetry) | Runtime telemetry **(not yet supported)** | Yes |
 | [`slots`](#inspect-slots) | List ROM slots | Yes |
-| [`image`](#inspect-image) | Read a slot's ROM image **(not yet supported)** | Yes |
 | [`peek`](#inspect-peek) | Read SRAM or the live ROM image | Yes |
 | [`gpio`](#inspect-gpio) | Show what each GPIO is and what it is doing | Yes (running) |
 | [`header`](#inspect-header) | Draw the device board's pin header | Yes |
@@ -947,15 +1045,6 @@ Any reserved pins are displayed:
 ```
 
 `scan --slots` displays the same information.
-
-### inspect image
-
-Read (or save) the ROM image from a slot. **(not yet supported)**
-
-| Option | Description |
-|---|---|
-| `--slot <INDEX>` | Slot index to read. Reads the active slot if omitted. |
-| `--output, -o <FILE>` (alias `--out`) | Save the image data to this file. |
 
 ### inspect peek
 
@@ -1371,8 +1460,11 @@ Freq: 150MHz
 
 `Name:` appears only when the One ROM has an instance name set, and `Logging:`
 lists the kinds of output switched on — see
-[Logging](/docs/LOGGING.md#over-usb). A One ROM that cannot forward its log says
+[Logging](/docs/LOGGING.md#usb). A One ROM that cannot forward its log says
 so there, rather than leaving you watching a silent port.
+
+A One ROM plugin can claim exclusive use of the USB serial port.  In this case,
+the CLI automatically retrieves logs using another mechanism.
 
 ```
 onerom monitor log
@@ -1384,25 +1476,7 @@ onerom monitor log --output boot.txt
 |---|---|
 | `--output, -o <FILE>` (alias `--out`) | Also write the One ROM's output to this file, replacing its contents. The file receives what the One ROM sends and nothing else, so it is a transcript of the device rather than of this command. The output still appears on screen as well. |
 
-The One ROM's output goes to stdout and everything this command says about
-itself goes to stderr, so `onerom monitor log > boot.txt` captures the log on
-its own. `--verbose` adds a line naming the serial port, for when you want to
-point another tool at it.
-
-What this command needs, and what it cannot do:
-
-- The One ROM must be **running**, and must have been programmed with the USB
-  system plugin. That plugin provides the serial port and forwards the log into
-  it.
-- Nothing is forwarded until this command — or another terminal — opens the
-  port. A One ROM nothing is listening to accumulates its log rather than
-  discarding it, which is why the boot log is still there when you attach.
-- A debug probe reading the log over SWD consumes the same bytes. With both
-  running the stream is split arbitrarily between them and neither sees all of
-  it, so use one at a time.
-- If nothing arrives within two seconds the command fails. Since every attach
-  begins with the banner above, a One ROM with a current USB plugin always sends
-  something — so a timeout points at a plugin too old to forward the log at all.
+One ROM must be running for logging to be displayed.
 
 Device required: yes.
 
@@ -1867,7 +1941,9 @@ One of `--all` / `--offset` / `--address` is required. `--stopped` and
 
 ## update
 
-Persistent modifications — these write to flash and survive power cycles.
+Make persistent modifications to a connected One ROM.
+
+Each change is written to the One ROM's flash so it survives power cycles.
 
 ```
 onerom update <COMMAND>
@@ -1875,28 +1951,84 @@ onerom update <COMMAND>
 
 | Subcommand | Purpose | Device required |
 |---|---|---|
-| [`slot`](#update-slot) | Write a ROM image to a flash slot **(not yet supported)** | Yes |
-| [`commit`](#update-commit) | Commit the live image to flash **(not yet supported)** | Yes |
+| [`firmware`](#update-firmware) | Change a One ROM's firmware version, keeping its configuration and ROM images | Yes |
+| [`slot`](#update-slot) | Replace a ROM image in a slot, keeping the configuration and the other ROM images | Yes |
+| [`plugin`](#update-plugin) | Add or replace a plugin keeping the rest of the configuration | Yes |
+| [`commit`](#update-commit) | Commit the live ROM image to flash **(not yet supported)** | Yes |
 
-### update slot
+### update firmware
 
-Write a ROM image to a flash slot; persists across power cycles. The ROM type
-and chip-select configuration must match the slot's existing configuration, or
-the slot must be empty. **(not yet supported)**
+Change a One ROM's firmware version, keeping its configuration and ROM images.
+
+Each published plugin is updated to its latest compatible release and any stored
+plugin data is reset. An unpublished plugin is left as-is.
 
 ```
-onerom update slot --slot 2 --image kernal.bin
+onerom update firmware
+onerom update firmware --version 0.8.1
+```
+
+Example output:
+
+```
+$ onerom update firmware --version 0.8.1
+Updating firmware from v0.8.0 to v0.8.1
+Updating plugin usb from v0.3.1 to v0.3.2
+Programming device - DO NOT DISCONNECT
+Programming complete
 ```
 
 | Option | Description |
 |---|---|
-| `--slot <INDEX>` | Flash slot index to write. Required. |
-| `--image <FILE>` | ROM image file to write. Required. |
+| `--version <VERSION>` | Firmware version to change to. Defaults to the latest release. Conflicts with `--base-firmware`. |
+| `--base-firmware <FILE>` | Local base firmware to build with instead of downloading a release. |
+| `--force, -f` | Continue despite non-fatal problems. Each problem is printed as a warning. |
+
+### update slot
+
+Replace a ROM image in a slot, keeping the configuration and the other ROM
+images.
+
+The new ROM image has the same chip type and chip-select settings as the one
+it's replacing, and its filename/label comes from `--image`.
+
+The firmware version and plugins are unchanged.
+
+```
+onerom update slot --slot 2 --image kernal.bin
+onerom update slot --slot 3 --chip 1 --image char.bin
+```
+
+| Option | Description |
+|---|---|
+| `--slot <INDEX>` | Slot being updated. For slot numbering see [`onerom inspect slots`](#inspect-slots). Required. |
+| `--chip <INDEX>` | Chip to replace in a slot with multiple chips. Chips are numbered from 0. |
+| `--image <FILE>` | ROM image file or http(s) URL. Required. |
+| `--force, -f` | Continue despite non-fatal problems. Each problem is printed as a warning. |
+
+### update plugin
+
+Add or replace a plugin keeping the rest of the configuration.
+
+A new plugin replaces the plugin of the same type. A user plugin requires a
+system plugin be present. The other plugin is unchanged, including any data it
+has stored.
+
+```
+onerom update plugin --plugin usb
+onerom update plugin --plugin host-control
+```
+
+| Option | Description |
+|---|---|
+| `--plugin <SPEC>` | Plugin to add. See [Plugin specification](#plugin-specification). Required. |
+| `--force, -f` | Continue despite non-fatal problems. Each problem is printed as a warning. |
 
 ### update commit
 
-Persist the currently active RAM image to its corresponding flash slot. **(not
-yet supported)**
+Commit the live ROM image to flash. **(not yet supported)**
+
+The live ROM image is written to its slot in flash so it survives power cycles.
 
 ```
 onerom update commit
@@ -1905,7 +2037,37 @@ onerom update commit --slot 2
 
 | Option | Description |
 |---|---|
-| `--slot <INDEX>` | Slot to commit. Commits the active slot if omitted. |
+| `--slot <INDEX>` | Slot to commit. Defaults to the active slot. |
+
+---
+
+## clone
+
+Copy a One ROM or firmware file to another One ROM.
+
+The source can be a One ROM or a firmware file.
+
+The destination can be a different board type but must:
+
+- support the source's chip types
+- have any pins the source's config reserves
+- have sufficient flash for the source's ROM images
+
+The source One ROM's firmware version and plugins are copied over but the
+destination retains its own instance name and USB serial override (if any).
+
+```
+onerom clone --from E126C9F97C10ADAC --to FC9D67248E8E8023
+onerom clone --from old.bin --to FC9D67248E8E8023
+```
+
+| Option | Description |
+|---|---|
+| `--from <SOURCE>` | Source One ROM to copy from. Can be the serial number of the One ROM to copy or a firmware file. Required. |
+| `--to <DEVICE>` | Serial number of the destination One ROM. Required. |
+| `--force, -f` | Continue despite non-fatal problems. Each problem is printed as a warning. |
+
+Device required: yes, and a source One ROM unless `--from` is a firmware file.
 
 ---
 
@@ -1967,7 +2129,7 @@ describes how each size is recorded.
 
 Write to the RP2350's OTP:
 
-- the signed board type, manufacturer and date
+- the signed board details
 - the USB info that white labels the RP2350's bootloader as One ROM
 - the external flash settings for a [size](#board-sizes) other than M
 
@@ -1987,6 +2149,8 @@ onerom hardware commission --board fire-40-b --size M --manufacturer "Acme Retro
 | `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board with the matching RP2350 package (A or B). Required. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
 | `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--revision <REVISION>` (alias `--rev`) | The board's revision, for example `A1`. Printable ASCII without a leading or trailing space. |
+| `--batch <BATCH>` | The board's manufacturing batch, for example a PCB order number. Printable ASCII without a leading or trailing space. |
 | `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
 | `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
 | `--pin <PIN>` | PIN of the signing server's key or of an encrypted key file. Asked for in a terminal if omitted. Conflicts with `--signature`. |
@@ -2005,7 +2169,8 @@ The signature comes from one of:
 - a signing server, with `--signer` and `--key-id` — see
   [Signing Server](/docs/COMMISSIONING.md#signing-server)
 - a [signing request](/docs/COMMISSIONING.md#submitting-a-signing-request) or
-  [`hardware sign`](#hardware-sign), with `--signature`, `--key-id` and `--date`
+  [`hardware sign`](#hardware-sign), with `--signature`, `--key-id`, `--date`
+  and any `--revision` and `--batch` it was signed with
 
 The signing key must be
 [authorised](/docs/COMMISSIONING.md#requesting-an-authorised-signing-key) for
@@ -2013,8 +2178,7 @@ the manufacturer being signed.
 
 `--force` is required to:
 
-- re-commission a One ROM with a different board type, manufacturer, date or
-  signing key — see
+- re-commission a One ROM with different details — see
   [Correcting Commissioning Errors](/docs/COMMISSIONING.md#correcting-commissioning-errors)
 - commission a One ROM whose firmware is for another board type
 - commission a One ROM as M when another size is partly programmed
@@ -2040,15 +2204,15 @@ Commissioning:
   Date:         2026-09-29
   Signing key:  Acme Retro (256)
 To write:
-  Commissioning instance at row 0x0c0   59 rows
+  Commissioning instance at row 0x0c0   62 rows
   Lock for page 3                        1 row
   Bootloader USB strings                41 rows
   White label table                      9 rows
   USB_WHITE_LABEL_ADDR                   1 row
   USB_BOOT_FLAGS and its copies          3 rows
-  Total                                114 rows
+  Total                                117 rows
 WARNING: OTP writes cannot be undone.
-Write 114 rows? (y/N): y
+Write 117 rows? (y/N): y
 Writing OTP - DO NOT DISCONNECT
 Commissioning instance: written
 Lock for page 3: written
@@ -2089,7 +2253,7 @@ Signing request:
   Board size:   M
   Manufacturer: onerom.org
 Open this link to raise a signing request for this One ROM on GitHub:
-  https://github.com/piersfinlayson/one-rom/issues/new?template=signing-request.yml&title=%5Bsigning%20request%5D%20DE3F9C232F655B6B&chip_id=DE3F9C232F655B6B&board=fire-40-b&size=M&manufacturer=onerom.org
+  https://github.com/piersfinlayson/one-rom/issues/new?template=signing-request.yml&title=%5Bsigning%20request%5D%20DE3F9C232F655B6B&chip_id=DE3F9C232F655B6B&board=fire-40-b&size=M&manufacturer=onerom.org&cli_version=0.6.0
 ```
 
 ### hardware sign
@@ -2114,6 +2278,8 @@ onerom hardware sign --chip-id DE3F9C232F655B6B --board fire-40-b --size L \
 | `--board, -b <BOARD>` | Board type, for example `fire-40-b`. Must be a Fire board. Required. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `M`. Required for a board that supports external flash. |
 | `--manufacturer <NAME>` | Manufacturer's name, for example `"Acme Retro"`. Printable ASCII without `*` or a leading or trailing space. Required. |
+| `--revision <REVISION>` (alias `--rev`) | The board's revision, for example `A1`. Printable ASCII without a leading or trailing space. |
+| `--batch <BATCH>` | The board's manufacturing batch, for example a PCB order number. Printable ASCII without a leading or trailing space. |
 | `--date <DATE>` | Commissioning date as `YYYYMMDD`, for example `20260929`. Defaults to today's UTC date. Cannot be in the future. |
 | `--signer <URL>` | Signing server's address, for example `https://sign.internal.example.com`. Must use https. Requires `--key-id`. |
 | `--key-id <ID>` | Signing key's ID from 1 to 65535, for example `256`. Conflicts with `--key`. |
@@ -2146,9 +2312,9 @@ Signing:
   Date:         2026-09-29
   Signing key:  Acme Retro (256)
 Sign? (y/N): y
-Signature: 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+Signature: ff0179e1256e4cd83c69939e9dc52182d2f4d974d532c227c10226038d3ba7504521496c649884133c86445b512fce27e80bcc1118668354f2885e02d1c80a0c
 Command to commission the One ROM:
-  onerom hardware commission --board fire-40-b --size M --manufacturer 'Acme Retro' --date 20260929 --key-id 256 --signature 069aa818bc4a1baa7d23ae160117d17b03e2f3e672fdf1bc8e7bd93d6a6d4456b5d960aa2f249f6065d973eb5f6ae51fa025a931ff32bf26ab514a2d3d0d3803
+  onerom hardware commission --board fire-40-b --size M --manufacturer 'Acme Retro' --date 20260929 --key-id 256 --signature ff0179e1256e4cd83c69939e9dc52182d2f4d974d532c227c10226038d3ba7504521496c649884133c86445b512fce27e80bcc1118668354f2885e02d1c80a0c
 ```
 
 ### hardware set-size
@@ -2228,6 +2394,7 @@ Board size: M
 Commissioned: yes
   Board type:   fire-40-b
   Manufacturer: Acme Retro
+  Contact:      https://github.com/acme-retro
   Date:         2026-09-29
   Signing key:  Acme Retro (256)
   Signature:    verified
@@ -2379,7 +2546,7 @@ onerom firmware build --config amiga.json --board fire-40-b --size L --out firmw
 ```
 
 The configuration options mirror [`program`](#program): `--config` (`-j`),
-`--slot`, `--plugin`, `--config-name`, `--config-description`, `--save-config`,
+`--slot`, `--plugin`, `--no-plugin`, `--config-name`, `--config-description`, `--save-config`,
 `--no-config`, and the per-device overrides `--instance-name`,
 `--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot`,
 `--reserve-pin`, `--addr-mon-min-cs-act-ns` (all rejected with `--no-config`).
@@ -2390,7 +2557,7 @@ Build-specific options:
 | `--board, -b <BOARD>` | Target board type. Required when not inferrable from a connected device. |
 | `--size <SIZE>` | The board's [size](#board-sizes), for example `L`. Defaults to `M`. A size other than M requires firmware v0.8.0 or later. |
 | `--version <VERSION>` | Firmware version to build against. Defaults to latest. |
-| `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Must be built with `EXCLUDE_METADATA=1` and `ROM_CONFIGS=`. Conflicts with `--version`. |
+| `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Conflicts with `--version`. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to `onerom_<board>_v<version>_<config>.bin`, where `<config>` is the `--config` filename without its extension. Conflicts with `--path`. |
 | `--path <DIR>` | Output directory, using the default filename. Conflicts with `--output`. |
 | `--force, -f` | Continue despite non-fatal problems, reporting each as a warning. |
@@ -2416,9 +2583,9 @@ Plugins:
   https://images.onerom.org/plugins/system/usb/v0.3.1/plugin.bin
 Slots: 2
   Slot 0: 1 ROM(s), 8192 bytes
-    ROM 0: 2364 kernal.bin
+    Chip 0: 2364 kernal.bin
   Slot 1: 1 ROM(s), 8192 bytes
-    ROM 0: 2364 basic.bin
+    Chip 0: 2364 basic.bin
 ```
 
 From v0.7.0, release firmware is board-agnostic firmware. It runs on all boards
@@ -3059,21 +3226,21 @@ Unable to tell which way around the byte pairs are in blank.bin.  If the slot
 
 ## Plugin specification
 
-Used by `--plugin` in [`program`](#program) and [`firmware build`](#firmware-build).
-At most one system plugin and one user plugin; a user plugin requires a system
-plugin. The system plugin is placed in slot 0, the user plugin in slot 1.
+At most one system plugin and one user plugin are supported. A user plugin
+requires a system plugin. The system plugin is placed in slot 0, the user plugin
+in slot 1.
+
+Various commands expose the `--plugin` option:
 
 | Form | Meaning |
 |---|---|
-| `--plugin usb` | Latest compatible version, by name. |
+| `--plugin usb` | Latest compatible version of a published plugin. |
 | `--plugin system/usb` | With explicit type (`system` or `user`). |
 | `--plugin usb,version=0.1.0` | Pinned version. |
 | `--plugin file=path/to/plugin.bin` | Local file. |
 | `--plugin file=https://example.com/plugin.bin` | Remote file. |
 
-Named forms are selected against the release manifest, so an incompatible one is
-refused at that point. A `file=` form, and a plugin named by a config, are
-checked separately — see [Plugin compatibility](#plugin-compatibility).
+See also [Plugin compatibility](#plugin-compatibility).
 
 ---
 
@@ -3228,6 +3395,15 @@ to 3.3V, rather than to ground. It is the jumper labelled `B0` or `B`. The
 
 Changes that can alter or break a command line that worked on an earlier
 release. Newest release first.
+
+### v0.6.0
+
+- `program` and `firmware build` automatically add the USB plugin when a system
+  plugin isn't specified (or a config file doesn't define a plugin). Use
+  `--no-plugin` to build without plugins.
+- An unused signature from an earlier CLI fails with
+  `hardware commission --signature`. One ROMs already commissioned aren't
+  affected. Raise a new signing request, or sign again with `hardware sign`.
 
 ### v0.5.0
 

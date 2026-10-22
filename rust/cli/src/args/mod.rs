@@ -63,6 +63,7 @@ pub mod inspect;
 pub mod monitor;
 pub mod plugin;
 pub mod program;
+pub mod save;
 pub mod scan;
 pub mod self_cmd;
 pub mod update;
@@ -101,17 +102,21 @@ use image::{
     ImageArgs, ImageCommands, ImageConvertArgs, ImageDeinterleaveArgs, ImageSwapBytesArgs,
 };
 use inspect::{
-    InspectArgs, InspectCommands, InspectGpioArgs, InspectHeaderArgs, InspectImageArgs,
-    InspectInfoArgs, InspectLedArgs, InspectOtpArgs, InspectPeekArgs, InspectPeekCommands,
-    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
-    InspectSocketArgs, InspectTelemetryArgs,
+    InspectArgs, InspectCommands, InspectGpioArgs, InspectHeaderArgs, InspectInfoArgs,
+    InspectLedArgs, InspectOtpArgs, InspectPeekArgs, InspectPeekCommands, InspectPeekLiveArgs,
+    InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs, InspectSocketArgs,
+    InspectTelemetryArgs,
 };
 use monitor::{MonitorArgs, MonitorCommands, MonitorLogArgs};
 use plugin::PluginArgs;
 use program::ProgramArgs;
+use save::SaveArgs;
 use scan::ScanArgs;
 use self_cmd::{SelfArgs, SelfCheckArgs, SelfCommands, SelfDownloadArgs};
-use update::{UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateSlotArgs};
+use update::{
+    CloneArgs, UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateFirmwareArgs, UpdatePluginArgs,
+    UpdateSlotArgs,
+};
 
 #[enum_dispatch]
 pub trait CommandTrait {
@@ -517,6 +522,29 @@ pub enum Commands {
     /// 'firmware' command.
     Program(ProgramArgs),
 
+    /// Save a One ROM's configuration and ROM images to files.
+    ///
+    /// Every One ROM is built from a combination of configuration and ROM
+    /// images. This command retrieves the config and ROM images used to
+    /// build a One ROM's firmware or firmware file.
+    ///
+    /// Use --path to save the config and every ROM image, or --slot to save
+    /// one ROM image. The file paths in config.json start with the --path
+    /// directory. Use 'onerom program --config' in the directory where
+    /// 'onerom save' was used. A published plugin is listed in config.json by
+    /// name and isn't saved.
+    ///
+    /// Examples:
+    ///
+    ///   onerom save --slot 4 --output basic.bin
+    ///
+    ///   onerom save --slot 3 --chip 1 --output char.bin
+    ///
+    ///   onerom save --path c64
+    ///
+    ///   onerom save --firmware old.bin --path c64
+    Save(SaveArgs),
+
     /// Read-only inspection of a connected One ROM.
     #[command(
         subcommand_value_name = "COMMAND",
@@ -571,13 +599,44 @@ pub enum Commands {
 
     /// Make persistent modifications to a connected One ROM.
     ///
-    /// These operations write to the One ROM's flash memory and survive
-    /// power cycles.
+    /// Every One ROM is built from a combination of configuration and ROM
+    /// images. The firmware, slot and plugin commands retrieve the config and
+    /// ROM images used to build a One ROM's firmware, make one change and
+    /// program the One ROM with firmware built from the result.
+    ///
+    /// Each change is written to the One ROM's flash so it survives power
+    /// cycles.
     #[command(
         subcommand_value_name = "COMMAND",
         subcommand_help_heading = "Commands"
     )]
     Update(UpdateArgs),
+
+    /// Copy a One ROM or firmware file to another One ROM.
+    ///
+    /// Every One ROM is built from a combination of configuration and ROM
+    /// images. This command retrieves the config and ROM images used to build
+    /// the source One ROM's firmware or firmware file and programs the
+    /// destination One ROM with firmware built from them.
+    ///
+    /// The destination can be a different board type. Its board must:
+    ///
+    /// - support the source's chip types
+    ///
+    /// - have the source's reserved pins
+    ///
+    /// - have room for the source's ROM images
+    ///
+    /// Otherwise the destination isn't programmed. A programmed destination
+    /// has the source's firmware version, and its own instance name and USB
+    /// serial override.
+    ///
+    /// Examples:
+    ///
+    ///   onerom clone --from E126C9F97C10ADAC --to FC9D67248E8E8023
+    ///
+    ///   onerom clone --from old.bin --to FC9D67248E8E8023
+    Clone(CloneArgs),
 
     /// Commission and check a One ROM's hardware.
     ///
@@ -757,6 +816,13 @@ mod tests {
             ("self check", false),
             ("self download", false),
             ("inspect slots", true),
+            ("save --path c64", true),
+            ("save --slot 0 --output a.bin", true),
+            ("save --firmware f.bin --path c64", false),
+            ("update firmware", true),
+            ("update slot --slot 0 --image a.bin", true),
+            ("update plugin --plugin usb", true),
+            ("clone --from f.bin --to E126C9F97C10ADAC", false),
         ];
         for (line, uses) in cases {
             let words: Vec<&str> = std::iter::once("onerom")

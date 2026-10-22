@@ -28,8 +28,11 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::Emulator;
 use onerom_gen::Config;
 
+mod boot_slot;
 mod commissioning;
+mod exclusive_serial;
 mod flash_range;
+mod plugin_launch;
 mod report;
 mod runner;
 

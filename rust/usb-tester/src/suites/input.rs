@@ -58,7 +58,7 @@ fn pending(emu: &Emulator, ch: u32) -> Result<u32, String> {
 ///
 /// The log channel is checked too.  Bytes that went there instead would still
 /// count as received.
-fn input_reaches_channel_1(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+pub(crate) fn input_reaches_channel_1(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
     let log_before = pending(dev.emulator(), LOG_CHANNEL)?;
 
     dev.push_cdc(b"hello, device");
@@ -89,7 +89,10 @@ fn input_reaches_channel_1(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, Stri
 ///
 /// A full channel holds one byte less than its size.  The final check is that
 /// every byte sent arrives, in order, across the stall.
-fn input_is_held_when_channel_1_is_full(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+pub(crate) fn input_is_held_when_channel_1_is_full(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
     let (r, size, _, _) = dev.emulator().log_query(CHANNEL);
     if r != OraResult::Ok {
         return Err(format!("query of channel 1 failed: {r:?}"));

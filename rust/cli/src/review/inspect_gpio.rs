@@ -138,7 +138,7 @@ pub(super) fn served_entries(image: &ParsedDevice, board: &Board) -> Vec<GpioEnt
 /// One ROM is in standby, where its data pins are inputs.
 async fn fire_24_a(reserved: &[&str], verbose: bool, standby: bool) {
     let board = Board::Fire24A;
-    let image = parse_firmware(&image_2364_for(board, 1, reserved)).await;
+    let image = parse_firmware(&image_2364_for(board, 1, reserved).await).await;
     let mut entries = served_entries(&image, &board);
     if standby {
         for entry in &mut entries {
@@ -186,7 +186,7 @@ async fn standby() {
 #[tokio::test]
 async fn reserved_pins() {
     let board = Board::Fire24F;
-    let image = parse_firmware(&image_2364(1, &["sel_c", "x1"])).await;
+    let image = parse_firmware(&image_2364(1, &["sel_c", "x1"]).await).await;
     let reserved = onerom_cli::pin::reserved_gpios(&image);
     println!("$ onerom inspect gpio --verbose");
     println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");

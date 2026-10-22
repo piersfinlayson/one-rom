@@ -1,47 +1,43 @@
 # One ROM Lab
 
-Alternate firmware for a One ROM **Fire** (RP2350) board that turns its ROM
-socket into a parallel bus reader and tester.  Flash it to a spare board, connect
-over USB, and drive it from an interactive shell.
+Alternate firmware for a One ROM Fire board that reads and tests a chip
+connected to it. It is driven from a serial console over USB.
 
-Two things it is used for:
+It reads:
 
-- **Reading real chips** — mask ROMs, EPROMs and EEPROMs sitting in the socket,
-  output as a checksum, a hex dump or Intel HEX.
-- **Testing a One ROM under test** — checking it serves the right bytes at speed
-  and tristates its data lines when deselected.  This is how Fire 40 boards are
-  tested before shipping.
-
-Fire only.  Lab refuses any board whose MCU is not an RP2350.
+- mask ROMs, EPROMs and EEPROMs, outputting
+  - a checksum
+  - a hex dump
+  - Intel HEX
+  - Motorola S-record
+- a One ROM, to check it serves the right bytes and tristates its data lines
+  when deselected.
 
 ## Build and flash
 
-The script builds Lab and loads it with `picotool` over USB.  A board running
-Lab, or One ROM with the USB plugin, is rebooted into its bootloader first.  Any
-other board needs BOOTSEL held while it is connected.
+`scripts/flash.sh` builds Lab and loads it with `picotool`. A board running Lab
+or One ROM with the USB plugin is rebooted into its bootloader by the script.
+Hold BOOTSEL while connecting any other board.
 
 ```bash
-scripts/flash.sh                # board set at runtime, with B:<board>
-scripts/flash.sh fire-40-a      # bake in a default board
+scripts/flash.sh                # board set at runtime with B:<board>
+scripts/flash.sh fire-40-a      # board built in
+scripts/flash.sh --serial 62CD9AE3C0771A7E fire-40-a
 ```
 
-The argument is any valid board type.
-
-The `z` command reboots back into BOOTSEL, so reflashing never needs the button.
+The board argument is the Lab board's type. `--serial` selects the Lab by its
+serial number from `onerom scan`. It's required where a One ROM with the USB
+plugin is also connected, as both have the same USB ID.
 
 ## picotool
 
-A running Lab answers `picotool`, so you can ask a board what it is and put it
-where you want it without opening a terminal or touching the button.  Lab keeps
-One ROM's vendor and product id, which picotool takes as arguments:
+Lab is compatible with `picotool` while running.
+
+To print Lab's version and the RP2350's chip ID, package and revision:
 
 ```bash
 picotool info -a --vid 0x1209 --pid 0xf542
 ```
-
-**Which board is this?**  On a bench with more than one, `info` names the
-firmware and its version, and prints the chip id, package and revision of the
-board you are pointed at, while Lab carries on running:
 
 ```text
 Program Information
@@ -50,41 +46,28 @@ Program Information
  description:   Use One ROM as a ROM reader
 ```
 
-**Reflash it.**  Two commands, no jumper and no button, and they work whether or
-not the shell is answering:
+To reboot Lab into the bootloader and flash it, including when the serial
+console stops working:
 
 ```bash
 picotool reboot -u --vid 0x1209 --pid 0xf542
 picotool load -t elf ../target/thumbv8m.main-none-eabihf/release/onerom-lab-fire
 ```
 
-The first drops the board into its bootloader.  A board that hasn't been
-commissioned appears there as a stock RP2350, which the second finds with no
-arguments.  A commissioned board's bootloader has One ROM's own vendor and
-product id, so add `--vid 0x1209 --pid 0xf540` to the end of the second.  This is the way
-back from a Lab whose shell has stopped answering, where `z` cannot help.
+A commissioned board's bootloader uses One ROM's VID and PID so add
+`--vid 0x1209 --pid 0xf540` to `load`.
 
-A reboot asked for this way says so on the terminal before the board goes, so a
-session that ends mid-sentence is explained rather than looking like a fault.
-
-**Read what is on it.**  `picotool save` copies flash, SRAM or boot ROM off the
-board — the same three regions its own bootloader serves — which is how you look
-at what a running Lab is holding.
-
-Writing flash, erasing flash and OTP are refused while Lab runs, so a host
-pointed at the wrong board cannot overwrite it mid-measurement.  That is a guard
-against accident, not against intent: the reboot above leaves the board in a
-bootloader that serves all three.
+With more than one One ROM connected, add `--ser <serial>` to select one.
 
 ## Connect
 
-Lab presents a USB CDC serial port.  Connect at 115200:
+Lab provides a USB serial port. Connect at 115200 baud:
 
 ```bash
 scripts/serial.sh /dev/cu.usbmodem1103
 ```
 
-Lab greets you as your terminal opens the port:
+Printed when connected:
 
 ```text
 ----- One ROM Lab -----
@@ -94,95 +77,163 @@ Serial: 62CD9AE3C0771A7E
 Type ? for help.
 ```
 
-The board line appears once a board is set.  You then get a `> ` prompt, with
-line editing, arrow keys and a 16 entry command history.
+The board type is printed once a board is set. The `> ` prompt supports
+line editing and command history with the arrow keys.
 
-Any keystroke stops a running command, as does a break from your terminal.
+Settings are kept across reconnects.
 
-Closing the terminal ends the session, and reopening it starts a new one and
-greets you again — with the board, chip type and output format you had set still
-in place.
-
-A terminal configured not to raise DTR sees nothing on opening the port.  Press
-Enter and the greeting follows.
+If your terminal doesn't set DTR, press Enter to display the greeting.
 
 ## Commands
 
-Each command is a single letter, optionally followed by colon-separated
-arguments.  Give the command alone and it prompts for what it needs, remembering
-your last answer.
+A command is a single letter, optionally followed by colon-separated arguments.
+Any argument left out is prompted for, with the last value used as the default.
+Commands are case sensitive.
+
+| Command | Arguments | Description |
+|---|---|---|
+| `B` | `B:<board>` | Set the board type |
+| `T` | | List board types |
+| `c` | `c:<chip>:<cs1>:<cs2>:<cs3>` | Set the chip type and chip select polarities |
+| `l` | | List chip types for the board |
+| `i` | `i:<chip>` | Display chip type details |
+| `f` | `f:<fmt>` | Set the output format |
+| `t` | | Turn tri-state testing on or off |
+| `r` | `r:<chip>:<start>:<len>:<fmt>:<cs1>:<cs2>:<cs3>` | Read the chip |
+| `q` | | Read the chip with the current settings |
+| `b` | `b:<chip>:<start>:<len>:<fmt>:<secs>:<cs1>:<cs2>:<cs3>` | Read the chip every `<secs>` seconds |
+| `x` | `x:<chip>:<cycles>:<cs1>:<cs2>:<cs3>` | Read the chip repeatedly and compare the passes |
+| `d` | `d:<chip>:<lines>:<cycles>` | Drive the data lines as a square wave, with the chip deselected |
+| `R` | | Query a One ROM over RBCP |
+| `a` | `a:<chip>:<start>:<len>:<fmt>:<secs>:<cs1>:<cs2>:<cs3>` | Read the chip and query the One ROM every `<secs>` seconds |
+| `p` | `p:<chip>` | Display the GPIO wired to each socket pin and X header pin |
+| `s` | | Display settings |
+| `v` | | Display the version and serial number |
+| `z` | | Reboot into the bootloader |
+| `?` or `h` | | Display help |
+
+A key or a break stops `b`, `x`, `d` and `a`.
+
+## Reading a chip
 
 ```text
-  B   Set One ROM Lab board type            B:<board>
-  r   Read ROM                              r[:<chip>[:<start>[:<len>[:<fmt>[:<cs1>[:<cs2>[:<cs3>]]]]]]]
-  b   Batch ROM read                        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]
-  i   Chip type information                 i[:<chip>]
-  c   Set or change chip type               c:<chip>[:<cs1>[:<cs2>[:<cs3>]]]
-  f   Set or change output format
-  t   Toggle tri-state testing during checksum mode on and off
-  q   Quick read (uses default chip, range and format)
-  l   List chips supported by this board type
-  v   Display One ROM Lab version and hardware information
-  s   Display settings
-  p   Show board pin map (socket pin -> GPIO)   p[:<chip>]
-  T   List supported board types
-  z   Reset to bootloader
-  ?/h This help
+> r:27256:0:0:cs
+Reading 27256, range 0x0..end, output checksum
+
+  SHA1: 4a8a2c6ee8829e8ae3cee645f0875e9edc197e83  checksum: 0x003FEF19
+  tristate failures: 0
 ```
 
-Formats are `cs` (checksum and SHA1, the default), `hex` (hex dump), `ihex`
-(Intel HEX) and `srec` (Motorola S-record).  Addresses are decimal unless
-prefixed `0x`, `0X` or `$`, and `len=0` means to the end of the ROM.
+The formats are:
 
-Commands are case sensitive — `B` sets the board, `b` starts a batch read.
+- `cs` - checksum and SHA1, the default
+- `hex` - hex dump
+- `ihex` - Intel HEX
+- `srec` - Motorola S-record
 
-## Chip select polarity
+Addresses are decimal unless prefixed `0x`, `0X` or `$`. A length of 0 means
+the rest of the chip.
 
-Mask ROM chip selects are mask-programmed, so an unmarked chip may need any
-combination.  Pass `0` for active low, `1` for active high, or **`?` to
-auto-detect**:
+A 16-bit chip is read in 8-bit and 16-bit modes. `Match:` is `true` when the
+two reads are the same.
+
+### Chip select polarity
+
+For a mask ROM's chip selects, enter `0` for active low, `1` for active high or
+`?` to try every combination:
 
 ```text
 r:2364:0:0:cs:?
 ```
 
-Lab then reads the chip once per combination and flags the ones that produced
-something other than all `0x00` or all `0xFF` as `*** candidate ***`.
+Lab reads the chip with each combination. A combination whose data isn't all
+`0x00` or all `0xFF` is printed with `*** candidate ***`.
 
-## Tri-state testing
+## Testing a One ROM
 
-In checksum mode, with `t` enabled, Lab drives each of `/OE` and `/CE` high
-independently and checks the data lines float — detected via the reader board's
-internal pull-downs.  The timing here is deliberately relaxed, to cope with weak
-pulls and the capacitance of the test setup.  Failures should be zero.
+### Tri-state
 
-For a 16-bit capable chip, Lab reads in both 8-bit and 16-bit modes and both the
-SHA1 and the 32-bit summing checksum should match.
+During a checksum read Lab also checks that the chip stops driving its data
+lines when deselected. `tristate failures` is 0 for a chip that passes.
 
-## Pin map
+### Fast read
 
-`p` prints the board's socket pin to signal to GPIO mapping, including the X
-header, which is the fastest way to work out what is wired where when debugging
-hardware.  On Fire 32 and 40 boards, where socket pins are twinned across two
-GPIOs, `p` deliberately shows both even though the reader drives only the first.
+`x` reads the chip repeatedly and compares every pass with the first.
+
+```text
+Fast reading 27256, read delay 16 cycles. Press any key to stop.
+  Reference SHA1: 4a8a2c6ee8829e8ae3cee645f0875e9edc197e83
+  1.0s  passes 80  reads 2.6M  2.53MHz  mismatches 0
+```
+
+Lab prints a status line each second, ending with the mismatches on each data
+line that has any, for example `D1 3  D2 1`. Lab lists the first mismatches
+when `x` stops.
+
+The read delay is the number of 150MHz CPU cycles between setting an address
+and reading the data. If the reference SHA1 differs from an `r` read of the same
+chip, the delay is too short.
+
+`x` reads chips up to 64KB.
+
+### Data line drive
+
+`d` drives data lines as a square wave with every control line deasserted, so
+the chip keeps them as inputs. `<lines>` is a mask with D0 in bit 0, or `all`
+for all data lines supported by the chip. A hex mask takes a `0x` or `$` prefix.
+
+```text
+Driving D0 D1 D2 D3 D4 D5 D6 D7, delay 0 cycles. Press any key to stop.
+  1.0s  toggles 11.5M  5.65MHz
+```
+
+The delay is the number of 150MHz CPU cycles between toggles. Lab drives the
+lines at 8mA with fast slew.
+
+### Querying
+
+`R` queries a One ROM running the [host-control](/plugins/user/host-control)
+plugin over [RBCP](https://github.com/piersfinlayson/rom-bus-control-protocol).
+Set the chip type and chip select polarities with `c` first.
+
+```text
+Device:       One ROM
+Board type:   fire-24-usb-b
+Board size:   M
+Firmware:     v0.8.1
+RBCP:         0.1.4
+Boot:         flash slot 0, RAM slot 0
+Chip ID:      E126C9F97C10ADAC
+Commissioned: yes
+  Board type:   fire-24-usb-b
+  Revision:     A1
+  Manufacturer: piers.rocks
+  Date:         2026-09-29
+  Batch:        Y1-2345
+  Signing key:  piers.rocks Production (1)
+  Signature:    verified
+```
+
+Revision and batch are displayed where the One ROM was commissioned with them.
+Where a One ROM's size differs from the size it was commissioned as,
+`Board size` displays both, for example `L (commissioned as M)`.
 
 ## Releasing
 
-Lab releases on its own cycle, tagged `lab-vX.Y.Z`.
+Lab is released separately from One ROM, with tags `lab-vX.Y.Z`.
 
-1. Update these, then commit:
-    - the version in [Cargo.toml](Cargo.toml)
-    - the [CHANGELOG](CHANGELOG.md)
+1. Update the version in [Cargo.toml](Cargo.toml) and the
+    [CHANGELOG](CHANGELOG.md), then commit.
 
-2. Tag the commit and push both.  Tags are signed, so they take a message:
+2. Tag the commit and push both:
 
     ```bash
     git tag -s -a lab-vX.Y.Z -m "One ROM Lab vX.Y.Z"
     ```
 
-3. The tag runs [lab-release.yml](/.github/workflows/lab-release.yml).  It builds
-    and checks every image, then creates the GitHub release.  The CHANGELOG's
-    section for the version becomes the release notes.
+3. Pushing the tag runs [lab-release.yml](/.github/workflows/lab-release.yml).
+    It builds and checks every image and creates the GitHub release, with the
+    version's CHANGELOG section as the release notes.
 
 4. Add the release to the images repo:
 
@@ -190,19 +241,17 @@ Lab releases on its own cycle, tagged `lab-vX.Y.Z`.
     scripts/release.py --version X.Y.Z --output-dir ../../../one-rom-images
     ```
 
-    The script downloads the release's files to `dist` and checks each one.  It
-    adds the release to `lab/releases.json` and moves `latest` to it for every
-    board.
+    The script downloads the release to `dist` and adds it to
+    `lab/releases.json`.
 
-5. Flash one of the downloaded images onto a board.  `onerom scan` should show
-    it running as One ROM Lab with the new version and board.
+5. Flash an image from `dist` onto a board. Check that `onerom scan` lists it as
+    One ROM Lab with the new version and board.
 
 6. Commit and push `one-rom-images`.
 
 7. In one commit, copy `rust/lab-metadata/metadata_schema.toml` over
     `rust/lab-metadata/metadata_schema_released.toml` and raise `[schema]
-    firmware_release` in `metadata_schema.toml` to the next version.  The build
-    fails unless the copy's `firmware_release` is older than the schema's.
+    firmware_release` in `metadata_schema.toml` to the next version.
 
 `scripts/build-release.sh --version X.Y.Z` builds and checks the same images
 locally.

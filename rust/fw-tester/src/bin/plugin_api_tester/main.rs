@@ -286,6 +286,18 @@ fn run_slot(
         tests::info::test_metadata_flash_sizes(&emulator, board),
     );
     report.add(
+        "metadata_chip_id",
+        tests::info::test_metadata_chip_id(&emulator),
+    );
+    report.add(
+        "commissioning_value",
+        tests::commissioning::test_commissioning_value(&emulator),
+    );
+    report.add(
+        "commissioning_instance",
+        tests::commissioning::test_commissioning_instance(&emulator),
+    );
+    report.add(
         "metadata_uint_at",
         tests::info::test_metadata_uint_at(&emulator, config, board, fw_version, base_dir),
     );
@@ -300,6 +312,20 @@ fn run_slot(
     report.add(
         "plugin_uptime_raw_read",
         tests::time::test_plugin_uptime_raw_read(&emulator),
+    );
+    report.add("reboot_modes", tests::reboot::test_reboot_modes(&emulator));
+    report.add("reboot_delay", tests::reboot::test_reboot_delay(&emulator));
+    report.add(
+        "reboot_rejects",
+        tests::reboot::test_reboot_rejects(&emulator),
+    );
+    report.add(
+        "reboot_bootrom_fails",
+        tests::reboot::test_reboot_bootrom_fails(&emulator),
+    );
+    report.add(
+        "reboot_bootsel",
+        tests::reboot::test_reboot_bootsel(&emulator),
     );
 
     // Platform: memory, clocks, peripherals and the cooperative yield.
@@ -444,6 +470,18 @@ fn run_slot(
     report.add(
         "flash_slot_ext_info",
         tests::slots::test_flash_slot_ext_info(&emulator, config),
+    );
+    report.add(
+        "flash_slot_addr",
+        tests::slots::test_flash_slot_addr(&emulator, config, board, fw_version, base_dir),
+    );
+    report.add(
+        "flash_slot_addr_on_cs1",
+        tests::slots::test_flash_slot_addr_on_cs1(&emulator, board),
+    );
+    report.add(
+        "flash_slot_addr_no_image",
+        tests::slots::test_flash_slot_addr_no_image(&emulator),
     );
     report.add(
         "ram_slot_count",

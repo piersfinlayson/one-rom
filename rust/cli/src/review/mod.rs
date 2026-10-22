@@ -35,11 +35,14 @@ mod inspect_header;
 mod inspect_otp;
 mod inspect_peek;
 mod inspect_slots;
+mod monitor_log;
 mod program;
 mod request_signature;
+mod save;
 mod scan;
 mod set_size;
 mod sign;
+mod update;
 mod validate;
 
 use std::cell::RefCell;
@@ -395,6 +398,8 @@ async fn commission_quietly(
         manufacturer: "piers.rocks".to_string(),
         date: RequestDate::Given(date.to_string()),
         signer: 1,
+        revision: None,
+        batch: None,
         force,
     };
     let prepared = prepare(otp, &request).await?;
@@ -534,8 +539,8 @@ impl SignatureSource for Server {
     }
 }
 
-/// `signing`'s signature over the instance of `board` by `manufacturer` on
-/// `date` for signer `id`, on the test board's CHIPID, in hex.
+/// `signing`'s signature over the instance of `board` as M by `manufacturer`
+/// on `date` for signer `id`, on the test board's CHIPID, in hex.
 fn signature_with(
     signing: &ed25519_dalek::SigningKey,
     board: &str,
@@ -544,12 +549,37 @@ fn signature_with(
     id: u16,
 ) -> String {
     let board = Board::try_from_str(board).unwrap();
-    let values = CommissioningValues::new(board, manufacturer, date, id).unwrap();
+    let values = CommissioningValues::builder(board, manufacturer, date, id)
+        .size(BoardSize::M)
+        .build()
+        .unwrap();
     hex::encode(signing.sign(&values.message(CHIP_ID)).to_bytes())
 }
 
-/// The test key's signature over the instance of `board` by `manufacturer` on
-/// `date` for signer `id`, on the test board's CHIPID, in hex.
+/// A fire-40-a commissioned as M, then set to L with the rows
+/// `hardware set-size` writes.
+async fn m_board_set_to_l() -> MemoryOtp {
+    let mut otp = commissioned_board("fire-40-a", BoardSize::M).await;
+    otp.set_raw(0x054, 0x3a_99af);
+    for row in 0x048..=0x04a {
+        otp.set_raw(row, 0x20);
+    }
+    otp
+}
+
+/// A fire-40-a commissioned as L by a run that stopped before it set
+/// FLASH_DEVINFO_ENABLE in BOOT_FLAGS0 and its two copies.
+async fn l_board_not_configured_as_l() -> MemoryOtp {
+    let mut otp = commissioned_board("fire-40-a", BoardSize::L).await;
+    for row in 0x048..=0x04a {
+        otp.set_raw(row, 0);
+    }
+    otp
+}
+
+/// The test key's signature over the instance of `board` as M by
+/// `manufacturer` on `date` for signer `id`, on the test board's CHIPID, in
+/// hex.
 fn signature_hex(board: &str, manufacturer: &str, date: &str, id: u16) -> String {
     signature_with(&key(), board, manufacturer, date, id)
 }

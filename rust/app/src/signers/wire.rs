@@ -12,10 +12,11 @@
 use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt;
 use core::ops::RangeInclusive;
 
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 
 /// The table format version this crate reads.
 const TABLE_VERSION: u32 = 1;
@@ -122,7 +123,7 @@ pub(crate) enum Manufacturers {
 }
 
 /// A decoded signer entry. Everything but its public key, its proof and its
-/// listed manufacturers' names has been checked.
+/// manufacturers' names has been checked.
 pub(crate) struct Entry {
     pub(crate) id: u16,
     pub(crate) name: String,
@@ -130,6 +131,8 @@ pub(crate) struct Entry {
     pub(crate) proof: [u8; 64],
     pub(crate) status: Status,
     pub(crate) manufacturers: Manufacturers,
+    /// Each manufacturer and its contact, in file order.
+    pub(crate) contacts: Vec<(String, String)>,
 }
 
 /// A file's `version`. It's read before the rest so a newer file's shape
@@ -153,6 +156,35 @@ struct SignerFile {
     #[serde(default)]
     retired: Option<RetiredFile>,
     manufacturers: Vec<String>,
+    contacts: ContactsFile,
+}
+
+/// A key's `contacts` in file order. A repeated manufacturer is kept so
+/// [`decode_contacts`] can fail on it, where a map would keep only the last.
+struct ContactsFile(Vec<(String, String)>);
+
+impl<'de> Deserialize<'de> for ContactsFile {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ContactsVisitor;
+
+        impl<'de> Visitor<'de> for ContactsVisitor {
+            type Value = ContactsFile;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an object of manufacturers' contacts")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ContactsFile, A::Error> {
+                let mut contacts = Vec::new();
+                while let Some(contact) = map.next_entry()? {
+                    contacts.push(contact);
+                }
+                Ok(ContactsFile(contacts))
+            }
+        }
+
+        deserializer.deserialize_map(ContactsVisitor)
+    }
 }
 
 #[derive(Deserialize)]
@@ -252,6 +284,7 @@ fn decode_signer(signer: SignerFile) -> Result<Entry, SignerError> {
         }
     };
     let manufacturers = decode_manufacturers(signer.manufacturers, id)?;
+    let contacts = decode_contacts(signer.contacts, &manufacturers, id)?;
     Ok(Entry {
         id,
         name: signer.name,
@@ -259,6 +292,7 @@ fn decode_signer(signer: SignerFile) -> Result<Entry, SignerError> {
         proof,
         status,
         manufacturers,
+        contacts,
     })
 }
 
@@ -280,6 +314,42 @@ fn decode_manufacturers(names: Vec<String>, id: u16) -> Result<Manufacturers, Si
             names.into_iter().map(Cow::Owned).collect(),
         ))),
     }
+}
+
+/// Decodes signer `id`'s `contacts`. It fails on a manufacturer that appears
+/// twice and a contact that isn't printable ASCII or is empty. For a key that
+/// lists its manufacturers, it fails on anything but one contact for each.
+fn decode_contacts(
+    contacts: ContactsFile,
+    manufacturers: &Manufacturers,
+    id: u16,
+) -> Result<Vec<(String, String)>, SignerError> {
+    let ContactsFile(contacts) = contacts;
+    let repeated = contacts
+        .iter()
+        .enumerate()
+        .any(|(i, (name, _))| contacts[..i].iter().any(|(earlier, _)| earlier == name));
+    let printable = contacts.iter().all(|(_, contact)| {
+        !contact.is_empty() && contact.bytes().all(|b| matches!(b, b' '..=b'~'))
+    });
+    let one_each = match manufacturers {
+        Manufacturers::Any => true,
+        Manufacturers::Listed(names) => {
+            names
+                .iter()
+                .all(|name| contacts.iter().any(|(contacted, _)| contacted == name))
+                && contacts
+                    .iter()
+                    .all(|(contacted, _)| names.iter().any(|name| name == contacted))
+        }
+    };
+    if repeated || !printable || !one_each {
+        return Err(SignerError::BadField {
+            id,
+            field: "contacts",
+        });
+    }
+    Ok(contacts)
 }
 
 /// The `N` bytes `text` holds in hex of either case.

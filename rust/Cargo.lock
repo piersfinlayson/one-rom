@@ -4839,11 +4839,12 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onerom-app"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
  "onerom-config",
+ "onerom-fw-parser",
  "onerom-gen",
  "onerom-metadata",
  "serde",
@@ -4870,6 +4871,7 @@ dependencies = [
  "env_logger",
  "git2 0.20.4",
  "hex",
+ "libc",
  "log",
  "nusb",
  "onerom-app",
@@ -4920,7 +4922,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4960,7 +4962,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw-parser"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "airfrog-rpc",
  "deku 0.19.1",
@@ -4991,7 +4993,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "onerom-config",
  "onerom-metadata",
@@ -5002,7 +5004,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-lab"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "airfrog-rpc",
  "chrono",
@@ -5022,9 +5024,11 @@ dependencies = [
  "hex-literal",
  "log",
  "once_cell",
+ "onerom-app",
  "onerom-config",
  "onerom-lab-metadata",
  "onerom-metadata",
+ "onerom-rbcp-host",
  "panic-probe",
  "panic-rtt-target",
  "picobootx",
@@ -5039,7 +5043,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-lab-metadata"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
@@ -5051,7 +5055,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-lab-parser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "airfrog-rpc",
  "log",
@@ -5073,7 +5077,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-metadata"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
@@ -5088,7 +5092,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-metadata-gen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "onerom-config",
  "serde",
@@ -5112,6 +5116,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "onerom-rbcp-host"
+version = "0.1.0"
+
+[[package]]
 name = "onerom-rbcp-tester"
 version = "0.1.0"
 dependencies = [
@@ -5121,7 +5129,9 @@ dependencies = [
  "onerom-fw-emulator",
  "onerom-fw-tester",
  "onerom-gen",
+ "onerom-metadata",
  "onerom-plugin-tester",
+ "onerom-rbcp-host",
  "serde_json",
 ]
 
@@ -5149,7 +5159,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-studio"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "airfrog-rpc",
  "arc-swap",

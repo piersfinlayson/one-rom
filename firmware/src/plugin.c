@@ -9,29 +9,34 @@
 #include "plugin.h"
 #include <stdio.h>
 
-uint8_t check_plugin_valid(
+STATIC_ASSERT(ORA_PLUGIN_MAGIC == PLUGIN_MAGIC, "plugin magic");
+
+#define PLUGIN_ERR(...) do { if (log) { ERR(__VA_ARGS__); } } while (0)
+
+static uint8_t plugin_valid(
     const onerom_rom_slot_t *slot,
     const ora_plugin_type_t expected_type,
-    uint8_t index
+    uint8_t index,
+    uint8_t log
 ) {
     // The header is read from the slot, so the slot must lie within the flash
     // first.
     if (!rom_slot_in_flash(slot)) {
-        ERR("ORA slot outside flash");
+        PLUGIN_ERR("ORA slot outside flash");
         return 0;
     }
 
     const ora_plugin_header_t *header = (const ora_plugin_header_t *)(uintptr_t)(slot->data);
     if (header->magic != ORA_PLUGIN_MAGIC) {
-        ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
+        PLUGIN_ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
         return 0;
     }
     if (header->api_version != ORA_PLUGIN_VERSION_1) {
-        ERR("ORA version 0x%08lx", (unsigned long)header->api_version);
+        PLUGIN_ERR("ORA version 0x%08lx", (unsigned long)header->api_version);
         return 0;
     }
     if (header->plugin_type != expected_type) {
-        ERR("ORA type %d, expected %d", header->plugin_type, expected_type);
+        PLUGIN_ERR("ORA type %d, expected %d", header->plugin_type, expected_type);
         return 0;
     }
 
@@ -43,7 +48,7 @@ uint8_t check_plugin_valid(
         + (index * SYSTEM_PLUGIN_SIZE);
     uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry;
     if ((entry_addr & ~expected_launch_region) >= SYSTEM_PLUGIN_SIZE) {
-        ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
+        PLUGIN_ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
         (unsigned long)expected_launch_region);
         return 0;
     }
@@ -54,13 +59,142 @@ uint8_t check_plugin_valid(
     if (min_fw_major > INFO->major_version ||
         (min_fw_major == INFO->major_version && min_fw_minor > INFO->minor_version) ||
         (min_fw_major == INFO->major_version && min_fw_minor == INFO->minor_version && min_fw_patch > INFO->patch_version)) {
-        ERR("ORA reqd v%d.%d.%d vs v%d.%d.%d",
+        PLUGIN_ERR("ORA reqd v%d.%d.%d vs v%d.%d.%d",
             min_fw_major, min_fw_minor, min_fw_patch,
             INFO->major_version, INFO->minor_version, INFO->patch_version);
         return 0;
     }
 
     return 1;
+}
+
+uint8_t check_plugin_valid(
+    const onerom_rom_slot_t *slot,
+    const ora_plugin_type_t expected_type,
+    uint8_t index
+) {
+    return plugin_valid(slot, expected_type, index, 1);
+}
+
+// Returns the header of the system plugin (index 0) or user plugin (index 1),
+// or NULL if its ROM slot doesn't contain a valid plugin of that type.
+static const ora_plugin_header_t *plugin_header(uint8_t index) {
+    STATIC_ASSERT((ROM_SLOT_TYPE_PLUGIN_SYSTEM == 0) && (ORA_PLUGIN_TYPE_SYSTEM == 0),
+        "The system plugin's slot type and plugin type must be its index");
+    STATIC_ASSERT((ROM_SLOT_TYPE_PLUGIN_USER == 1) && (ORA_PLUGIN_TYPE_USER == 1),
+        "The user plugin's slot type and plugin type must be its index");
+
+    if (METADATA->rom_slot_count <= index) {
+        return NULL;
+    }
+    const onerom_rom_slot_t *slot = &METADATA->rom_slots[index];
+    if ((slot->slot_type != index) ||
+        !plugin_valid(slot, (ora_plugin_type_t)index, index, 0)) {
+        return NULL;
+    }
+    return (const ora_plugin_header_t *)(uintptr_t)slot->data;
+}
+
+const ora_plugin_header_t *system_plugin_to_start(void) {
+    return plugin_header(0);
+}
+
+const ora_plugin_header_t *user_plugin_to_start(void) {
+    if (system_plugin_to_start() == NULL) {
+        return NULL;
+    }
+    return plugin_header(1);
+}
+
+// Returns the flags to pass to the plugins in ora_entry_args_t.
+uint8_t plugin_entry_flags(void) {
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    const ora_plugin_header_t *user = user_plugin_to_start();
+    uint8_t properties1 = 0;
+    if (system != NULL) {
+        properties1 |= system->properties1;
+    }
+    if (user != NULL) {
+        properties1 |= user->properties1;
+    }
+
+    return (properties1 & ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN)
+        ? ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN : 0;
+}
+
+static uint8_t in_plugin_region(uint8_t index, uint32_t addr) {
+    onerom_flash_size_t cs0;
+    onerom_flash_size_t cs1;
+    otp_flash_sizes(&cs0, &cs1);
+
+    uint32_t region = FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET
+        + (index * SYSTEM_PLUGIN_SIZE);
+    return ((addr - region) < SYSTEM_PLUGIN_SIZE)
+        && ((addr - FLASH_CS0_BASE_ADDR) < flash_size_bytes(cs0));
+}
+
+#if REAL_HARDWARE
+static uint8_t flash_read_byte(uint32_t addr) {
+    return *(volatile const uint8_t *)(uintptr_t)addr;
+}
+#else // !REAL_HARDWARE
+static uint8_t flash_read_byte(uint32_t addr) {
+    return stub_flash_read8(addr);
+}
+#endif // REAL_HARDWARE
+
+// Returns 1 and sets slot_out if `header`'s boot slot byte holds a ROM slot.
+static uint8_t header_boot_slot(
+    const ora_plugin_header_t *header,
+    uint8_t index,
+    uint8_t num_plugins,
+    uint8_t *slot_out
+) {
+    if ((header == NULL) || !(header->overrides1 & ORA_OVERRIDE1_BOOT_SLOT)) {
+        return 0;
+    }
+
+    uint32_t addr = header->boot_slot_addr;
+    if (!in_plugin_region(index, addr)) {
+        ERR("%s plugin boot slot address 0x%08lx outside its region",
+            plugin_names[index], (unsigned long)addr);
+        return 0;
+    }
+
+    uint8_t slot = flash_read_byte(addr);
+    if (slot >= (METADATA->rom_slot_count - num_plugins)) {
+        LOG("%s plugin boot slot %d not a ROM slot", plugin_names[index], slot);
+        return 0;
+    }
+
+    LOG("%s plugin boot slot %d", plugin_names[index], slot);
+    *slot_out = slot;
+    return 1;
+}
+
+// Returns 1 and sets slot_out if a plugin header selects a ROM slot.
+uint8_t plugin_boot_slot(uint8_t num_plugins, uint8_t *slot_out) {
+    const ora_plugin_header_t *headers[] = {
+        system_plugin_to_start(),
+        user_plugin_to_start(),
+    };
+
+    for (uint8_t ii = 0; ii < 2; ii++) {
+        if (header_boot_slot(headers[ii], ii, num_plugins, slot_out)) {
+            return 1;
+        }
+    }
+
+    for (uint8_t ii = 0; ii < 2; ii++) {
+        if ((headers[ii] != NULL) &&
+            (headers[ii]->overrides1 & ORA_OVERRIDE1_IGNORE_IMAGE_SELECT)) {
+            LOG("%s plugin overrides image select", plugin_names[ii]);
+            *slot_out = 0;
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
@@ -75,8 +209,11 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
         const onerom_rom_slot_t *set = &METADATA->rom_slots[0];
         if (set->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
             if (check_plugin_valid(set, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
-                const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
-                *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
+                const ora_plugin_header_t *header = system_plugin_to_start();
+                if ((header != NULL) &&
+                    (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT)) {
+                    *disable_vbus_det = 1;
+                }
                 LOG("Valid system plugin, disable_vbus_det=%d", *disable_vbus_det);
             }
 
@@ -93,8 +230,9 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
             if (plugins & 0x01) {
                 // Have user plugin (2) so check it
                 if (check_plugin_valid(other_set, ORA_PLUGIN_TYPE_USER, 1)) {
-                    const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(other_set->data);
-                    if (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT) {
+                    const ora_plugin_header_t *header = user_plugin_to_start();
+                    if ((header != NULL) &&
+                        (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT)) {
                         *disable_vbus_det = 1;
                     }
                     LOG("Valid user plugin, disable_vbus_det=%d", *disable_vbus_det);
@@ -118,13 +256,49 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
     return plugins;
 }
 
-void ora_reboot_bootsel(void) {
-#if !defined(TEST_BUILD)
-    enter_bootloader();
-#endif // !TEST_BUILD
+// ---------------------------------------------------------------------------
+// Reboot
+// ---------------------------------------------------------------------------
 
+ora_result_t ora_reboot(const ora_reboot_request_t *req) {
+    if (req == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    if (req->size < REBOOT_REQUEST_MIN_SIZE) {
+        return ORA_RESULT_INVALID_SIZE;
+    }
+
+    if (req->mode > ORA_REBOOT_MODE_BOOTLOADER) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    if (req->delay_ms > REBOOT_MAX_DELAY_MS) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t delay_ms = req->delay_ms;
+    if (delay_ms == 0) {
+        delay_ms = REBOOT_MIN_DELAY_MS;
+    }
+    if (!rom_reboot(req->mode == ORA_REBOOT_MODE_BOOTLOADER, delay_ms)) {
+        return ORA_RESULT_ERROR;
+    }
+    return ORA_RESULT_OK;
+}
+
+void ora_reboot_bootsel(void) {
+    const ora_reboot_request_t req = {
+        .size = sizeof(req),
+        .mode = ORA_REBOOT_MODE_BOOTLOADER,
+        .delay_ms = 10,
+    };
+    (void)ora_reboot(&req);
+
+#if !defined(TEST_BUILD)
     // Do not return
     while (1);
+#endif // !TEST_BUILD
 }
 
 void *ora_alloc(size_t size) {
@@ -745,6 +919,29 @@ ora_result_t ora_get_flash_slot_ext_info(
     return ORA_RESULT_OK;
 }
 
+ora_result_t ora_get_flash_slot_addr(
+    uint8_t flash_slot,
+    uint32_t flags,
+    uint32_t *addr_out,
+    uint32_t *size_out
+) {
+    const onerom_rom_slot_t *slot = get_flash_slot_slot(flash_slot, flags);
+    if ((slot == NULL) ||
+        ((uintptr_t)slot->data == ROM_SLOT_NO_IMAGE) ||
+        !rom_slot_in_flash(slot)) {
+        return ORA_RESULT_INVALID_SLOT;
+    }
+
+    if (addr_out != NULL) {
+        *addr_out = rom_slot_flash_addr(slot);
+    }
+    if (size_out != NULL) {
+        *size_out = slot->size;
+    }
+
+    return ORA_RESULT_OK;
+}
+
 ora_result_t ora_copy_flash_slot_to_ram_slot(
     uint8_t flash_slot,
     uint32_t flags,
@@ -866,9 +1063,45 @@ ora_result_t ora_get_metadata_uint_at(
     // the default below.
     switch (key) {
         ONEROM_METADATA_UINT_AT_CASES(index, out)
+        case ORA_METADATA_KEY_CHIP_ID: {
+            uint8_t byte;
+            if (!otp_chip_id_byte(index, &byte)) {
+                return ORA_RESULT_INVALID_ARG;
+            }
+            *out = byte;
+            return ORA_RESULT_OK;
+        }
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
+}
+
+ora_result_t ora_get_commissioning_value(
+    uint16_t key,
+    const uint8_t **value_out,
+    uint16_t *len_out
+) {
+    if ((key == OTP_KEY_NONE) || (value_out == NULL) || (len_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint16_t row;
+    if (!otp_commissioning_value(key, &row, len_out)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    *value_out = (const uint8_t *)otp_ecc_bytes(row);
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_get_commissioning_instance(const uint8_t **instance_out, uint16_t *len_out) {
+    if ((instance_out == NULL) || (len_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint16_t row;
+    if (!otp_commissioning_instance(&row, len_out)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    *instance_out = (const uint8_t *)otp_ecc_bytes(row);
+    return ORA_RESULT_OK;
 }
 
 ora_result_t ora_demangle_data(uint8_t physical_data, uint8_t *logical_data_out) {
@@ -1888,6 +2121,15 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_firmware_state_query;
         case ORA_ID_SET_STANDBY:
             return ora_set_standby;
+        case ORA_ID_GET_COMMISSIONING_VALUE:
+            return ora_get_commissioning_value;
+
+        case ORA_ID_REBOOT:
+            return ora_reboot;
+        case ORA_ID_GET_FLASH_SLOT_ADDR:
+            return ora_get_flash_slot_addr;
+        case ORA_ID_GET_COMMISSIONING_INSTANCE:
+            return ora_get_commissioning_instance;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -1895,6 +2137,119 @@ void *ora_fn_lookup(api_id_t id) {
         default:
             return NULL;
     }
+}
+
+#if REAL_HARDWARE
+static char *usb_dpram_log(void) {
+    return (char *)(uintptr_t)USB_DPRAM_LOG_ADDR;
+}
+#else // !REAL_HARDWARE
+static char *usb_dpram_log(void) {
+    return stub_usb_dpram_log();
+}
+#endif // REAL_HARDWARE
+
+uint8_t launch_log_move(uint8_t entry_flags) {
+    if (!(entry_flags & ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN)) {
+        return 0;
+    }
+
+    // Nothing else resets the USB controller in this mode, and after a warm
+    // reboot it can hold old state.
+    usb_controller_reset_and_release();
+    if (!onerom_rtt_move_log(usb_dpram_log(), USB_DPRAM_LOG_SIZE)) {
+        return 0;
+    }
+    RUNTIME->firmware_flags |= FIRMWARE_FLAG_LOG_IN_UP1;
+    return 1;
+}
+
+// MUST be kept in sync with the values in plugin.ld and changing them forces
+// a change to the plugin version.
+#define SYSTEM_PLUGIN_ARGS(entry_flags) {   \
+    .core = ORA_CORE_1,                     \
+    .flags = (entry_flags),                 \
+    .static_ram_base = 0x20081000,          \
+    .static_ram_size = 0x800,               \
+    .stack_top = 0x20081C00,                \
+    .stack_size = 0x400,                    \
+}
+// Note this arbitrarily splits the available 0x400 bytes in half, with one
+// half for static RAM and the other half for stack - it's up to the plugin to
+// manage.
+#define USER_PLUGIN_ARGS(entry_flags) {     \
+    .core = ORA_CORE_0,                     \
+    .flags = (entry_flags),                 \
+    .static_ram_base = 0x20081C00,          \
+    .static_ram_size = 0x200,               \
+    .stack_top = 0x20082000,                \
+    .stack_size = 0x200,                    \
+}
+#define ENTRY_FLAGS_ALL ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN
+static const ora_entry_args_t system_plugin_args[] = {
+    SYSTEM_PLUGIN_ARGS(0), SYSTEM_PLUGIN_ARGS(1),
+};
+static const ora_entry_args_t user_plugin_args[] = {
+    USER_PLUGIN_ARGS(0), USER_PLUGIN_ARGS(1),
+};
+STATIC_ASSERT((sizeof(system_plugin_args) / sizeof(system_plugin_args[0])) == (ENTRY_FLAGS_ALL + 1),
+    "system_plugin_args must cover every combination of entry flags");
+STATIC_ASSERT((sizeof(user_plugin_args) / sizeof(user_plugin_args[0])) == (ENTRY_FLAGS_ALL + 1),
+    "user_plugin_args must cover every combination of entry flags");
+
+const ora_entry_args_t *plugin_entry_args(
+    ora_plugin_type_t plugin_type,
+    uint8_t entry_flags
+) {
+    entry_flags &= ENTRY_FLAGS_ALL;
+    return (plugin_type == ORA_PLUGIN_TYPE_SYSTEM) ? &system_plugin_args[entry_flags]
+                                                  : &user_plugin_args[entry_flags];
+}
+
+const ora_plugin_header_t *system_plugin_to_launch(void) {
+    if ((METADATA->rom_slot_count < 1) ||
+        (METADATA->rom_slots[0].slot_type != ROM_SLOT_TYPE_PLUGIN_SYSTEM)) {
+        return NULL;
+    }
+
+    const onerom_rom_slot_t *set0 = &METADATA->rom_slots[0];
+    if (!check_plugin_valid(set0, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+        ERR("Invalid system plugin");
+        return NULL;
+    }
+
+    const char *filename = set0->roms[0]->filename;
+    if (filename != NULL) {
+        LOG("Launching system plugin: %s", filename);
+    } else {
+        LOG("Launching system plugin");
+    }
+    return (const ora_plugin_header_t *)(uintptr_t)set0->data;
+}
+
+const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched) {
+    if ((METADATA->rom_slot_count < 2) ||
+        (METADATA->rom_slots[1].slot_type != ROM_SLOT_TYPE_PLUGIN_USER)) {
+        return NULL;
+    }
+
+    const onerom_rom_slot_t *set1 = &METADATA->rom_slots[1];
+    if (!check_plugin_valid(set1, ORA_PLUGIN_TYPE_USER, 1)) {
+        ERR("Invalid user plugin");
+        return NULL;
+    }
+    if (!system_launched) {
+        ERR("No valid system plugin - user plugin not started");
+        return NULL;
+    }
+
+    const char *filename = set1->roms[0]->filename;
+    if (filename != NULL) {
+        LOG("Launching user plugin: %s", filename);
+    } else {
+        LOG("Launching user plugin");
+    }
+    return (const ora_plugin_header_t *)(uintptr_t)set1->data;
 }
 
 #if !defined(TEST_BUILD)
@@ -1936,26 +2291,6 @@ static void reset_core1(void) {
     }
 }
 
-// MUST be kept in sync with the values in plugin.ld and changing them forces
-// a change to the plugin version.
-static const ora_entry_args_t system_plugin_args = {
-    .core = ORA_CORE_1,
-    .static_ram_base = 0x20081000,
-    .static_ram_size = 0x800,
-    .stack_top = 0x20081C00,
-    .stack_size = 0x400,
-};
-static const ora_entry_args_t user_plugin_args = {
-    .core = ORA_CORE_0,
-    .static_ram_base = 0x20081C00,
-    .static_ram_size = 0x200,
-    .stack_top = 0x20082000,
-    .stack_size = 0x200,
-    // Note this arbitrarily splits the available 0x400 bytes in half, with
-    // one half for static RAM and the other half for stack - it's up to the
-    // plugin to manage.
-};
-
 ora_result_t ora_yield(uint8_t *was_paused_out);
 
 static void core1_main(void) {
@@ -1964,13 +2299,14 @@ static void core1_main(void) {
     __asm volatile ("dsb");
     __asm volatile ("isb");
 
-    // Read a single uint32_t from the FIFO
     DEBUG("Core 1 started");
     uint32_t core1_plugin_entry = fifo_pop_blocking();
+    uint8_t entry_flags = (uint8_t)fifo_pop_blocking();
     core1_plugin_entry |= 1;
     ora_plugin_entry_t entry = (ora_plugin_entry_t)(uintptr_t)core1_plugin_entry;
     DEBUG("Core 1 launching plugin at 0x%08lx", (unsigned long)core1_plugin_entry);
-    entry(ora_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &system_plugin_args);
+    entry(ora_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM,
+          plugin_entry_args(ORA_PLUGIN_TYPE_SYSTEM, entry_flags));
 
     ERR("System plugin returned unexpectedly");
     while (1) {
@@ -2017,7 +2353,7 @@ void __attribute__((naked)) paint_stack_core0(void) {
     );
 }
 
-void launch_core1(ora_plugin_entry_t plugin_entry) {
+void launch_core1(ora_plugin_entry_t plugin_entry, uint8_t entry_flags) {
     uint32_t core1_stack_top = (uint32_t)&_estack - 1024;
 
     // Paint core 1's stack
@@ -2052,61 +2388,33 @@ void launch_core1(ora_plugin_entry_t plugin_entry) {
 
     uint32_t entry = (uint32_t)(uintptr_t)plugin_entry | 1; // Set thumb bit
     fifo_push_blocking(entry);
+    fifo_push_blocking(entry_flags);
 }
 
-__attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launched_plugins) {
+__attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(
+    uint8_t *launched_plugins,
+    uint8_t entry_flags
+) {
     *launched_plugins = 0;
 
     // Launch any available system plugin on core 1
-    uint8_t system_plugin = 0;
-    if (METADATA->rom_slot_count >= 1) {
-        const onerom_rom_slot_t *set0 = &METADATA->rom_slots[0];
-        if (set0->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
-            ora_plugin_header_t *header = (ora_plugin_header_t *)set0->data;
-            if (!check_plugin_valid(set0, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
-                ERR("Invalid system plugin");
-            } else {
-                const char *filename = set0->roms[0]->filename;
-                if (filename != NULL) {
-                    LOG("Launching system plugin: %s", filename);
-                } else {
-                    LOG("Launching system plugin");
-                }
-                launch_core1(header->entry);
-                system_plugin = 1;
-                *launched_plugins |= 1u;
-            }
-        }
+    const ora_plugin_header_t *system = system_plugin_to_launch();
+    if (system != NULL) {
+        launch_core1(system->entry, entry_flags);
+        *launched_plugins |= 1u;
     }
 
     // Launch any available user plugin on core 0 (this core)
-    if (METADATA->rom_slot_count >= 2) {
-        const onerom_rom_slot_t *set1 = &METADATA->rom_slots[1];
-        if (set1->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
-            ora_plugin_header_t *header = (ora_plugin_header_t *)set1->data;
-            if (!check_plugin_valid(set1, ORA_PLUGIN_TYPE_USER, 1)) {
-                ERR("Invalid user plugin");
-            } else if (!system_plugin) {
-                ERR("User plugin present but no valid system plugin - not launching");
-            } else {
-                const char *filename = set1->roms[0]->filename;
-                if (filename != NULL) {
-                    LOG("Launching user plugin: %s", filename);
-                } else {
-                    LOG("Launching user plugin");
-                }
-
-                paint_stack_core0();
-
-                // Set thumb bit
-                uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry | 1;
-                ora_plugin_entry_t entry = (ora_plugin_entry_t)(uintptr_t)entry_addr;
-                return entry;
-            }
-        }
+    const ora_plugin_header_t *user = user_plugin_to_launch(system != NULL);
+    if (user == NULL) {
+        return NULL;
     }
 
-    return NULL; // No user plugin to launch
+    paint_stack_core0();
+
+    // Set thumb bit
+    uint32_t entry_addr = (uint32_t)(uintptr_t)user->entry | 1;
+    return (ora_plugin_entry_t)(uintptr_t)entry_addr;
 }
 
 void ora_launch_plugins(void) {
@@ -2120,7 +2428,9 @@ void ora_launch_plugins(void) {
     setup_timer0();
 
     uint8_t launched_plugins = 0;
-    ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
+    uint8_t entry_flags = plugin_entry_flags();
+    launch_log_move(entry_flags);
+    ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins, entry_flags);
 
     // Set before the user plugin's entry, which doesn't return.
     set_firmware_states(FIRMWARE_STATE_PLUGINS_STARTED);
@@ -2128,7 +2438,8 @@ void ora_launch_plugins(void) {
     // We launch the user plugin from this outer function in order to save as
     // much stack space as possible.
     if (core0_entry != NULL) {
-        core0_entry(ora_fn_lookup, ORA_PLUGIN_TYPE_USER, &user_plugin_args);
+        core0_entry(ora_fn_lookup, ORA_PLUGIN_TYPE_USER,
+                    plugin_entry_args(ORA_PLUGIN_TYPE_USER, entry_flags));
         ERR("User plugin returned unexpectedly");
     }
 

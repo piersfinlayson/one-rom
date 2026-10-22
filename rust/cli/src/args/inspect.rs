@@ -5,7 +5,7 @@
 //! Argument definitions for `onerom inspect`.
 
 use crate::args::CommandTrait;
-use crate::utils::{parse_u8, parse_u32};
+use crate::utils::parse_u32;
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
 use onerom_cli::pin::{Pin, parse_pin};
@@ -58,18 +58,6 @@ pub enum InspectCommands {
     ///
     ///   onerom inspect slots
     Slots(InspectSlotsArgs),
-
-    /// Read and display the ROM image currently loaded in a slot (not yet supported).
-    ///
-    /// Displays or saves the ROM image data from the specified slot.
-    /// If no slot is specified, reads the image currently being served.
-    ///
-    /// Examples:
-    ///
-    ///   onerom inspect image --slot 2
-    ///
-    ///   onerom inspect image --slot 2 --output kernal-backup.bin
-    Image(InspectImageArgs),
 
     /// Read data from One ROM's SRAM or the live ROM image.
     ///
@@ -220,23 +208,6 @@ impl CommandTrait for InspectRgbArgs {
 pub struct InspectSlotsArgs {}
 
 impl CommandTrait for InspectSlotsArgs {
-    fn requires_device(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Args)]
-pub struct InspectImageArgs {
-    /// Slot index to read. Reads the currently active slot if omitted.
-    #[arg(long, value_name = "INDEX", value_parser = parse_u8)]
-    pub slot: Option<u8>,
-
-    /// Save the image data to this file.
-    #[arg(long, short, visible_alias = "out", value_name = "FILE")]
-    pub output: Option<String>,
-}
-
-impl CommandTrait for InspectImageArgs {
     fn requires_device(&self) -> bool {
         true
     }

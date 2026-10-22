@@ -149,7 +149,9 @@ pub struct FirmwareBuildArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>][,addr-mon-min-cs-act-ns=<ns>]
+    /// Format: file=<path_or_url>,type=<romtype>[,label=<text>][,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,cs4=<logic>][,size-handling=<handling>][,format=<binary|ihex|srec>][,load-address=<addr>][,transform=<list>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>][,addr-mon-min-cs-act-ns=<ns>]
+    ///
+    /// Label: text stored in the device metadata in place of the filename.
     ///
     /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
     /// snake_case config spellings are also accepted.
@@ -158,9 +160,17 @@ pub struct FirmwareBuildArgs {
     ///
     /// Size handling values: none, duplicate (or dup), truncate (or trunc), pad.
     ///
-    /// Format values: binary (default), ihex (Intel HEX). load-address is only
-    /// valid with format=ihex and gives the Intel HEX address mapping to byte 0
-    /// of the ROM, as a decimal or 0x-/$-prefixed hex value (e.g. $E000).
+    /// Format values:
+    /// - binary (default)
+    /// - ihex (Intel HEX)
+    /// - srec (Motorola S-record)
+    ///
+    /// load-address is valid only with ihex or srec. It is the address in the
+    /// file that maps to byte 0 of the ROM, in decimal or 0x-/$-prefixed hex
+    /// (e.g. $E000).
+    ///
+    /// Transform values: swap_bytes, deinterleave:<offset>/<stride>[/<bytes>].
+    /// Join several with + to apply them in order.
     ///
     /// CPU frequency: e.g. 150, 150mhz, 150MHz. Values above 150MHz require
     /// confirmation (suppressed with --yes). Sets overclock automatically.
@@ -185,6 +195,8 @@ pub struct FirmwareBuildArgs {
     ///   --slot file=chargen.bin,type=2332,cs1=active-low,cs2=active-high
     ///
     ///   --slot file=https://example.com/basic.bin,type=2716
+    ///
+    ///   --slot file=https://example.com/c64/roms/901227-03.bin,type=2364,cs1=active-low,label=kernal
     ///
     ///   --slot file=small.bin,type=2364,cs1=active-low,size-handling=duplicate
     ///
@@ -213,6 +225,7 @@ pub struct FirmwareBuildArgs {
         long,
         value_name = "SPEC",
         visible_alias = "rom",
+        verbatim_doc_comment,
         conflicts_with_all = ["config_file", "no_config"]
     )]
     pub slot: Vec<String>,
@@ -227,6 +240,9 @@ pub struct FirmwareBuildArgs {
     /// the config's ROM slots (shifting them up). It is an error if the config
     /// already defines a plugin of its own.
     ///
+    /// The USB plugin is automatically added when a system plugin isn't
+    /// specified (and any config doesn't define a plugin).
+    ///
     /// Forms:
     ///   --plugin usb                       latest compatible version by name
     ///   --plugin system/usb                with explicit type
@@ -236,6 +252,13 @@ pub struct FirmwareBuildArgs {
     ///
     #[arg(long, value_name = "SPEC")]
     pub plugin: Vec<String>,
+
+    /// Build without plugins. Without this, the USB plugin is automatically
+    /// added if a system plugin isn't specified.
+    ///
+    /// Mutually exclusive with --plugin.
+    #[arg(long, conflicts_with = "plugin")]
+    pub no_plugin: bool,
 
     /// Name for the generated ROM configuration.
     ///

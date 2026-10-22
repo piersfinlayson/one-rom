@@ -29,7 +29,7 @@ async fn an_input_forced_pin() {
 
     let board = Board::Fire24A;
     let pin = args.pin.resolve(Some(&board)).unwrap();
-    let image = parse_firmware(&image_2364_for(board, 1, &[])).await;
+    let image = parse_firmware(&image_2364_for(board, 1, &[]).await).await;
     let entries = served_entries(&image, &board);
     let gpio_use = entries[pin.gpio() as usize].gpio_use().unwrap();
     if needs_force(gpio_use) {

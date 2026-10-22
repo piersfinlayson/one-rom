@@ -11,14 +11,17 @@ use onerom_config::hw::{Board, HeaderColumn, HeaderRole, HeaderSlot};
 use onerom_config::mcu::Family;
 use onerom_config::pin::{HeaderPin, ReservedPins};
 use onerom_metadata::{
-    MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE, MIN_SCHEMA_VERSION,
-    MaybeKnown, ONEROM_METADATA_MAGIC, OneromAlgConfig, OneromMetadataHeader, OneromRomInfo,
-    OneromRomSlot, Pointer, ROM_SLOT_NO_IMAGE, RomSlotType, metadata_generation_for, serialize,
+    FLASH_CS0_BASE_ADDR, MAX_SERIAL_NUMBER_LEN, MAX_UNIT_NAME_LEN, METADATA_BASE, METADATA_SIZE,
+    MIN_SCHEMA_VERSION, MaybeKnown, ONEROM_METADATA_MAGIC, OVERRIDE1_BOOT_SLOT, OneromAlgConfig,
+    OneromMetadataHeader, OneromRomInfo, OneromRomSlot, PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET,
+    PLUGIN_HEADER_OVERRIDES1_OFFSET, PLUGIN_MAGIC, Pointer, ROM_SLOT_NO_IMAGE, RomSlotType,
+    SYSTEM_PLUGIN_OFFSET, SYSTEM_PLUGIN_SIZE, USER_PLUGIN_OFFSET, USER_PLUGIN_SIZE,
+    metadata_generation_for, serialize,
 };
 
 use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
-use crate::v2::addr_layout::AddrLayout;
+use crate::v2::addr_layout::{AddrLayout, LayoutError};
 use crate::v2::addr_mon;
 use crate::v2::cs_data_layout::CsDataLayout;
 use crate::v2::firmware_config::{
@@ -602,7 +605,10 @@ impl Builder {
                 rom_slots.push(slot);
                 layouts.push(None);
             } else {
-                let (slot, addr_layout, cs_data_layout) = lay_out_rom_slot(board, chip_set)?;
+                let (slot, addr_layout, cs_data_layout) = lay_out_rom_slot(board, chip_set)
+                    .map_err(|error| {
+                        slot_layout_error(error, rom_slot, *chip_set.chips[0].chip_type(), board)
+                    })?;
                 if let Some(pin) = slot
                     .alg
                     .as_ref()
@@ -729,7 +735,7 @@ impl Builder {
 fn lay_out_rom_slot(
     board: Board,
     chip_set: &ChipSet,
-) -> Result<(OneromRomSlot, AddrLayout, CsDataLayout)> {
+) -> core::result::Result<(OneromRomSlot, AddrLayout, CsDataLayout), LayoutError> {
     let firmware_overrides = chip_set
         .firmware_overrides
         .as_ref()
@@ -748,6 +754,37 @@ fn lay_out_rom_slot(
         force_16_bit,
     )?;
     Ok((slot, addr_layout, cs_data_layout))
+}
+
+/// The [`Error`] for `error`, from laying out ROM slot `slot` for `board`.
+///
+/// A reason that only repeats that the board doesn't support the slot is left
+/// out.
+fn slot_layout_error(error: LayoutError, slot: usize, chip_type: ChipType, board: Board) -> Error {
+    let reason = match error {
+        LayoutError::IncompatiblePinCount { .. } | LayoutError::NoValidLayout { .. } => None,
+        LayoutError::MissingAddrPinGpios { .. } | LayoutError::RomTooLargeNoCsConfig { .. } => {
+            return error.into();
+        }
+        LayoutError::UnmappedPin { .. }
+        | LayoutError::MissingXPin { .. }
+        | LayoutError::NoSelectLine { .. }
+        | LayoutError::NonContiguousSelect { .. }
+        | LayoutError::RomTableTooLarge { .. }
+        | LayoutError::InteriorIgnoredLine { .. } => {
+            let error = Error::from(error);
+            let Error::UnsupportedBoardConfig { reason, .. } = error else {
+                return error;
+            };
+            Some(reason)
+        }
+    };
+    Error::SlotUnsupported {
+        slot,
+        chip_type,
+        board,
+        reason,
+    }
 }
 
 /// The first reserved pin wired to a GPIO that `alg` uses.
@@ -1981,7 +2018,7 @@ pub(crate) fn description(
             if let Some(rom_desc) = &rom.description {
                 desc.push_str(rom_desc);
             } else {
-                desc.push_str(&rom.file);
+                desc.push_str(rom.file_for_display());
             }
             if !multi_chip_sets && let Some((_, words)) = &row {
                 desc.push_str(&format!("  {words}"));
@@ -2215,6 +2252,8 @@ pub(crate) fn validate_plugins(
     props: &FirmwareProperties,
 ) -> Result<()> {
     let mut rom_id = 0;
+    let mut system_plugin = None;
+    let mut user_plugin = None;
     for set in config.chip_sets.iter() {
         for rom in set.chips.iter() {
             if matches!(
@@ -2227,17 +2266,17 @@ pub(crate) fn validate_plugins(
                 if data.len() < 256 {
                     return Err(Error::InvalidPluginImage {
                         plugin_type: rom.chip_type.resolved(),
-                        image_file: rom.file.clone(),
+                        image_file: rom.file_for_display().to_string(),
                         error:
                             "Plugin image is smaller than the required plugin header (256 bytes)."
                                 .to_string(),
                     });
                 }
 
-                if &data[0..4] != b"ORA " {
+                if u32::from_le_bytes(data[0..4].try_into().unwrap()) != PLUGIN_MAGIC {
                     return Err(Error::InvalidPluginImage {
                         plugin_type: rom.chip_type.resolved(),
-                        image_file: rom.file.clone(),
+                        image_file: rom.file_for_display().to_string(),
                         error: "Invalid magic value in plugin header.".to_string(),
                     });
                 }
@@ -2245,7 +2284,7 @@ pub(crate) fn validate_plugins(
                 if api_version != 1 {
                     return Err(Error::InvalidPluginImage {
                         plugin_type: rom.chip_type.resolved(),
-                        image_file: rom.file.clone(),
+                        image_file: rom.file_for_display().to_string(),
                         error: format!(
                             "Invalid API version {api_version} in plugin header - must be 1."
                         ),
@@ -2261,7 +2300,7 @@ pub(crate) fn validate_plugins(
                 if plugin_fw_version > props.version() {
                     return Err(Error::InvalidPluginImage {
                         plugin_type: rom.chip_type.resolved(),
-                        image_file: rom.file.clone(),
+                        image_file: rom.file_for_display().to_string(),
                         error: format!(
                             "Plugin requires at least firmware version {} which is newer than \
                              the firmware version being built for ({})",
@@ -2270,11 +2309,63 @@ pub(crate) fn validate_plugins(
                         ),
                     });
                 }
+
+                if matches!(rom.chip_type.resolved(), ChipType::SystemPlugin) {
+                    system_plugin = Some((rom, data));
+                } else if matches!(rom.chip_type.resolved(), ChipType::UserPlugin) {
+                    user_plugin = Some((rom, data));
+                }
             }
             rom_id += 1;
         }
     }
+
+    let plugins = [
+        (
+            ChipType::SystemPlugin,
+            system_plugin,
+            SYSTEM_PLUGIN_OFFSET,
+            SYSTEM_PLUGIN_SIZE,
+        ),
+        (
+            ChipType::UserPlugin,
+            user_plugin,
+            USER_PLUGIN_OFFSET,
+            USER_PLUGIN_SIZE,
+        ),
+    ];
+    for (plugin_type, plugin, offset, size) in plugins {
+        if let Some((rom, data)) = plugin {
+            let region = FLASH_CS0_BASE_ADDR + offset..FLASH_CS0_BASE_ADDR + offset + size as u32;
+            check_boot_slot_addr(plugin_type, rom, data, region)?;
+        }
+    }
     Ok(())
+}
+
+fn check_boot_slot_addr(
+    plugin_type: ChipType,
+    rom: &ChipConfig,
+    data: &[u8],
+    region: core::ops::Range<u32>,
+) -> Result<()> {
+    if data[PLUGIN_HEADER_OVERRIDES1_OFFSET] & OVERRIDE1_BOOT_SLOT == 0 {
+        return Ok(());
+    }
+
+    let offset = PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET;
+    let addr = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
+    if region.contains(&addr) {
+        return Ok(());
+    }
+    Err(Error::InvalidPluginImage {
+        plugin_type,
+        image_file: rom.file_for_display().to_string(),
+        error: format!(
+            "The plugin's boot slot address {addr:#010x} is outside the plugin's region. One \
+             ROM would ignore it."
+        ),
+    })
 }
 
 /// Build `ChipSet`s (with `Chip`s, including loaded ROM image data) from

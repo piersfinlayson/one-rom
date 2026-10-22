@@ -166,28 +166,17 @@ const HELD_POLLS: u32 = 20;
 
 /// API identifiers withheld from the plugin for the scenarios that need them.
 ///
-/// The three entries here are the degradation paths a plugin takes on firmware
-/// older than a call it uses.  Nothing else can reach them: the emulator
-/// implements the whole API, so every lookup succeeds.  Consulted by
-/// [`crate::suites::withheld_api`] before the plugin starts, which is when a
-/// plugin resolves its pointers.
-pub static WITHHELD_API: &[(&str, &[u32])] = &[
-    (
-        "conformance.aux.no_uptime_offers_no_timed_holds",
-        &[ffi::api_id_t_ORA_ID_GET_PLUGIN_UPTIME_MS],
-    ),
-    (
-        "conformance.aux.groups_stay_consistent_without_indexed_metadata",
-        &[ffi::api_id_t_ORA_ID_GET_METADATA_UINT_AT],
-    ),
-    (
-        "conformance.aux.no_groups_without_the_gpio_calls",
-        &[
-            ffi::api_id_t_ORA_ID_GPIO_SET,
-            ffi::api_id_t_ORA_ID_GPIO_QUERY,
-        ],
-    ),
-];
+/// The entry here reaches the branch a plugin runs without the GPIO calls.
+/// Nothing else can reach it: the emulator implements the whole API, so every
+/// lookup succeeds.  Consulted by [`crate::suites::withheld_api`] before the plugin
+/// starts, which is when a plugin resolves its pointers.
+pub static WITHHELD_API: &[(&str, &[u32])] = &[(
+    "conformance.aux.no_groups_without_the_gpio_calls",
+    &[
+        ffi::api_id_t_ORA_ID_GPIO_SET,
+        ffi::api_id_t_ORA_ID_GPIO_QUERY,
+    ],
+)];
 
 /// What GET_AUX_CAPABILITY reports.
 #[derive(Clone, Copy)]
@@ -1152,9 +1141,7 @@ pub fn set_aux_accepts_a_hold_of_the_reported_maximum(
     let cap = capability(bus, &s)?;
     if cap.max_hold == 0 {
         return Ok(Outcome::Skip(
-            "the device reports a maximum hold of zero, which is no hold to accept — the \
-             boundary there is a hold of one, and no_uptime_offers_no_timed_holds asserts it"
-                .into(),
+            "the device reports a maximum hold of zero, which is no hold to accept".into(),
         ));
     }
 
@@ -1774,102 +1761,6 @@ pub fn set_aux_rejects_group_aa(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, Str
             pin.group
         )
     })?;
-
-    Ok(Outcome::Pass)
-}
-
-/// A device with no millisecond counter offers no timed holds, and enforces it.
-///
-/// "A value of zero indicates the device does not support timed holds, and
-/// rejects any SET_AUX with a non-zero hold."  Reached by withholding
-/// `ORA_ID_GET_PLUGIN_UPTIME_MS` from the plugin — see [`WITHHELD_API`] — which
-/// is the firmware this plugin degrades for.  The hold of zero at the end is
-/// the positive control: a device that refused every SET_AUX would satisfy the
-/// rejection and be useless.
-///
-/// The maximum being zero is checked first, and that check is this plugin's
-/// degradation rather than a specification requirement — a device is free to
-/// report any maximum it likes.  It is here as the sentinel: it is the only
-/// thing that tells the scenario the call really was withheld, since the
-/// rejection below is vacuous on a device that never had a maximum to exceed.
-pub fn no_uptime_offers_no_timed_holds(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
-    let (s, pin) = match session_with_a_drivable_pin(bus, ctx)? {
-        Ok(found) => found,
-        Err(skip) => return Ok(skip),
-    };
-
-    let cap = capability(bus, &s)?;
-    if cap.max_hold != 0 {
-        return Err(format!(
-            "the device reports a maximum hold of {} with no millisecond counter available to \
-             time one with",
-            cap.max_hold
-        ));
-    }
-
-    for hold in [1u8, 0x7F, 0xFF] {
-        bus.expect_rejected(
-            &s,
-            group::AUX,
-            aux::SET_AUX,
-            &set_args(RELEASE, RELEASE, hold, &pin),
-        )
-        .map_err(|e| {
-            format!("{e} — a maximum hold of zero rejects any SET_AUX with a non-zero hold")
-        })?;
-    }
-
-    bus.issue_cmd(
-        &s,
-        group::AUX,
-        aux::SET_AUX,
-        &set_args(RELEASE, RELEASE, 0, &pin),
-    )
-    .map_err(|e| format!("SET_AUX with a hold of zero: {e} — only a timed hold is refused"))?;
-
-    Ok(Outcome::Pass)
-}
-
-/// Fewer groups is still a dense, self-consistent set of groups.
-///
-/// Reached by withholding `ORA_ID_GET_METADATA_UINT_AT`, which the plugin needs
-/// to build all but one of its groups — see [`WITHHELD_API`].  What the
-/// specification requires does not change with the count: groups stay
-/// "contiguous and start from zero", every one of them answers with a type the
-/// protocol allows, and the first number past the end is refused.
-///
-/// The count and type are checked first, and that check is this plugin's
-/// documented degradation rather than a specification requirement.  It is here
-/// because it is the only thing that tells the scenario the call really was
-/// withheld — the assertions below hold whether it was or not, so without it a
-/// mis-keyed [`WITHHELD_API`] entry would pass silently and cover nothing.
-pub fn groups_stay_consistent_without_indexed_metadata(
-    bus: &mut Bus,
-    ctx: &Ctx,
-) -> Result<Outcome, String> {
-    let s = ctx.session();
-    bus.enter_cmd_resp(&s)
-        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
-
-    let cap = capability(bus, &s)?;
-    if cap.groups != 1 {
-        return Err(format!(
-            "the device reports {} auxiliary pin groups without the indexed metadata getter — \
-             only the GPIO group can be built without it, so either the call reached the \
-             plugin after all or the plugin builds its other groups some other way",
-            cap.groups
-        ));
-    }
-
-    for grp in 0..cap.groups {
-        let (kind, _) = group_info(bus, &s, grp)?;
-        if kind != GROUP_TYPE_GPIO {
-            return Err(format!(
-                "the one group left reports type 0x{kind:02X} rather than GPIO"
-            ));
-        }
-    }
-    bus.expect_rejected(&s, group::AUX, aux::GET_AUX_GROUP_INFO, &[cap.groups])?;
 
     Ok(Outcome::Pass)
 }

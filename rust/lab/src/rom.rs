@@ -7,7 +7,7 @@ use log::{debug, error, info, trace, warn};
 
 use alloc::vec::Vec;
 use core::num::Wrapping;
-use embassy_rp::gpio::{Flex, Pull};
+use embassy_rp::gpio::{Drive, Flex, Pull, SlewRate};
 use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::hw::Board;
 use sha1::{Digest, Sha1};
@@ -28,6 +28,14 @@ pub struct ModeResult {
 }
 
 pub type ReadResult = Vec<ModeResult>;
+
+/// The GPIOs a fast read drives and samples.  See [`crate::fast_read`].
+pub struct FastReadPins {
+    pub addr_gpios: Vec<u8>,
+    pub data_gpios: Vec<u8>,
+    /// The control line asserted for each read, or None if the chip has none
+    pub strobe_gpio: Option<u8>,
+}
 
 /// Active level for a configurable CS line on a mask ROM.
 ///
@@ -95,19 +103,25 @@ impl ChecksumState {
 /// A GPIO-backed control line with its assert polarity.
 struct ControlLine {
     flex: Flex<'static>,
+    gpio: u8,
     assert_high: bool,
 }
 
 impl ControlLine {
-    fn active_low(flex: Flex<'static>) -> Self {
+    fn active_low(flex: Flex<'static>, gpio: u8) -> Self {
         Self {
             flex,
+            gpio,
             assert_high: false,
         }
     }
 
-    fn configurable(flex: Flex<'static>, assert_high: bool) -> Self {
-        Self { flex, assert_high }
+    fn configurable(flex: Flex<'static>, gpio: u8, assert_high: bool) -> Self {
+        Self {
+            flex,
+            gpio,
+            assert_high,
+        }
     }
 
     fn init(&mut self) {
@@ -141,6 +155,10 @@ impl ControlLine {
 pub struct RomReader {
     addr: Vec<Flex<'static>>,
     data: Vec<Flex<'static>>,
+    /// The GPIO of each entry in `addr`
+    addr_gpios: Vec<u8>,
+    /// The GPIO of each entry in `data`
+    data_gpios: Vec<u8>,
     ce: Option<ControlLine>,
     oe: Option<ControlLine>,
     cs1: Option<ControlLine>,
@@ -195,38 +213,38 @@ impl RomReader {
         }
 
         // Build address-line GPIO list (A0 … An, or A-1 … An for 27C400).
-        let addr: Vec<Flex<'static>> = chip
+        let addr_gpios: Vec<u8> = chip
             .address_pins()
             .iter()
             .map(|&phys| {
                 let phys = Self::remap_phys_pin(chip, board, phys);
-                let gpio = gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
+                gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                     panic!(
                         "address pin {} not mapped for chip {} on this board",
                         phys,
                         chip.name()
                     )
-                });
-                steal_gpio(gpio)
+                })
             })
             .collect();
+        let addr = addr_gpios.iter().map(|&gpio| steal_gpio(gpio)).collect();
 
         // Build data-line GPIO list (D0 … Dn).
-        let data: Vec<Flex<'static>> = chip
+        let data_gpios: Vec<u8> = chip
             .data_pins()
             .iter()
             .map(|&phys| {
                 let phys = Self::remap_phys_pin(chip, board, phys);
-                let gpio = gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
+                gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                     panic!(
                         "data pin {} not mapped for chip {} on this board",
                         phys,
                         chip.name()
                     )
-                });
-                steal_gpio(gpio)
+                })
             })
             .collect();
+        let data = data_gpios.iter().map(|&gpio| steal_gpio(gpio)).collect();
 
         // Build control-line GPIOs.
         let mut ce = None;
@@ -249,23 +267,26 @@ impl RomReader {
             let flex = steal_gpio(gpio);
 
             match ctrl.name {
-                "ce" => ce = Some(ControlLine::active_low(flex)),
-                "oe" => oe = Some(ControlLine::active_low(flex)),
+                "ce" => ce = Some(ControlLine::active_low(flex, gpio)),
+                "oe" => oe = Some(ControlLine::active_low(flex, gpio)),
                 "cs1" => {
                     cs1 = Some(ControlLine::configurable(
                         flex,
+                        gpio,
                         cs.cs1.expect("cs1 polarity required"),
                     ))
                 }
                 "cs2" => {
                     cs2 = Some(ControlLine::configurable(
                         flex,
+                        gpio,
                         cs.cs2.expect("cs2 polarity required"),
                     ))
                 }
                 "cs3" => {
                     cs3 = Some(ControlLine::configurable(
                         flex,
+                        gpio,
                         cs.cs3.expect("cs3 polarity required"),
                     ))
                 }
@@ -296,6 +317,8 @@ impl RomReader {
         Self {
             addr,
             data,
+            addr_gpios,
+            data_gpios,
             ce,
             oe,
             cs1,
@@ -545,7 +568,32 @@ impl RomReader {
     /// `begin_read(mode)` must have been called before the first call to
     /// this method in a read session.
     pub fn read_byte_at(&mut self, byte_addr: usize, mode: u8) -> u8 {
-        let (phys_addr, byte_index, delay) = if mode == 16 {
+        let (phys_addr, byte_index, delay) = self.locate(byte_addr, mode);
+        self.set_addr(phys_addr);
+        cortex_m::asm::delay(delay);
+        self.read_data_byte(byte_index)
+    }
+
+    /// As [`RomReader::read_byte_at`], with the control lines asserted for
+    /// this read alone and deasserted afterwards.
+    ///
+    /// A One ROM's address monitor records one address per chip select cycle,
+    /// so RBCP needs a cycle per read.
+    pub fn read_byte_cycled(&mut self, byte_addr: usize, mode: u8) -> u8 {
+        let (phys_addr, byte_index, delay) = self.locate(byte_addr, mode);
+        self.deassert_control();
+        self.set_addr(phys_addr);
+        self.assert_control();
+        cortex_m::asm::delay(delay);
+        let byte = self.read_data_byte(byte_index);
+        self.deassert_control();
+        byte
+    }
+
+    /// The address to drive, the data byte to sample and the read delay for
+    /// `byte_addr` in `mode`.
+    fn locate(&self, byte_addr: usize, mode: u8) -> (usize, usize, u32) {
+        if mode == 16 {
             // Word address with A-1 (bit 0) held low, matching addr_shift=1
             // used in read_mode.
             (
@@ -555,11 +603,26 @@ impl RomReader {
             )
         } else {
             (byte_addr, 0, self.read_delay_cycles)
-        };
+        }
+    }
 
-        self.set_addr(phys_addr);
-        cortex_m::asm::delay(delay);
-        self.read_data_byte(byte_index)
+    /// Assert every control line but the strobe and return the pins a fast
+    /// read uses.  The strobe is OE, or CE where the chip has no OE, or CS1
+    /// where it has neither.
+    ///
+    /// Pair every call with exactly one call to `end_read`.
+    pub fn begin_fast_read(&mut self) -> FastReadPins {
+        self.assert_control();
+        let strobe = self.oe.as_mut().or(self.ce.as_mut()).or(self.cs1.as_mut());
+        let strobe_gpio = strobe.map(|line| {
+            line.deassert();
+            line.gpio
+        });
+        FastReadPins {
+            addr_gpios: self.addr_gpios.clone(),
+            data_gpios: self.data_gpios.clone(),
+            strobe_gpio,
+        }
     }
 
     /// Deassert all control lines and return the BYTE# pin to its idle state.
@@ -575,6 +638,25 @@ impl RomReader {
                 a1.set_pull(Pull::Down);
                 a1.set_as_input();
             }
+        }
+    }
+
+    /// Drives the data pins as One ROM does.  Returns their GPIOs, D0 first.
+    pub fn begin_drive(&mut self) -> Vec<u8> {
+        self.deassert_control();
+        for pin in self.data.iter_mut() {
+            pin.set_drive_strength(Drive::_8mA);
+            pin.set_slew_rate(SlewRate::Fast);
+            pin.set_low();
+            pin.set_as_output();
+        }
+        self.data_gpios.clone()
+    }
+
+    pub fn end_drive(&mut self) {
+        for pin in self.data.iter_mut() {
+            pin.set_pull(Pull::Down);
+            pin.set_as_input();
         }
     }
 

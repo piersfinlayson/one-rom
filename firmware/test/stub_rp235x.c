@@ -101,6 +101,15 @@ void setup_gpio(void) {
 // Set by enter_bootloader() below, read by stub_bootloader_entered().
 static uint8_t stub_entered_bootloader;
 
+// Set by rom_reboot() below, read by stub_rom_reboot().
+static uint8_t stub_rebooted;
+static uint8_t stub_reboot_bootloader;
+static uint32_t stub_reboot_delay_ms;
+static uint8_t stub_reboot_fails;
+
+static uint8_t stub_usb_resets_made[STUB_USB_RESETS_MAX];
+static uint8_t stub_usb_resets_count;
+
 // Put back what a reset puts back.
 //
 // A test build runs many boots in one process, and the firmware's own statics
@@ -120,7 +129,13 @@ void onerom_test_reset(void) {
     stub_timer_reset();
     pio_led_reset();
     stub_entered_bootloader = 0;
+    stub_rebooted = 0;
+    stub_reboot_bootloader = 0;
+    stub_reboot_delay_ms = 0;
+    stub_reboot_fails = 0;
     stub_dma_out_of_reset = 0;
+    stub_usb_resets_count = 0;
+    onerom_rtt_test_unmove_log();
     limp_mode_value = LIMP_MODE_NONE;
 }
 
@@ -281,6 +296,87 @@ uint32_t otp_read_raw(uint16_t row) {
     return stub_otp_raw[row];
 }
 
+// ---------------------------------------------------------------------------
+// Flash model
+//
+// See test/stub.h.
+// ---------------------------------------------------------------------------
+
+#define STUB_FLASH_BYTES 16u
+
+static struct {
+    uint32_t addr;
+    uint8_t value;
+} stub_flash[STUB_FLASH_BYTES];
+static uint32_t stub_flash_count;
+
+uint8_t stub_flash_read8(uint32_t addr) {
+    for (uint32_t ii = 0; ii < stub_flash_count; ii++) {
+        if (stub_flash[ii].addr == addr) {
+            return stub_flash[ii].value;
+        }
+    }
+    return 0xFF;
+}
+
+void stub_flash_set8(uint32_t addr, uint8_t value) {
+    for (uint32_t ii = 0; ii < stub_flash_count; ii++) {
+        if (stub_flash[ii].addr == addr) {
+            stub_flash[ii].value = value;
+            return;
+        }
+    }
+    assert(stub_flash_count < STUB_FLASH_BYTES);
+    stub_flash[stub_flash_count].addr = addr;
+    stub_flash[stub_flash_count].value = value;
+    stub_flash_count++;
+}
+
+void stub_flash_clear(void) {
+    stub_flash_count = 0;
+}
+
+// ---------------------------------------------------------------------------
+// USB model
+//
+// See test/stub.h.
+// ---------------------------------------------------------------------------
+
+static char stub_usb_dpram_buf[USB_DPRAM_SIZE];
+
+char *stub_usb_dpram(void) {
+    return stub_usb_dpram_buf;
+}
+
+char *stub_usb_dpram_log(void) {
+    return stub_usb_dpram_buf + (USB_DPRAM_LOG_ADDR - USB_DPRAM_BASE_ADDR);
+}
+
+static void stub_usb_reset_record(uint8_t step) {
+    if (stub_usb_resets_count < STUB_USB_RESETS_MAX) {
+        stub_usb_resets_made[stub_usb_resets_count++] =
+            step | (onerom_rtt_log_moved() ? STUB_USB_RESET_LOG_MOVED : 0u);
+    }
+}
+
+void usb_controller_out_of_reset(void) {
+    STUB_LOG("usb_controller_out_of_reset");
+    stub_usb_reset_record(STUB_USB_RESET_RELEASE_WAIT);
+}
+
+void usb_controller_reset_and_release(void) {
+    STUB_LOG("usb_controller_reset_and_release");
+    stub_usb_reset_record(STUB_USB_RESET_ASSERT);
+    stub_usb_reset_record(STUB_USB_RESET_RELEASE);
+}
+
+uint8_t stub_usb_resets(uint8_t *steps, uint8_t max) {
+    for (uint8_t ii = 0; (ii < stub_usb_resets_count) && (ii < max); ii++) {
+        steps[ii] = stub_usb_resets_made[ii];
+    }
+    return stub_usb_resets_count;
+}
+
 // Enters bootloader mode.  See stub.h for why the call is recorded.
 void enter_bootloader(void) {
     STUB_LOG("enter_bootloader");
@@ -289,6 +385,32 @@ void enter_bootloader(void) {
 
 uint8_t stub_bootloader_entered(void) {
     return stub_entered_bootloader;
+}
+
+// Reboots through the bootrom.  See stub.h for why the call is recorded.
+uint8_t rom_reboot(uint8_t bootloader, uint32_t delay_ms) {
+    STUB_LOG("rom_reboot");
+    if (stub_reboot_fails) {
+        return 0;
+    }
+    stub_rebooted = 1;
+    stub_reboot_bootloader = bootloader;
+    stub_reboot_delay_ms = delay_ms;
+    return 1;
+}
+
+void stub_set_rom_reboot_fails(uint8_t fails) {
+    stub_reboot_fails = fails;
+}
+
+uint8_t stub_rom_reboot(uint8_t *bootloader_out, uint32_t *delay_ms_out) {
+    uint8_t rebooted = stub_rebooted;
+    *bootloader_out = stub_reboot_bootloader;
+    *delay_ms_out = stub_reboot_delay_ms;
+    stub_rebooted = 0;
+    stub_reboot_bootloader = 0;
+    stub_reboot_delay_ms = 0;
+    return rebooted;
 }
 
 void platform_logging(void) {

@@ -13,8 +13,8 @@ use onerom_gen::FlashChips;
 use onerom_metadata::{MaybeKnown, OneromBoardSize};
 
 use super::firmware_build::Files;
-use super::{command_of, failed};
-use crate::firmware::{build_rom_image, verify_assembled_firmware};
+use super::{command_of, failed, written_failure};
+use crate::firmware::{accept_image, build_rom_image};
 use crate::program::{plan_lines, verify_line};
 use crate::test_board::{image_file, move_slot};
 use onerom_cli::error::plan_error;
@@ -37,7 +37,8 @@ async fn check_image(line: &str, image: &[u8]) {
     println!("$ {line}");
     let options = options(line);
     let force = line.contains("--force");
-    match verify_assembled_firmware(&options, image, force, Some(Board::Fire40A)).await {
+    let checked = onerom_app::check_image(image.to_vec(), Some(Board::Fire40A)).await;
+    match accept_image(&options, checked, force, Some(Board::Fire40A)) {
         Ok(_) => println!("~ (continues)"),
         Err(e) => failed(e),
     }
@@ -48,10 +49,10 @@ async fn check_image(line: &str, image: &[u8]) {
 /// Each without and with `--force`.
 #[tokio::test]
 async fn an_image_file_that_doesnt_match_its_slots() {
-    let mut short = image_file(BoardSize::M, 3);
+    let mut short = image_file(BoardSize::M, 3).await;
     short.truncate(short.len() - 4096);
-    let damaged = move_slot(image_file(BoardSize::M, 3), 2, 0x1030_0000).await;
-    let mut long = image_file(BoardSize::M, 3);
+    let damaged = move_slot(image_file(BoardSize::M, 3).await, 2, 0x1030_0000).await;
+    let mut long = image_file(BoardSize::M, 3).await;
     long.resize(FIRST_CHIP + 4096, 0xFF);
     for (name, image) in [
         ("an image file 4KB shorter than its slots", short),
@@ -77,8 +78,8 @@ fn refuse_plan(image: &[u8], chips: &FlashChips, size: Option<MaybeKnown<OneromB
 
 /// An image that uses the second chip, for a board without one of each
 /// recorded size. Each has an M board's chips.
-#[test]
-fn the_second_chip_on_a_board_without_one() {
+#[tokio::test]
+async fn the_second_chip_on_a_board_without_one() {
     use OneromBoardSize::{BoardSizeM, BoardSizeOther, BoardSizeUnknown};
     for (name, size) in [
         ("an M fire-40-a", Some(MaybeKnown::Known(BoardSizeM))),
@@ -93,15 +94,19 @@ fn the_second_chip_on_a_board_without_one() {
         ("a fire-40-a whose size couldn't be read", None),
     ] {
         println!("### an L image on {name}");
-        refuse_plan(&image_file(BoardSize::L, 4), &chips(BoardSize::M), size);
+        refuse_plan(
+            &image_file(BoardSize::L, 4).await,
+            &chips(BoardSize::M),
+            size,
+        );
         println!();
     }
 }
 
 /// An image larger than an L board's two chips.
-#[test]
-fn an_image_larger_than_an_l_board() {
-    let mut image = image_file(BoardSize::L, 4);
+#[tokio::test]
+async fn an_image_larger_than_an_l_board() {
+    let mut image = image_file(BoardSize::L, 4).await;
     image.resize(2 * FIRST_CHIP + 4096, 0xFF);
     println!("### an image 4KB larger than an L fire-40-a's flash");
     let l = Some(MaybeKnown::Known(OneromBoardSize::BoardSizeL));
@@ -128,13 +133,13 @@ fn verbose_steps(image: &[u8], chips: &FlashChips) {
 }
 
 /// An image on the first chip, then one that uses the second.
-#[test]
-fn verbose_steps_for_each_image() {
+#[tokio::test]
+async fn verbose_steps_for_each_image() {
     println!("### an M image on an L fire-40-a");
-    verbose_steps(&image_file(BoardSize::M, 3), &chips(BoardSize::L));
+    verbose_steps(&image_file(BoardSize::M, 3).await, &chips(BoardSize::L));
     println!();
     println!("### an L image on an L fire-40-a");
-    verbose_steps(&image_file(BoardSize::L, 4), &chips(BoardSize::L));
+    verbose_steps(&image_file(BoardSize::L, 4).await, &chips(BoardSize::L));
 }
 
 /// Four 512KB sets for a running M fire-40-a. `program` builds for the One
@@ -155,6 +160,7 @@ async fn a_set_that_doesnt_fit_an_m_one_rom() {
         Variant::RP2350,
         BoardSize::M,
         false,
+        &onerom_cli::CliFetch,
         |_| Ok(()),
     )
     .await;
@@ -181,7 +187,7 @@ async fn a_reset_host_pin_that_isnt_reserved() {
     ] {
         println!("### {name}");
         println!("$ onerom program --firmware image.bin --reset-host x1");
-        let image = parse_firmware(&image_2364(1, reserved)).await;
+        let image = parse_firmware(&image_2364(1, reserved).await).await;
         if let Some(warning) = unreserved_reset_pin(&image, pin) {
             println!("Warning: {warning}");
         }
@@ -220,7 +226,7 @@ async fn a_reset_host_pin_a_slot_uses() {
         println!("### {name}, {board}");
         println!("$ onerom program --firmware image.bin --reset-host {pin}");
         let pin = parse_pin(pin).unwrap().resolve(Some(&board)).unwrap();
-        let image = parse_firmware(&image_2364_sets(board, sets, &[])).await;
+        let image = parse_firmware(&image_2364_sets(board, sets, &[]).await).await;
         match crate::control::refuse_reset_pin_in_use(&image, pin) {
             Ok(()) => println!("~ (continues)"),
             Err(e) => failed(e),
@@ -242,6 +248,23 @@ fn a_reset_host_pin_the_board_uses() {
         Ok(_) => println!("~ (continues)"),
         Err(e) => failed(e),
     }
+}
+
+/// `--serial` selecting a One ROM another program has open, then one that
+/// isn't connected. Finding the One ROM needs USB.
+#[test]
+fn a_serial_one_rom_that_cant_be_used() {
+    use onerom_cli::Error;
+    use onerom_cli::usb::AccessFailure;
+
+    println!("$ onerom program --serial E7E47917A0C2B0CE --firmware image.bin");
+    written_failure(&Error::DeviceInaccessible {
+        serial: "E7E47917A0C2B0CE".to_string(),
+        failure: AccessFailure::NotOpened,
+    });
+    println!();
+    println!("$ onerom program --serial 62CD9AE3C0771A7E --firmware image.bin");
+    written_failure(&Error::DeviceNotFound("62CD9AE3C0771A7E".to_string()));
 }
 
 #[test]

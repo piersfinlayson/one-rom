@@ -24,7 +24,7 @@ onerom-app = { workspace = true }
 onerom-config = { workspace = true }
 onerom-fw = { workspace = true }
 onerom-gen = { workspace = true }
-onerom-fw-parser = { workspace = true }
+onerom-fw-parser = { workspace = true, features = ["std"] }
 onerom-lab-parser = { workspace = true }
 onerom-metadata = { workspace = true }
 
@@ -69,6 +69,9 @@ thiserror = "2.0"
 wildmatch = "2.6"
 zip = "8.2"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [build-dependencies]
 built = { version = "0.8", features = ["git2"] }
 onerom-metadata = { workspace = true }
@@ -79,6 +82,7 @@ static_vcruntime = "3.0"
 [dev-dependencies]
 onerom-lab-metadata = { workspace = true }
 tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }
 
 # Cargo deb metadata for building Linux deb packages
 [package.metadata.deb]

@@ -2,9 +2,24 @@
 
 ## v0.6.0 - unreleased
 
+- **Breaking** `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
 - Reword several error messages and `board` output.
 - `--config` on `program` and `firmware build` can be an http(s) URL.
 - Add the address monitor's minimum CS-active time to `program` and `firmware build` as `--addr-mon-min-cs-act-ns` and the `--slot` key `addr-mon-min-cs-act-ns`. `scan --slots` and `inspect slots` now display it, and `firmware inspect` displays the global value.
+- Add `update` which updates a One ROM's firmware version, one ROM image or a plugin.
+- Add `clone`, which copies a One ROM or firmware file to another One ROM.
+- Add `save`, which saves a One ROM's or firmware file's configuration and ROM images to a PC.
+- `firmware inspect` prints `Chip N` instead of `ROM N`.
+- Remove `inspect image`, which wasn't implemented. Use `save`.
+- Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
+- When the One ROM selected with `--serial` can't be opened the error is now "could not be opened", not "not found".
+- `program` and `firmware build` fail when a plugin's boot slot address is outside its region.
+- `monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
+- `inspect peek memory` can also read USB DPRAM.
+- `hardware validate` displays the manufacturer's contact.
+- **Breaking** `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
+- `hardware validate`, `inspect otp` and `inspect info` display the size a One ROM was commissioned as where it differs from its current size. `hardware validate` fails where a One ROM was commissioned as L but its size isn't L.
+- `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
 
 ## v0.5.0 - 2026-10-06
 

@@ -4,15 +4,13 @@ Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 
 Version: 0.1.0 IN DEVELOPMENT
 
-** Very much a work in progress **
+**Very much a work in progress**
 
 This specification may be freely implemented without restriction.
 
 ---
 
 ## Introduction
-
-> Section rewritten.  Review.
 
 The One ROM I2C Control Protocol (ORICP) lets a computer or microcontroller
 control a One ROM over I2C while the One ROM serves a ROM to the system it is
@@ -21,61 +19,51 @@ fitted in. The host is the I2C master. The One ROM is an I2C slave.
 ORICP builds on top of the [ROM Bus Control Protocol
 (RBCP)](https://github.com/piersfinlayson/rom-bus-control-protocol), reusing RBCP's:
 - groups
-- command
+- commands
 - argument bytes
-- same response formats.
+- response formats.
 
-ORICP replaces the transport layer with I2C, adding an additional transport to control
-One ROM, alongside USB and the ROM Bus.
+ORICP replaces RBCP's ROM bus transport with I2C, adding a transport to control
+One ROM alongside USB and the ROM bus.
 
 ## Summary
-
-> Rewritten to be clear and less verbose.
 
 - The device is an I2C slave at a 7-bit address, at 100 kHz or 400 kHz.
 - A command is an I2C write consisting of:
   - register 0x00
-  - RBCP frame of
+  - RBCP command frame of
     - GROUP
     - CMD
     - argument bytes.
-  The write's stop condition ends the frame.
-- The result is read through an 8-bit register pointer from a 240-byte
-  back-channel consisting of:
-  - the RBCP 8-byte sttus header
-  - the command's response data.
-- The device processes a command once the write completes.  The host polls
-  the header for status, as in RBCP. The device holds SCL low for at most
-  2 ms.
-- On a bus of its own the device answers at once. On a bus it shares with
-  other traffic it stays silent until the host knocks.
-- The command set is RBCP 0.1.2, groups 0x01 to 0x06 and 0xAA unchanged.
-  Group 0x00 carries NOP alone.
-
-> I simply don't know why 2ms is in here, and whether it belongs in that bullet. Explain.
+- The write's stop condition ends the frame.
+- The result is read through an 8-bit register pointer from a back-channel
+  region consisting of:
+  - the 8-byte RBCP response header
+  - the RBCP response data section.
+- The device processes a command once the write completes. The host polls
+  the header for status, as in RBCP.
+- During a read the device may hold SCL low for at most 2 ms, or longer while
+  it writes its flash.
+- In Normal mode the device acknowledges its address at once. In Knock mode it
+  stays silent until the host knocks.
+- The command set is RBCP's, without the commands that enter or leave
+  command-response mode other than RBCP_RESET.
 
 ---
 
 ## Relationship to RBCP
 
-> Rewritten.  We didn't need a motivation.  It's obvious.
-
-ORICP re-uses the command RBCP framing and commands, replacing the ROM Bus
-transport with I2C.
-
-Some RBCP commands are omitted due to I2C's properties:
-- Every transaction is addressed to the device, so an I2C compliant doesn't require a
-  knock.
-- The device owns the response memory space, no back-channel is required.
-- I2C always uses command-response mode - so entering/exiting that mode is not required.
-
-> The last bullet here was very vague so I have no idea if I captured it.
+Three RBCP mechanisms are omitted due to I2C's properties:
+- Each I2C transaction is addressed to one device, so RBCP's knock isn't
+  required. [Knock mode](#knock) uses a different knock.
+- The device owns the back-channel region, so the host doesn't configure it
+  with ENTER_CMD_RESP.
+- ORICP always uses command-response mode, so entering and leaving that mode
+  isn't required.
 
 ---
 
 ## Terminology
-
-> Rewritten.
 
 **Host:** The I2C master that sends ORICP commands. This is the host referred
 to by RBCP command definitions.
@@ -86,92 +74,97 @@ to by RBCP command definitions.
 computer the host. ORICP calls it the system because it may be different to
 the host (the I2C master).
 
-**Transaction:** One I2C start to stop addressed to the device. A register
-write, a repeated start and a read together are one transaction.
+**Transaction:** One I2C sequence from start to stop. It is one of:
+- a write
+- a read
+- a write, a repeated start and a read.
 
 **Register pointer:** The byte after the address in a write. It selects what
 the transaction's remaining bytes are, and where a following read begins.
 
-**Command frame:** The GROUP, CMD and argument bytes of one RBCP command, as
-RBCP defines them.
+**RBCP command frame:** The GROUP, CMD and argument bytes of one RBCP command,
+as RBCP's [Command
+Framing](https://github.com/piersfinlayson/rom-bus-control-protocol/blob/main/spec/rbcp.md#command-framing)
+defines them.
 
-> left, but needs correcting.
+**Back-channel region:** The response to the last command, read from register
+pointer 0x00.
 
-**Back-channel region:** 240 bytes the device owns, read at register pointers
-0x00 to 0xEF. The device writes responses there.
+**RBCP response header:** The first 8 bytes of the back-channel region.
+Contains the following fields:
+- last command
+- token
+- progress
+- response.
 
-**Response header:** The first 8 bytes of the back-channel region. Contains
-the last command, token, progress and response fields.
+**RBCP response data section:** The back-channel region from offset 8.
+Contains command-specific response data.
 
-**Response data section:** The 232 bytes of the back-channel region from
-offset 8. Contains command-specific response data.
+**Identity block:** 16 bytes read at register pointers 0xF0 to 0xFF. Contains
+the magic, the ORICP version, the bus mode, the region size and the idle
+timeout.
 
-> I like the ID block being at the end
+**Token, Progress, Response:** As RBCP defines them. The progress and response
+values are fixed by ORICP, unlike RBCP where the host defines them.
 
-**Identity block:** 16 bytes read at register pointers 0xF0 to 0xFF, saying
-what the device is and which ORICP version it implements.
+**Normal mode:** The mode for a bus used only for I2C. The device acknowledges
+its address at any time.
 
-**Token, Progress, Response:** As RBCP defines them. Their values are fixed by
-ORICP, unlike RBCP where the host defines them.
+**Knock mode:** The mode for a bus also used for other traffic. The device
+doesn't acknowledge any transaction outside a session.
 
-**Probe:** A write transaction with no register pointer, comprising:
+**Probe:** A write transaction without a register pointer, comprising:
 - start
-- the device's address with the write bit
+- a 7-bit address with the write bit
 - stop.
 
-**Knock:** Four probes in quick succession. On a shared bus the device answers
-nothing until it has heard one.
+**Knock:** Five probes that open a session in Knock mode. See
+[Knock](#knock).
 
-> What is the change of a knock being detected accidently using IEC?  I worry with random data it's high and we actually need something more complex.  Analyse.
-
-> Shared bus undefined.  I didn't feel capable of rewriting this one.
-
-**Session:** On a shared bus, the interval from a knock until the device stops
-answering. On a bus of its own the device is always in session.
+**Session:** In Knock mode, the interval from a knock until the device stops
+acknowledging. In Normal mode the device is always in session.
 
 ---
 
 ## Versioning and Compatibility
 
-ORICP uses semantic versioning.  During 0.x.y a minor increment may break
+ORICP uses semantic versioning. During 0.x.y a minor increment may break
 compatibility, and a host written against 0.Y.z interoperates with a device
 implementing 0.Y.w where w >= z.
 
-> You are type ORICP 0.1.* to RBCP 0.1.2?
+ORICP and RBCP are versioned separately:
+- The ORICP version covers the I2C transport. The device reports it in the
+  [identity block](#identity-block).
+- The RBCP version covers the commands. The device reports it in response to
+  GET_PROTOCOL_VERSION. RBCP's own versioning rules apply.
 
-This document names one RBCP version, 0.1.2. A device implementing ORICP
-0.1.x implements that version of RBCP over I2C. The device reports the RBCP
-version is response to GET_PROTOCOL_VERSION and its ORICP version in the [identity
-block](#identity-block). A host should read both, and not issue a command whose
-RBCP Since value exceeds the version the device reports.
+A device implementing ORICP 0.1 implements RBCP 0.1.3 or a later 0.1 version.
+[Relationship to RBCP](#relationship-to-rbcp) omits commands by a rule rather
+than a list, so the omissions also cover commands a later RBCP version adds.
+Every other command runs as RBCP defines it. The stop condition ends every
+frame, so a command the device doesn't implement fails without affecting the
+next.
 
 ---
 
 ## Physical Medium
 
-> Why would you take about device build in a protocol spec?
-
-> Rewritten
-
 ORICP runs on an I2C bus.
 
 - **SDA and SCL** are open-drain. The bus supplies the pull-ups. The device
-  does not supply pull-ups.
+  does not supply pull-ups. The device pins used for SDA and SCL are outside
+  the scope of this document.
 - **Bus voltage** is 3.3 V or 5 V. Care should be taken to ensure that non-5V
   tolerant pins are not used to receive 5V signals.
-- **Address:** the device answers its single 7-bit address. The default ORICP
-  address is 0x4F, but may use a different address. The configuration mechanism
+- **Address:** the device has a single 7-bit address. The default ORICP
+  address is 0x4F, but a device may use another. The configuration mechanism
   for a device's address is outside the scope of this document.
 - **Speed:** I2C standard mode, 100 kHz, and fast mode, 400 kHz.
-- **Clock stretching:** the device holds SCL low while it prepares the bytes a
-  read asks for, and for at most 2 ms within any transaction. A host allows at
-  least that. A transaction the host's own timeout ends is a failed
-  transaction, and the host repeats it.
-
-> Again with the device build.  See what I wrote above.  Make this follow that.
-
-Which of the device's pads carry SDA and SCL is a property of the device build
-and is documented with the device, not here.
+- **Clock stretching:** the device holds SCL low while it prepares the bytes of
+  a read, for at most 2 ms within any transaction. While the device writes its
+  flash, for example during an NV commit, the hold lasts until the write ends.
+  A host allows at least 2 ms. A transaction the host's own timeout ends is a
+  failed transaction, and the host repeats it.
 
 All multi-byte values are little-endian.
 
@@ -179,25 +172,31 @@ All multi-byte values are little-endian.
 
 ## Register Map
 
-> I think each (header, response data section and command frame) should say RBCP in front.
-
-> This needs redoing with what we've agreed.
-
-The register pointer selects one of three things.
+The register pointer selects what a transaction reads or writes.
 
 ```
-pointer   0x00      0x08                              0xEF  0xF0        0xFF
-          +---------+---------------------------------------+-------------+
-read      | header  |     response data section (232)       |  identity   |
-          |  (8)    |                                       |    (16)     |
-          +---------+---------------------------------------+-------------+
-write     | command |                 no effect                           |
-          |  frame  |                                                     |
-          +---------+-----------------------------------------------------+
+pointer   0x00      0x08                                 0xEF 0xF0     0xFF
+          +---------+----------------------------------------+-------------+
+read      | RBCP    | RBCP response data section,            |  identity   |
+          | response| continuing past 0xEF                   |  block      |
+          | header  |                                        |             |
+          +---------+----------------------------------------+-------------+
+write     | 0x00: RBCP command frame. Any other pointer is ignored.        |
+          +----------------------------------------------------------------+
 ```
 
-A write at pointer 0x00 carries a command frame. A write at any other pointer
-is accepted and has no effect. A read returns bytes from the pointer onward.
+Writes:
+- Two or more bytes after pointer 0x00 are an RBCP command frame.
+- Any other bytes after the pointer are ignored.
+
+Reads:
+- A read starts at the register pointer last written. The pointer is 0x00
+  when the device starts.
+- A read starting at 0x00 to 0xEF returns the back-channel region from that
+  offset to the end of the region, which may be past 0xEF.
+- A read starting at 0xF0 to 0xFF returns the identity block from that offset.
+- A read returns 0x00 for each byte past the end of the back-channel region
+  or the identity block.
 
 ---
 
@@ -205,8 +204,12 @@ is accepted and has no effect. A read returns bytes from the pointer onward.
 
 ### Sending a command
 
-One write transaction. The device's address, the register pointer 0x00, then
-the command frame. The stop condition ends the frame.
+Sending a command is done with a single write transaction consisting of:
+- the device's address
+- the register pointer 0x00
+- the RBCP command frame.
+
+The stop condition ends the frame.
 
 ```
  S | ADDR+W | A | 0x00 | A | GROUP | A | CMD | A | A0 | A | ... | An | A | P
@@ -214,21 +217,29 @@ the command frame. The stop condition ends the frame.
  S  start        A  acknowledge, from the device        P  stop
 ```
 
-The frame carries exactly the argument bytes RBCP defines for its GROUP and
-CMD. A frame of any other length is refused: the device runs the [command
-processing sequence](#command-processing-sequence) with a response of failed
-and executes nothing. The same applies to a GROUP or CMD the device does not
-implement. Every byte of the write is consumed either way.
+A frame fails if either:
+- the number of argument bytes differs from the number RBCP defines for the
+  GROUP and CMD
+- the device doesn't implement the GROUP or CMD.
 
-A frame that arrives while the device is processing a command is discarded
-without touching the header. A host issues a command only when the header
-shows the last one complete.
+A failed frame isn't executed. The device still runs the [command processing
+sequence](#command-processing-sequence) with response = failed.
 
-### Reading the back-channel
+The device acknowledges every byte of a write.
 
-A write of the register pointer, a repeated start, then a read. The device
-returns the byte at the pointer, then the following bytes, wrapping from 0xFF
-to 0x00. The host ends the read with a not-acknowledge and a stop.
+While the device is processing a command it discards any frame, including
+RBCP_RESET. A discarded frame doesn't change the header.
+
+A host waits for progress to read complete before sending the next command.
+
+### Reading
+
+Reading is done with a transaction consisting of:
+- a write of the register pointer
+- a repeated start
+- a read of the bytes from the register pointer onwards, as the [register
+  map](#register-map) defines
+- a not-acknowledge and a stop from the host.
 
 ```
  S | ADDR+W | A | PTR | A | Sr | ADDR+R | A | D[PTR] | A | D[PTR+1] | A | ... | D[n] | N | P
@@ -236,25 +247,25 @@ to 0x00. The host ends the read with a not-acknowledge and a stop.
  Sr  repeated start        N  not-acknowledge, from the host
 ```
 
-A read with no register pointer, start then the device's address with the read
-bit, begins at 0x00.
+A stop and a start in place of the repeated start work the same.
 
-The response data section is stable from the moment progress reads complete
-until the next command frame arrives. A host reads it then.
+The RBCP response data section doesn't change from when progress reads
+complete until the next command frame arrives. SLOT_PEEK and NV_PEEK data may
+instead come from the slot or NV storage at the time of the read.
 
 ### Probe
 
-A write of the address alone.
+A write containing only an address.
 
 ```
  S | ADDR+W | A | P        acknowledged: the device is in session
 
- S | ADDR+W | N | P        not acknowledged: absent, or listening on a shared bus
+ S | ADDR+W | N | P        not acknowledged: the device is absent or not in session
 ```
 
 ---
 
-## Response Header
+## RBCP Response Header
 
 The first 8 bytes of the back-channel region, read at pointer 0x00.
 
@@ -262,22 +273,23 @@ The first 8 bytes of the back-channel region, read at pointer 0x00.
 |--------|------|-------|-------------|
 | 0 | 2 | Last Command | The GROUP and CMD bytes of the most recently received command. |
 | 2 | 2 | Token | Incremented by exactly 1 on receipt of every command, LSB first, wrapping from 0xFFFF to 0x0000. |
-| 4 | 1 | Progress | 0x01 when the device has finished processing the last command, complete. 0xFE while it is processing, pending. |
-| 5 | 1 | Response | 0x01 where the last completed command succeeded, status-OK. 0xFE where it failed. |
+| 4 | 1 | Progress | Complete, 0x01, when the device has finished processing the last command. Pending, 0xFE, while it is processing. |
+| 5 | 1 | Response | Status-OK, 0x01, where the last completed command succeeded. Failed, 0xFE, where it failed. |
 | 6 | 2 | Reserved | Zero. |
 
-The fields, their meaning and the token's atomicity are RBCP's. ORICP fixes
-the complete and status-OK values, since the region holds no image data the
-host must avoid. The pending and failed values are their bitwise inverses, as
-in RBCP.
+RBCP defines:
+- the fields and their meanings
+- token atomicity
+- pending and failed as the bitwise inverses of complete and status-OK.
 
-When the device starts, the header reads as last command 0x0000, token 0,
-progress complete and response status-OK, so a host may issue a command at
-once.
+Complete and status-OK are fixed because the header isn't part of a ROM image.
+
+When the device starts, the header contains last command 0x0000, token 0,
+progress complete and response status-OK. A host may issue a command at once.
 
 ### Command Processing Sequence
 
-On receipt of a command frame the device performs, in order:
+On receipt of an RBCP command frame the device performs, in order:
 
 1. Set progress = pending
 2. Increment token, LSB first
@@ -286,68 +298,82 @@ On receipt of a command frame the device performs, in order:
 5. Set response = status-OK or failed
 6. Set progress = complete
 
-The device processes one command at a time.
+The device processes one ORICP command at a time.
 
 ### Host Polling Sequence
 
 To issue a command the host:
 
 1. Reads the token LSB
-2. Sends the command frame
+2. Sends the RBCP command frame
 3. Polls the token LSB until it differs from the value read
 4. Polls progress until it reads complete
 5. Reads response
 6. Reads any command-specific response data
 
-Steps 3 to 6 are the same read at pointer 0x00, extended to the data the host
-wants. A single read of 8 bytes serves steps 3 to 5 together.
+Steps 3 to 6 are the same read at pointer 0x00, extended to the data
+required. A single read of 8 bytes serves steps 3 to 5 together.
 
 ---
 
 ## Bus Modes
 
-A device is built for one of two bus modes. The [identity
-block](#identity-block) reports which.
+A device uses Normal or Knock bus mode. The bus mode is in the [identity
+block](#identity-block).
 
-### Plain
+### Normal
 
-The bus carries I2C traffic alone. The device acknowledges its address from
-the moment it starts and every transaction is answered. A probe succeeds at
-any time. The knock is unnecessary and harmless.
+The bus is used only for I2C. The device acknowledges its address from the
+moment it starts and ignores a knock.
 
-### Shared
+### Knock
 
-The bus also carries traffic that is not I2C, such as the serial bus of the
-system the device is fitted in, whose lines a host may drive as SDA and SCL. An
-I2C slave that acknowledged its address would answer that traffic whenever
-eight bits of it happened to match, and hang the bus by holding a line low.
-In shared mode the device acknowledges nothing outside a session.
+The bus is also used for other traffic. For example, it may be an IEC serial
+bus with two of its lines used as SCL and SDA. That traffic can match the
+device's address by chance. Outside a session the device doesn't drive SDA or
+SCL.
 
-A host opens a session with a knock: four probes, each starting within 10 ms
-of the previous one ending. None of the four is acknowledged. The device
-acknowledges the next transaction addressed to it, and every one after that,
-for the length of the session. A host that probes repeatedly until it is
-acknowledged has knocked.
+A host opens a session with a knock:
+- The knock is five probes to 0x4F, 0x52, 0x49, 0x43 and 0x50 in that order.
+  These are the ASCII codes of `ORICP`.
+- Each probe starts within 10 ms of the previous one ending.
+- Any other transaction between the probes restarts the knock.
+- A probe to 0x4F always starts a new knock.
+- A probe counts whether or not the device acknowledges it.
+
+After the fifth probe the device acknowledges every transaction addressed to
+it until the session ends.
 
 ```
-  S ADDR+W N P   S ADDR+W N P   S ADDR+W N P   S ADDR+W N P   S ADDR+W A P ...
-  |<--- 10 ms -->|<--- 10 ms -->|<--- 10 ms -->|             answered from here
+ S 0x4F+W N P  S 0x52+W N P  S 0x49+W N P  S 0x43+W N P  S 0x50+W N P  S ADDR+W A P
+              ^             ^             ^             ^              ^
+              each gap under 10 ms                                     session open
 ```
 
-A session ends when the device receives RBCP_RESET, or when 500 ms pass with
-no transaction addressed to it. The device then returns to listening and the
-next session needs a knock.
+A session ends when one of these occurs:
+- the device runs an RBCP_RESET from the host
+- a transaction to any other address starts
+- the idle timeout passes without a transaction addressed to the device.
 
-The host is responsible for the bus being free of other traffic for the whole
-of a session. Traffic from a third party during a session corrupts the
-transaction it lands in, which the host sees as a not-acknowledge or a failed
-command and repeats after RBCP_RESET and a fresh knock.
+The [identity block](#identity-block) reports the idle timeout.
+
+After a session ends, the device doesn't acknowledge any transaction until the
+next knock.
+
+The host keeps the bus free of other traffic during a session. Other traffic
+can:
+- end the session
+- make a transaction fail with a not-acknowledge or a failed response
+- corrupt the bytes of a transaction without it failing.
+
+After a failure the host issues another knock then reads the header to check
+whether the last command ran.
 
 ---
 
 ## Identity Block
 
-Sixteen bytes read at pointer 0xF0. The device answers them in every session,
+Sixteen bytes read at pointer 0xF0. They are the same in every session,
 before and after any command.
 
 | Offset | Size | Field | Description |
@@ -356,97 +382,99 @@ before and after any command.
 | 4 | 1 | major | ORICP major version. |
 | 5 | 1 | minor | ORICP minor version. |
 | 6 | 1 | patch | ORICP patch version. |
-| 7 | 1 | flags | Bit 0: the device is in shared bus mode. Bits 1 to 7 zero. |
-| 8 | 2 | region_size | Size of the back-channel region in bytes, 240. |
-| 10 | 6 | Reserved | Zero. |
+| 7 | 1 | flags | Bit 0: set in Knock mode, clear in Normal mode. Bits 1 to 7 reserved. |
+| 8 | 2 | region_size | Size of the back-channel region in bytes, at least 64. |
+| 10 | 1 | idle_timeout | The session idle timeout in Knock mode, 1 to 255, in units of 10 ms. Zero in Normal mode. |
+| 11 | 5 | Reserved | Zero. |
 
-A host scanning a bus recognises a One ROM by the magic and reads the rest
-before it issues a command.
+Reserved bits and bytes are zero. A host ignores them.
+
+A host identifies a One ROM by the magic and reads the rest before it issues
+a command.
 
 ---
 
 ## Command Set
 
-Commands are RBCP's. This section says which RBCP definitions apply and how
-RBCP's terms map onto ORICP. It defines no command of its own.
+ORICP uses the RBCP command set and doesn't define any commands of its own.
 
-| GROUP | Name | ORICP |
-|-------|------|-------|
-| 0x00 | Control | NOP alone. |
+| GROUP | Name | ORICP at RBCP 0.1.3 |
+|-------|------|---------------------|
+| 0x00 | Control | NOP only. |
 | 0x01 | Read | As RBCP. |
 | 0x02 | Modify | As RBCP. |
 | 0x03 | NV Storage | As RBCP. |
 | 0x04 | Pipes | As RBCP. |
-| 0x05 | Auxiliary I/O | As RBCP. |
+| 0x05 | Auxiliary I/O | As RBCP, without SET_AUX_AND_EXIT and SET_AUX_SWITCH_EXIT. |
 | 0x06 | LEDs | As RBCP. |
-| 0xAA | Reset | As RBCP. On a shared bus RBCP_RESET also ends the session. |
+| 0xAA | Reset | RBCP_RESET, as below. |
 
-Where RBCP says a command is valid in command-response mode only, it is valid
-in ORICP. ORICP has one mode, and it is that one.
+RBCP commands limited to command-response mode are valid in ORICP.
 
-The commands RBCP defines for entering, leaving and restoring after
-command-response mode have no meaning on I2C and the device does not implement
-them: ENTER_CMD_RESP, EXIT_CMD_RESP_ACK, EXIT_CMD_RESP_SILENT, SWITCH_AND_EXIT,
-LOAD_AND_EXIT and EXIT_CMD_RESP_RESTORE. A host uses SWITCH_SLOT and LOAD_SLOT
-in their place. SET_AUX_AND_EXIT and SET_AUX_SWITCH_EXIT are not implemented
-for the same reason, and a host issues SET_AUX and SWITCH_SLOT as two commands.
-A frame naming any of these fails as an unknown command does.
+The following are unchanged from RBCP:
+- argument rules, including 0xAA being invalid in a final argument
+- response formats and value tables.
 
-RBCP's argument rules apply unchanged, including that 0xAA is invalid in a
-final argument. The response formats and value tables are RBCP's, read from
-the response data section at offset 8 of the back-channel region. The region
-is 240 bytes, so a command RBCP defines as failing where the response data
-section is too small fails at 232 bytes: SLOT_PEEK, NV_PEEK and PIPE_READ with
-a count of zero, which means 256, fail, and GET_FLASH_SLOT_INFO_ALL returns
-what fits and reports the rest as RBCP describes.
+Where an RBCP command depends on the back-channel region size, the size is
+region_size from the identity block. The RBCP response data section is 8
+bytes smaller.
 
-RBCP_RESET resets the device's ORICP state and updates no header field. The
-host then reads the header before issuing a further command.
+RBCP_RESET:
+- discards an NV write transaction in progress over I2C
+- doesn't run the [command processing sequence](#command-processing-sequence)
+  or change the header
+- ends the session in Knock mode.
+
+A host doesn't poll for the token to change after RBCP_RESET.
 
 ---
 
 ## Coexistence with RBCP
 
-A device may carry RBCP on its ROM bus and ORICP on I2C at the same time. The
-two are separate sessions, each with its own back-channel and its own state,
-and a command on one may execute while a command on the other does. Both act
-on the device's slots, pins, LEDs and pipes through the device, which applies
-each change in the order it receives it. A pipe is read by one session at a
-time: PIPE_READ on a pipe the other session is reading fails, and writes to a
-pipe from both sessions interleave. RBCP_RESET on one session leaves the other
-as it was.
+A device may implement RBCP on its ROM bus and ORICP on I2C simultaneously.
+
+- Each transport has a separate back-channel region and state.
+- A command over one transport may execute while a command over another
+  does.
+- Commands over every transport act on the same slots, NV storage, pins, LEDs
+  and pipes.
+- The device applies changes in the order it receives them.
+- RBCP_RESET over one transport doesn't affect any other.
+- While an NV write transaction begun over one transport is in progress,
+  commands over any other transport that start or use an NV write transaction
+  fail.
+- PIPE_WRITE commands over different transports interleave and the bytes of
+  each stay together.
+- IN bytes from a pipe go to the transport of the first PIPE_READ on it until
+  the device restarts. PIPE_READ on that pipe over any other transport fails.
 
 ---
 
 ## Example — Loading and Switching a Kernal
 
-This illustrates an ORICP session in which a host loads a ROM image into a
-RAM slot and switches the system to it. It is illustrative rather than
-normative.
+This example isn't normative.
 
-1. **Knock**, on a shared bus: probe until acknowledged.
-2. **Identify.** Read 16 bytes at 0xF0. Check the magic and the ORICP version.
-3. **Check the command set.** Issue GET_PROTOCOL_VERSION. Read the RBCP
-   version from the response data section.
-4. **Find a slot.** Issue GET_RAM_SLOT_INFO_ALL. Choose a RAM slot other than
-   the active one.
-5. **Load the image.** Either issue LOAD_SLOT naming a flash slot that already
-   holds it, or issue SLOT_POKE once per byte, polling the header after each.
-6. **Switch.** Issue SWITCH_SLOT naming the RAM slot. The system now reads the
-   new image.
-7. **Restart the system**, where the image is one the system must boot into.
-   Where a device pin is wired to the system's reset line, issue SET_AUX to
-   pulse it. Otherwise the host resets the system by its own means.
-8. **End the session** with RBCP_RESET.
+1. In Knock mode, issue a knock.
+2. Read 16 bytes at 0xF0. Check the magic and the ORICP version.
+3. Issue GET_PROTOCOL_VERSION. Read the RBCP version from the RBCP response
+   data section.
+4. Issue GET_RAM_SLOT_INFO_ALL. Choose a RAM slot other than the active one.
+5. Load the image into that RAM slot with LOAD_SLOT from a flash slot
+   containing it or with SLOT_POKE once per byte.
+6. Hold the system in reset. Use SET_AUX where a device pin is wired to the
+   system's reset line.
+7. Issue SWITCH_SLOT for the RAM slot.
+8. Release the reset the same way. The system boots the new image.
+9. In Knock mode, end the session with RBCP_RESET.
 
-Each command follows the [host polling sequence](#host-polling-sequence).
+Each command except RBCP_RESET follows the [host polling
+sequence](#host-polling-sequence).
 
 ---
 
 ## Attribution
 
-ORICP is a transport for the [ROM Bus Control
-Protocol](https://github.com/piersfinlayson/rom-bus-control-protocol), whose
-command set it carries. The use case that shaped it, a drive emulator loading a
-kernal into a One ROM over I2C, came from [Jaime
-Idolpx](https://github.com/idolpx).
+ORICP is an I2C transport for the [ROM Bus Control
+Protocol](https://github.com/piersfinlayson/rom-bus-control-protocol). The use
+case that shaped it, a drive emulator loading a kernal into a One ROM over I2C,
+came from [Jaime Idolpx](https://github.com/idolpx).

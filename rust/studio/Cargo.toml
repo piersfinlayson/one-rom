@@ -1,6 +1,6 @@
 [package]
 name = "onerom-studio"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 default-run = "onerom-studio"
 # Released as installers via studio-* tags, never to crates.io.
@@ -69,7 +69,7 @@ onerom-app = { workspace = true }
 onerom-cli = { workspace = true }
 onerom-config = { workspace = true, features = ["schemars"] }
 onerom-fw = { workspace = true }
-onerom-fw-parser = { workspace = true }
+onerom-fw-parser = { workspace = true, features = ["std"] }
 onerom-gen = { workspace = true }
 onerom-metadata = { workspace = true }
 

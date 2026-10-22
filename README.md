@@ -321,7 +321,7 @@ published are on crates.io, for host-side Rust development.
 |-------|:---------:|----------------|
 | [`onerom-gen`](rust/gen) | ✓ | Generates ROM images and firmware metadata.  The heart of the toolchain — turns a config plus some ROM files into something flashable. |
 | [`onerom-config`](rust/config) | ✓ | The config model: chip types, board definitions, pin maps, JSON schema. |
-| [`onerom-fw`](rust/fw) | ✓ | Composes a complete firmware image, resolving and fetching base firmware from the release manifest. |
+| [`onerom-fw`](rust/fw) | ✓ | Fetches One ROM base firmware and ROM images. |
 | [`onerom-fw-parser`](rust/fw-parser) | ✓ | Reads metadata back out of a firmware binary — what chips, what board, what version. |
 | [`onerom-metadata`](rust/metadata) | ✓ | The embedded metadata schema itself. |
 | [`onerom-lab-metadata`](rust/lab-metadata) | ✓ | One ROM Lab's metadata structures. |
@@ -336,6 +336,7 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-fw-emulator`](rust/fw-emulator) | | Compiles and runs the real firmware C on a host, PIOs and all. |
 | [`onerom-fw-tester`](rust/fw-tester) | | Drives the emulator with generated configurations and checks the results. |
 | [`onerom-plugin-tester`](rust/plugin-tester) | | The harness a plugin tester is built from — runs a plugin's own C against the emulated firmware. |
+| [`onerom-rbcp-host`](rust/rbcp-host) | | An RBCP host. One ROM Lab uses it to query a One ROM over the ROM bus. |
 | [`onerom-rbcp-tester`](rust/rbcp-tester) | | Drives the host-control plugin over emulated ROM bus cycles, as an RBCP host would. |
 | [`onerom-usb-tester`](rust/usb-tester) | | Drives the USB system plugin's commands, log forwarding and GPIO control. |
 | [`onerom-fw-driver`](rust/fw-driver), [`onerom-fw-geometry`](rust/fw-geometry) | | Pin geometry and GPIO bitmask helpers, shared and dependency-free by design. |

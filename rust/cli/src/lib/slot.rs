@@ -805,12 +805,7 @@ pub fn inject_plugins_into_config(
     let mut config: Config = serde_json::from_str(&json)
         .map_err(|e| Error::Other(format!("Failed to parse config JSON: {e}")))?;
 
-    if config
-        .chip_sets
-        .iter()
-        .flat_map(|cs| cs.chips.iter())
-        .any(|c| c.chip_type.resolved().is_plugin())
-    {
+    if defines_plugin(&config) {
         return Err(Error::Other(
             "The config file already defines a plugin. Remove it from the config \
              or drop --plugin."
@@ -876,6 +871,15 @@ pub fn saved_config_json(
 /// Save a config JSON string to a file.
 pub fn save_config(path: &str, json: &str) -> Result<(), Error> {
     std::fs::write(path, json).map_err(|e| Error::io(path, e))
+}
+
+/// Whether the config places a plugin of either type.
+pub fn defines_plugin(config: &Config) -> bool {
+    config
+        .chip_sets
+        .iter()
+        .flat_map(|set| set.chips.iter())
+        .any(|chip| chip.chip_type.resolved().is_plugin())
 }
 
 /// Whether the config places a system plugin, and so gives the device a USB

@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.3] - unreleased
+
+With firmware 0.8.1, a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the serial port.  The USB plugin then sends only that plugin's output without any banner.  Logging can instead be retrieved using picoboot.
+
+USB DPRAM can be read over picobootx.
+
 ## [0.3.2] - 2026-10-06
 
 Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.

@@ -45,7 +45,7 @@
 //! device had left.
 
 use crate::driver::{
-    Bus, CmdFailure, HDR_SIZE, Hdr, Session, control, group, read, slot_peek_args,
+    Bus, CmdFailure, HDR_SIZE, Hdr, POLL_LIMIT, Session, control, group, read, slot_peek_args,
 };
 use crate::{Ctx, Outcome};
 
@@ -1171,5 +1171,183 @@ pub fn load_and_exit_slot_aa_loads_nothing_but_exits(
         }
     }
 
+    Ok(Outcome::Pass)
+}
+
+/// REBOOT's mode values, from "Reboot Modes".
+const REBOOT_NORMAL: u8 = 0x00;
+const REBOOT_BOOTLOADER: u8 = 0x01;
+
+/// A REBOOT delay in the protocol's 10ms units.
+const REBOOT_DELAY: u8 = 0x05;
+
+/// REBOOT's arguments for `mode` and `delay`.
+fn reboot_args(mode: u8, delay: u8) -> [u8; 9] {
+    let mut args = [0u8; 9];
+    args[0] = mode;
+    args[8] = delay;
+    args
+}
+
+/// Check the firmware scheduled this bootrom reboot.
+fn expect_rebooted(bus: &Bus, mode: u8, delay: u8, what: &str) -> Result<(), String> {
+    let want = Some((mode == REBOOT_BOOTLOADER, u32::from(delay) * 10));
+    let got = bus.rom_reboot();
+    if got != want {
+        return Err(format!(
+            "{what}: the firmware scheduled bootrom reboot {got:?}, not {want:?} \
+             (bootloader, delay in ms)"
+        ));
+    }
+    Ok(())
+}
+
+/// REBOOT in command-response mode completes, schedules a reboot into `mode`
+/// and leaves the device taking no further commands.
+///
+/// "In command-response mode the device completes the command processing
+/// sequence before the delay starts. ... During the delay the device continues
+/// to serve the active slot and does not process further commands."  The
+/// emulated firmware records the reboot and never reboots, so the delay never
+/// ends.
+fn reboot_in_session(bus: &mut Bus, ctx: &Ctx, mode: u8) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.rom_reboot();
+
+    bus.issue_cmd(
+        &s,
+        group::CONTROL,
+        control::REBOOT,
+        &reboot_args(mode, REBOOT_DELAY),
+    )
+    .map_err(|e| format!("REBOOT mode {mode}: {e}"))?;
+    expect_rebooted(bus, mode, REBOOT_DELAY, &format!("REBOOT mode {mode}"))?;
+
+    expect_no_session_during_delay(bus, ctx)?;
+    Ok(Outcome::Pass)
+}
+
+/// Require a knocked SLOT_POKE after REBOOT to have no effect.
+///
+/// REBOOT ends any command-response session, so a command-mode session is the
+/// one a device not honouring the delay would take.
+fn expect_no_session_during_delay(bus: &mut Bus, ctx: &Ctx) -> Result<(), String> {
+    let addr = ctx.probe_addr();
+    let value = bus.read(addr)? ^ 0xFF;
+    bus.knock(ctx.command_page())?;
+    bus.send_poke(ctx, addr, value)?;
+    if bus.await_byte(addr, value).is_ok() {
+        return Err("a command-mode SLOT_POKE after REBOOT was processed during the delay".into());
+    }
+    Ok(())
+}
+
+pub fn reboot_normal(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    reboot_in_session(bus, ctx, REBOOT_NORMAL)
+}
+
+pub fn reboot_bootloader(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    reboot_in_session(bus, ctx, REBOOT_BOOTLOADER)
+}
+
+/// REBOOT in command mode schedules a reboot, and the device then takes no
+/// further command-mode session.
+pub fn reboot_in_command_mode(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    bus.rom_reboot();
+    bus.knock(ctx.command_page())?;
+    bus.send_cmd(
+        ctx.command_page(),
+        group::CONTROL,
+        control::REBOOT,
+        &reboot_args(REBOOT_NORMAL, REBOOT_DELAY),
+    )?;
+
+    // Reads move the emulated device on.  There is no response to poll.
+    let addr = ctx.probe_addr();
+    let mut got = None;
+    for _ in 0..POLL_LIMIT {
+        bus.read(addr)?;
+        got = bus.rom_reboot();
+        if got.is_some() {
+            break;
+        }
+    }
+    let want = Some((false, u32::from(REBOOT_DELAY) * 10));
+    if got != want {
+        return Err(format!(
+            "command-mode REBOOT: the firmware scheduled bootrom reboot {got:?}, not {want:?} \
+             (bootloader, delay in ms)"
+        ));
+    }
+
+    expect_no_session_during_delay(bus, ctx)?;
+    Ok(Outcome::Pass)
+}
+
+/// A REBOOT the firmware can't schedule fails, and the session continues.
+///
+/// "Fails if the mode is not one the device supports."  A device that can't
+/// reboot supports no mode.
+pub fn reboot_fails_when_the_reboot_does(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.set_rom_reboot_fails(true);
+
+    match bus.issue_cmd(
+        &s,
+        group::CONTROL,
+        control::REBOOT,
+        &reboot_args(REBOOT_NORMAL, REBOOT_DELAY),
+    ) {
+        Err(CmdFailure::Failed) => {}
+        Ok(()) => return Err("REBOOT succeeded with the firmware unable to reboot".into()),
+        Err(e) => return Err(format!("REBOOT: {e}")),
+    }
+    bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+        .map_err(|e| format!("NOP after a failed REBOOT: {e}"))?;
+    Ok(Outcome::Pass)
+}
+
+/// REBOOT fails for an unsupported mode, non-zero parameters or a delay of 0xAA.
+///
+/// "Fails if the mode is not one the device supports, or if the parameters are
+/// not valid for the mode. An A8 value of 0xAA is invalid and rejected."  Both
+/// defined modes require A1-A7 to be zero.  The NOP after each failure checks
+/// the session is still open and the arguments were consumed.
+pub fn reboot_fails_for_invalid_arguments(bus: &mut Bus, ctx: &Ctx) -> Result<Outcome, String> {
+    let mut cases: Vec<(String, [u8; 9])> = vec![
+        ("reserved mode 0x02".into(), reboot_args(0x02, REBOOT_DELAY)),
+        (
+            "implementation mode 0x80".into(),
+            reboot_args(0x80, REBOOT_DELAY),
+        ),
+        ("delay 0xAA".into(), reboot_args(REBOOT_NORMAL, 0xAA)),
+    ];
+    for i in 1..8 {
+        let mut args = reboot_args(REBOOT_NORMAL, REBOOT_DELAY);
+        args[i] = 0x01;
+        cases.push((format!("A{i} non-zero"), args));
+    }
+
+    let s = ctx.session();
+    bus.enter_cmd_resp(&s)
+        .map_err(|e| format!("ENTER_CMD_RESP: {e}"))?;
+    bus.rom_reboot();
+
+    for (what, args) in &cases {
+        match bus.issue_cmd(&s, group::CONTROL, control::REBOOT, args) {
+            Err(CmdFailure::Failed) => {}
+            Ok(()) => return Err(format!("REBOOT with {what} succeeded")),
+            Err(e) => return Err(format!("REBOOT with {what}: {e}")),
+        }
+        if let Some(got) = bus.rom_reboot() {
+            return Err(format!("REBOOT with {what} failed but rebooted {got:?}"));
+        }
+        bus.issue_cmd(&s, group::CONTROL, control::NOP, &[])
+            .map_err(|e| format!("NOP after REBOOT with {what}: {e}"))?;
+    }
     Ok(Outcome::Pass)
 }
