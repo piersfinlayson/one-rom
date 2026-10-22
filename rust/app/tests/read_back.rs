@@ -33,8 +33,9 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Base firmware that is a bare `onerom_info_t` pointing at the metadata.
-fn base_firmware() -> Vec<u8> {
+/// `version` base firmware that is a bare `onerom_info_t` pointing at the
+/// metadata.
+fn base_firmware(version: FirmwareVersion) -> Vec<u8> {
     let mut image = vec![0u8; 0x1000];
     let base = SDRR_INFO_FW_OFFSET as usize;
     let mut put = |offset: usize, bytes: &[u8]| {
@@ -43,7 +44,11 @@ fn base_firmware() -> Vec<u8> {
     put(0, ONEROM_FAMILY_MAGIC.as_bytes());
     put(
         ONEROM_INFO_MINOR_VERSION_OFFSET,
-        &VERSION.minor().to_le_bytes(),
+        &version.minor().to_le_bytes(),
+    );
+    put(
+        ONEROM_INFO_PATCH_VERSION_OFFSET,
+        &version.patch().to_le_bytes(),
     );
     // The build date, in the zeroed page after the header.
     put(
@@ -66,33 +71,35 @@ fn overrides() -> ConfigOverrides {
     ConfigOverrides::default().allow_turbo_boot_multi_slot(true)
 }
 
-fn props(board: Board, size: BoardSize) -> FirmwareProperties {
-    FirmwareProperties::new(VERSION, board, Variant::RP2350, ServeAlg::Default, false)
+fn props(version: FirmwareVersion, board: Board, size: BoardSize) -> FirmwareProperties {
+    FirmwareProperties::new(version, board, Variant::RP2350, ServeAlg::Default, false)
         .unwrap()
         .with_board_size(size)
 }
 
-/// The metadata and ROM data `json` builds on `board`, its files read from the
-/// repository. `None` where it doesn't build there.
+/// The metadata and ROM data `json` builds on `board` at the current release,
+/// its files read from the repository. `None` where it doesn't build there.
 fn build(json: &str, board: Board, size: BoardSize) -> Option<(Vec<u8>, Vec<u8>)> {
     let (mut builder, _) =
-        Builder::from_json_with_overrides(VERSION, Family::Rp2350, json, &overrides()).unwrap();
+        Builder::from_json_with_overrides(FIRMWARE_RELEASE, Family::Rp2350, json, &overrides())
+            .unwrap();
     for spec in builder.file_specs() {
         assert!(spec.extract.is_none(), "{}", spec.source);
         let data = std::fs::read(repo_root().join(&spec.source)).unwrap();
         builder.add_file(FileData::new(spec.id, data)).unwrap();
     }
-    builder.build(props(board, size)).ok()
+    builder.build(props(FIRMWARE_RELEASE, board, size)).ok()
 }
 
-/// The metadata and ROM data `read_back` builds on `board`.
+/// The metadata and ROM data `read_back` builds on `board` at its own version.
 fn rebuild(read_back: &ReadBack, board: Board, size: BoardSize) -> (Vec<u8>, Vec<u8>) {
+    let version = read_back.version;
     let json = serde_json::to_string(&read_back.config).unwrap();
     let (mut builder, _) =
-        Builder::from_json_with_overrides(VERSION, Family::Rp2350, &json, &overrides())
+        Builder::from_json_with_overrides(version, Family::Rp2350, &json, &overrides())
             .unwrap_or_else(|e| panic!("{e}\n{json}"));
     read_back.add_files(&mut builder).unwrap();
-    builder.build(props(board, size)).unwrap()
+    builder.build(props(version, board, size)).unwrap()
 }
 
 /// Runs a future to completion. Everything here is in memory and never
@@ -134,11 +141,16 @@ fn image_2364() -> Vec<u8> {
     builder
         .add_file(FileData::new(0, vec![0x5a; 8192]))
         .unwrap();
-    let props = props(Board::Fire24F, BoardSize::M);
+    let props = props(VERSION, Board::Fire24F, BoardSize::M);
     let (metadata, roms) = builder.build(props).unwrap();
-    block_on(assemble_image(&props, base_firmware(), metadata, roms))
-        .unwrap()
-        .image
+    block_on(assemble_image(
+        &props,
+        base_firmware(VERSION),
+        metadata,
+        roms,
+    ))
+    .unwrap()
+    .image
 }
 
 /// A published plugin's slot, reused, rebuilds byte for byte with the data
@@ -155,11 +167,16 @@ fn a_reused_plugin_slot_rebuilds_identically() {
     builder
         .add_file(FileData::new(1, vec![0x5a; 8192]))
         .unwrap();
-    let props = props(Board::Fire24F, BoardSize::M);
+    let props = props(VERSION, Board::Fire24F, BoardSize::M);
     let (metadata, roms) = builder.build(props).unwrap();
-    let mut image = block_on(assemble_image(&props, base_firmware(), metadata, roms))
-        .unwrap()
-        .image;
+    let mut image = block_on(assemble_image(
+        &props,
+        base_firmware(VERSION),
+        metadata,
+        roms,
+    ))
+    .unwrap()
+    .image;
 
     let mut reader = MemoryReader::new(image.clone(), RP235X_BASE_FLASH);
     let parsed = block_on(
@@ -175,9 +192,14 @@ fn a_reused_plugin_slot_rebuilds_identically() {
     assert_eq!(plugins.len(), 1);
     read_back.reuse_plugin_slots();
     let (metadata, roms) = rebuild(&read_back, Board::Fire24F, BoardSize::M);
-    let rebuilt = block_on(assemble_image(&props, base_firmware(), metadata, roms))
-        .unwrap()
-        .image;
+    let rebuilt = block_on(assemble_image(
+        &props,
+        base_firmware(VERSION),
+        metadata,
+        roms,
+    ))
+    .unwrap()
+    .image;
     assert!(rebuilt == image);
     assert_eq!(block_on(read_back_file(&rebuilt)).unwrap().plugins, plugins);
 }
@@ -237,7 +259,7 @@ fn newer_firmware_fails_with_its_version() {
         &(ONEROM_INFO_VERSION + 1).to_le_bytes(),
     );
     let past_parser = with_info(
-        base_firmware(),
+        base_firmware(VERSION),
         ONEROM_INFO_MINOR_VERSION_OFFSET,
         &9u16.to_le_bytes(),
     );
@@ -279,7 +301,8 @@ fn an_unknown_value_fails_with_the_firmware_version() {
     assert_eq!(e, ReadBackError::FirmwareTooNew { version: VERSION });
 }
 
-/// Builds `path` on every board, reads each image back, rebuilds and compares.
+/// Builds `path` on every board at the current release, so a config can use
+/// every setting, reads each image back, rebuilds and compares.
 /// Returns how many boards it built on.
 fn round_trip(path: &Path) -> usize {
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
@@ -295,8 +318,8 @@ fn round_trip(path: &Path) -> usize {
         built += 1;
 
         let image = block_on(assemble_image(
-            &props(board, size),
-            base_firmware(),
+            &props(FIRMWARE_RELEASE, board, size),
+            base_firmware(FIRMWARE_RELEASE),
             metadata.clone(),
             roms.clone(),
         ))
@@ -316,7 +339,7 @@ fn round_trip(path: &Path) -> usize {
             read_back.problems
         );
         assert_eq!(read_back.board, board, "{name}");
-        assert_eq!(read_back.version, VERSION, "{name}");
+        assert_eq!(read_back.version, FIRMWARE_RELEASE, "{name}");
 
         let (rebuilt_metadata, rebuilt_roms) = rebuild(&read_back, board, size);
         assert!(

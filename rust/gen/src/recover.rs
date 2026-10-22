@@ -39,6 +39,7 @@ use onerom_metadata::{
     FireVreg as MetadataFireVreg, MaybeKnown, OneromAlgAddrConfig, OneromAlgConfig,
     OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig, OneromFirmwareOverrides,
     OneromMetadataHeader, OneromRomInfo, OneromRomSlot, OverrideState, RomSlotType,
+    addr_mon_min_cs_act_to_ns,
 };
 
 use crate::builder::check_cs_v2;
@@ -261,6 +262,7 @@ pub fn recover_config(
     config.boot_logging = header.boot_logging != 0;
     config.swd_enabled = header.swd_enabled != 0;
     config.turbo_boot = header.turbo_boot != 0;
+    config.addr_mon_min_cs_act_ns = addr_mon_min_cs_act_to_ns(header.addr_mon_min_cs_act);
     config.reserved_pins =
         ReservedPins::from_bits(header.reserved_sel_pins, header.reserved_x_pins)
             .pins()
@@ -479,6 +481,7 @@ fn firmware_config(
             problem("standby")
         }
     }
+    fire.addr_mon_min_cs_act_ns = overrides.addr_mon_min_cs_act_ns();
 
     let mut config = FirmwareConfig::default();
     if fire != FireConfig::default() {
@@ -885,6 +888,34 @@ mod tests {
         slot.alg = Some(alg);
         slot.firmware_overrides = Some(OneromFirmwareOverrides::default());
         slot
+    }
+
+    /// The global and per-slot minimum CS-active times are recovered in
+    /// nanoseconds where set, and left unset where not.
+    #[test]
+    fn addr_mon_min_cs_act_ns_is_recovered() {
+        let recovered = |global: u8, slot_value: u8| {
+            let mut slot = known_slot();
+            slot.alg = None;
+            slot.firmware_overrides
+                .as_mut()
+                .unwrap()
+                .addr_mon_min_cs_act = slot_value;
+            let mut header = OneromMetadataHeader::default();
+            header.hw.hw_rev = Board::Fire24A.name().into();
+            header.addr_mon_min_cs_act = global;
+            header.rom_slots = vec![slot];
+            let config = recover_config(&header, &[None]).unwrap().config;
+            let slot_ns = config.chip_sets[0]
+                .firmware_overrides
+                .as_ref()
+                .and_then(|overrides| overrides.fire.as_ref())
+                .and_then(|fire| fire.addr_mon_min_cs_act_ns);
+            (config.addr_mon_min_cs_act_ns, slot_ns)
+        };
+        assert_eq!(recovered(15, 30), (Some(150), Some(300)));
+        let not_set = onerom_metadata::ADDR_MON_MIN_CS_ACT_NOT_SET;
+        assert_eq!(recovered(not_set, not_set), (None, None));
     }
 
     /// Each unrecognised value recovery reads fails with its slot and field.
