@@ -72,7 +72,7 @@ unsafe extern "C" {
 mod driver;
 mod suites;
 
-use driver::Bus;
+use driver::{Bus, CsCycles};
 
 /// Where the plugin's capture ring is placed in emulated SRAM: above the
 /// served region, aligned to the ring's own size.
@@ -258,8 +258,8 @@ fn main() {
         .unwrap_or_else(|e| panic!("Failed to parse config '{config_path}': {e}"));
 
     let modes = modes_to_run(&config);
-    let cs_active = cs_active_cycles(&config, board, &base_dir, log_enabled)
-        .unwrap_or_else(|e| panic!("Failed to work out the chip select hold: {e}"));
+    let cs = cs_cycles(&config, board, &base_dir, log_enabled)
+        .unwrap_or_else(|e| panic!("Failed to work out the chip select timing: {e}"));
 
     let mut tally = Tally::new();
 
@@ -284,8 +284,7 @@ fn main() {
             // once per mode the chip supports, as the PIO tester does.
             for &mode in modes {
                 let label = format!("{} [{mode}-bit]", sc.name);
-                let result =
-                    run_scenario(sc, board, &config, &base_dir, log_enabled, mode, cs_active);
+                let result = run_scenario(sc, board, &config, &base_dir, log_enabled, mode, cs);
                 tally.record(&label, sc.spec_ref, result);
             }
         }
@@ -370,17 +369,19 @@ fn native_word_size(config: &Config) -> u8 {
         .unwrap_or(8)
 }
 
-/// Cycles the host holds chip select active for one read. A served slot's
-/// minimum CS-active time can lengthen it past [`driver::CS_ACTIVE_CYCLES`].
-fn cs_active_cycles(
+/// How long the host holds chip select each way for one read.  A served
+/// slot's minimum CS-active time can lengthen the hold past
+/// [`driver::CS_ACTIVE_CYCLES`], and the break so the CS monitor is sampling
+/// for the next read in time.
+fn cs_cycles(
     config: &Config,
     board: Board,
     base_dir: &Path,
     log_enabled: bool,
-) -> Result<u32, String> {
+) -> Result<CsCycles, String> {
     let set = served_set(config).ok_or("config has no chip sets")?;
     let Some(ns) = min_cs_act::slot_min_cs_act_ns(config, set) else {
-        return Ok(driver::CS_ACTIVE_CYCLES);
+        return Ok(CsCycles::DEFAULT);
     };
     let version = geometry::firmware_version(board, log_enabled)?;
     let header = geometry::build_header(config, board, version, base_dir)?;
@@ -392,7 +393,10 @@ fn cs_active_cycles(
     let cs = min_cs_act::Cs::from_metadata(&alg.alg_cs)?;
     let mhz = min_cs_act::slot_sysclk_mhz(set.firmware_overrides.as_ref());
     let min_cycles = min_cs_act::min_cycles(ns, u32::from(mhz));
-    Ok(driver::CS_ACTIVE_CYCLES.max(min_cs_act::access_cycles(cs, Some(min_cycles))))
+    Ok(CsCycles {
+        active: driver::CS_ACTIVE_CYCLES.max(min_cs_act::access_cycles(cs, Some(min_cycles))),
+        inactive: min_cs_act::break_cycles(cs, Some(min_cycles)),
+    })
 }
 
 /// Why the RBCP driver cannot exercise a chip type, if it cannot.
@@ -424,7 +428,7 @@ fn run_scenario(
     base_dir: &Path,
     log_enabled: bool,
     word_size: u8,
-    cs_active: u32,
+    cs: CsCycles,
 ) -> Result<Outcome, String> {
     let plugin_sets = plugin_sets(config);
     let set_idx = plugin_sets + SEL_IMAGE as usize;
@@ -541,9 +545,7 @@ fn run_scenario(
     };
 
     let cache = PinCache::build(chip_type, chip, board);
-    let mut bus = Bus::new(
-        &emu, &plugin, &cache, chip_type, unobserved, word_size, cs_active,
-    );
+    let mut bus = Bus::new(&emu, &plugin, &cache, chip_type, unobserved, word_size, cs);
 
     // Settle before the first access, as the other testers do.
     emu.step_cycles(timing::CYCLES_BEFORE_START);

@@ -191,6 +191,25 @@ pub(crate) const CS_ACTIVE_CYCLES: u32 = 17;
 /// pass.
 const CYCLES_AFTER_READ: u32 = 3;
 
+/// How long the host holds chip select each way for one read.
+#[derive(Debug, Clone, Copy)]
+pub struct CsCycles {
+    /// Cycles CS is held active.
+    pub active: u32,
+    /// The fewest cycles CS is inactive between reads.  The host's own break
+    /// is used where it is longer.
+    pub inactive: u32,
+}
+
+impl CsCycles {
+    /// The bus timing where the served slot doesn't have a minimum CS-active
+    /// time.
+    pub(crate) const DEFAULT: Self = Self {
+        active: CS_ACTIVE_CYCLES,
+        inactive: 0,
+    };
+}
+
 /// Which step of the host polling sequence failed.
 ///
 /// The reference host distinguishes these because they mean different things:
@@ -351,6 +370,8 @@ pub struct Bus<'a> {
     cs_to_data: u32,
     /// Cycles CS is held active for one read.
     cs_active: u32,
+    /// Cycles CS is inactive after a read, before the address moves on.
+    after_read: u32,
     /// Every read performed, for diagnostics when a scenario fails.
     pub reads: u64,
 }
@@ -363,13 +384,14 @@ impl<'a> Bus<'a> {
         chip_type: ChipType,
         unobserved: u8,
         mode: u8,
-        cs_active: u32,
+        cs: CsCycles,
     ) -> Self {
         let background = match cache.byte_n_gpio {
             Some(g) if mode != 0 => gpio::byte_n_mask(g, mode),
             _ => (0, 0),
         };
         let word_mode = mode == 16;
+        let addr_before_cs = runner::addr_before_cs_cycles(chip_type);
         Bus {
             emu,
             plugin,
@@ -378,9 +400,10 @@ impl<'a> Bus<'a> {
             background,
             word_mode,
             addr_lo: usize::from(word_mode && chip_type.bit_modes().contains(&8)),
-            addr_before_cs: runner::addr_before_cs_cycles(chip_type),
+            addr_before_cs,
             cs_to_data: CS_TO_DATA_CYCLES.max(runner::cs_to_data_cycles(chip_type, mode)),
-            cs_active,
+            cs_active: cs.active,
+            after_read: CYCLES_AFTER_READ.max(cs.inactive.saturating_sub(addr_before_cs)),
             reads: 0,
         }
     }
@@ -464,7 +487,7 @@ impl<'a> Bus<'a> {
             .step_cycles(self.cs_active.saturating_sub(self.cs_to_data));
 
         self.emu.drive_gpios(settle.0, settle.1);
-        self.emu.step_cycles(CYCLES_AFTER_READ);
+        self.emu.step_cycles(self.after_read);
 
         self.reads += 1;
         data

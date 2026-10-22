@@ -23,6 +23,10 @@
 //!   some phase
 //! - a CS-inactive glitch follows the same pattern with
 //!   `Timing::release_ignored` and `Timing::released`
+//! - after a capture, a CS-inactive break of `Timing::rearmed` cycles then a
+//!   CS-active pulse of `Timing::captured` cycles is always captured, and
+//!   after a break a cycle shorter is missed at some phase.  A shorter break
+//!   leaves the monitor still releasing as the next access starts
 //! - where AlgCs1 reads a lone select pin, a glitch of that pin alone follows
 //!   it with `Timing::lone_release_ignored`
 //! - where AlgCs1 reads a lone select pin a cycle before its other select pins,
@@ -278,6 +282,9 @@ struct Timing {
     released: u32,
     /// Cycles between samples while chip select is active.
     release_poll: u32,
+    /// The shortest CS-inactive break between accesses that lets the next be
+    /// captured as though the monitor had been idle.
+    rearmed: u32,
     /// Where AlgCs1 reads a lone select pin, the longest glitch of that pin
     /// alone that never releases.
     lone_release_ignored: Option<u32>,
@@ -287,21 +294,26 @@ impl Timing {
     /// The timing where capture and release each depend on one run of
     /// samples, the first of which can fall anywhere in its polling loop.
     /// `to_irq` is the cycles from the sample that ends a pulse to the IRQ.
+    /// `to_arm` is the cycles from the sample that ends a release to the first
+    /// arming sample.
     fn polled(
         ignored: u32,
         poll: u32,
         release_ignored: u32,
         release_poll: u32,
         to_irq: u32,
+        to_arm: u32,
     ) -> Self {
+        let released = release_ignored + release_poll;
         Self {
             ignored,
             captured: ignored + poll,
             read: ignored + poll + to_irq + IRQ_TO_READ_CYCLES,
             poll,
             release_ignored,
-            released: release_ignored + release_poll,
+            released,
             release_poll,
+            rearmed: rearmed(released, poll, to_arm),
             lone_release_ignored: None,
         }
     }
@@ -338,13 +350,15 @@ impl Timing {
             Masked::High => 4,
         };
         match (cs.alg, min_cycles) {
-            // MOV, JMP X--, JMP Y--, IRQ.
+            // MOV, JMP X--, JMP Y--, IRQ.  A release ends on a MOV, then JMP
+            // NOT X, JMP Y--, SET Y or MOV Y OSR, MOV.
             (CsAlg::Cs0, _) => Self::polled(
                 cs_0_arming_y(min_cycles) * 3,
                 3,
                 (CS_0_SAMPLES - 1) * 3,
                 3,
                 3,
+                4,
             ),
             (CsAlg::Cs1, None) => {
                 let gap = match masked {
@@ -352,8 +366,9 @@ impl Timing {
                     Masked::High => 3,
                 };
                 // The last check jumps to the IRQ as the others jump to the
-                // next sample.
-                Self::polled(UNROLLED_GAPS * gap, 3, 3, masked_release_poll, gap)
+                // next sample.  A release ends on a MOV, then JMP NOT X, JMP
+                // X!=Y, MOV.
+                Self::polled(UNROLLED_GAPS * gap, 3, 3, masked_release_poll, gap, 3)
             }
             (CsAlg::Cs1, Some(cycles)) if cs.lone_gpio.is_some() => {
                 let span = CS_1_LONE_SAMPLE_CYCLES * cs_1_arming_y(cs, cycles);
@@ -369,11 +384,14 @@ impl Timing {
                 // A glitch is first read within a cycle of its start.  The
                 // next read is three cycles later where the first was of the
                 // lone select pin, and four where it was of the others, so
-                // every glitch of five cycles releases.
+                // every glitch of five cycles releases.  A release ends on a
+                // JMP PIN, then MOV Y OSR, JMP PIN.
+                let released = 5;
                 Self {
-                    released: 5,
+                    released,
+                    rearmed: rearmed(released, poll, 2),
                     lone_release_ignored: Some(3),
-                    ..Self::polled(ignored, poll, 3, 3, to_irq)
+                    ..Self::polled(ignored, poll, 3, 3, to_irq, 2)
                 }
             }
             (CsAlg::Cs1, Some(cycles)) => {
@@ -383,30 +401,44 @@ impl Timing {
                     Edges::Together | Edges::LoneLeads => 4,
                     Edges::FirstSideHeld => CS_1_SPLIT_SAMPLE_CYCLES,
                 };
-                // MOV, OUT, JMP X--, OUT, OUT, JMP X--, JMP Y--, IRQ.
+                // MOV, OUT, JMP X--, OUT, OUT, JMP X--, JMP Y--, IRQ.  A
+                // release ends on a MOV, then JMP NOT X, JMP X!=Y, MOV Y ISR,
+                // MOV.
                 Self::polled(
                     CS_1_SPLIT_SAMPLE_CYCLES * cs_1_arming_y(cs, cycles),
                     poll,
                     3,
                     masked_release_poll,
                     7,
+                    4,
                 )
             }
-            // JMP PIN, MOV reads the qualifiers, JMP, IRQ.
+            // JMP PIN, MOV reads the qualifiers, JMP, IRQ.  A release ends
+            // on a JMP PIN, then JMP PIN.
             (CsAlg::Cs2, None) => {
-                Self::polled(UNROLLED_GAPS, 1, 1, 3, 3).qualified(1, end_deselects)
+                Self::polled(UNROLLED_GAPS, 1, 1, 3, 3, 1).qualified(1, end_deselects)
             }
-            // JMP PIN, JMP X--, MOV reads the qualifiers, JMP, IRQ.
+            // JMP PIN, JMP X--, MOV reads the qualifiers, JMP, IRQ.  A release
+            // ends on a JMP PIN, then MOV X OSR, JMP PIN.
             (CsAlg::Cs2, Some(cycles)) => Self::polled(
                 CS_2_SAMPLE_CYCLES * cs_2_arming_x(cycles),
                 CS_2_SAMPLE_CYCLES,
                 1,
                 3,
                 4,
+                2,
             )
             .qualified(2, end_deselects),
         }
     }
+}
+
+/// `Timing::rearmed` for one program.  The sample that ends a release comes at most
+/// `released - 1` cycles after chip select goes inactive, and the first arming
+/// sample `to_arm` cycles after that.  An idle monitor's first sample of an
+/// access lands within `poll` cycles of its start.
+fn rearmed(released: u32, poll: u32, to_arm: u32) -> u32 {
+    (released + to_arm).saturating_sub(poll).max(released)
 }
 
 /// AlgCs0's starting value for Y while arming.  It arms on one sample more,
@@ -482,6 +514,15 @@ pub fn access_cycles(cs: Cs, min_cycles: Option<u32>) -> u32 {
         .into_iter()
         .map(|masked| Timing::expected(cs, min_cycles, masked, Edges::Together, false).read)
         .fold(DEFAULT_ACCESS_CYCLES, u32::max)
+}
+
+/// Cycles an access leaves chip select inactive before the next, so the
+/// monitor captures the next as though it had been idle.
+pub fn break_cycles(cs: Cs, min_cycles: Option<u32>) -> u32 {
+    [Masked::Low, Masked::High]
+        .into_iter()
+        .map(|masked| Timing::expected(cs, min_cycles, masked, Edges::Together, false).rearmed)
+        .fold(0, u32::max)
 }
 
 /// What a pulse left in the ring.
@@ -706,6 +747,23 @@ impl Bus<'_> {
         self.held_since(pos)
     }
 
+    /// A CS-inactive break of `length` cycles after a capture, starting
+    /// `offset` cycles into the phase, then a CS-active pulse of
+    /// `Timing::captured` cycles.  A capture means the monitor was sampling
+    /// for the pulse in time.
+    fn rearm(&self, offset: u32, length: u32) -> Result<Capture, String> {
+        let pos = self.sync()?;
+        self.emu.step_cycles(HOLD_CYCLES + offset);
+        self.drive(self.test_addr, false);
+        self.emu.step_cycles(length);
+        self.drive(self.test_addr, true);
+        self.emu.step_cycles(self.timing.captured);
+        self.drive(self.end_addr, false);
+        self.emu
+            .step_cycles(self.timing.captured + CAPTURE_SLACK_CYCLES);
+        self.captured_since(pos)
+    }
+
     /// Runs `trial` at every phase of a loop `period` cycles long, twice over,
     /// counting the phases where it captures, or captures on time where
     /// `on_time` is set.
@@ -789,6 +847,24 @@ impl Bus<'_> {
                 expect,
                 false,
                 Self::glitch,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn check_rearm(&self) -> Result<(), String> {
+        let t = self.timing;
+        for (length, expect) in [
+            (t.rearmed - 1, Expect::NotAlways),
+            (t.rearmed, Expect::Always),
+        ] {
+            self.sweep(
+                "CS-inactive break",
+                length,
+                t.release_poll,
+                expect,
+                false,
+                Self::rearm,
             )?;
         }
         Ok(())
@@ -1032,6 +1108,7 @@ pub fn check(
             Edges::Together => bus
                 .check_arming()
                 .and_then(|()| bus.check_release())
+                .and_then(|()| bus.check_rearm())
                 .and_then(|()| bus.check_lone_release())
                 .and_then(|()| bus.check_partial_selects(&groups)),
             // The lead and the held side shape a CS-active pulse, not a
