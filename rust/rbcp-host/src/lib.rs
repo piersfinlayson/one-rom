@@ -199,6 +199,9 @@ pub struct Session<'b, B: Bus> {
     original: [u8; WRITTEN_LEN],
     /// Set once the session has ended, so dropping it sends nothing.
     ended: bool,
+    /// Set once a command wasn't received or never completed. The device may
+    /// have read the host's bytes as different commands from those sent.
+    lost: bool,
 }
 
 impl<'b, B: Bus> Session<'b, B> {
@@ -216,34 +219,14 @@ impl<'b, B: Bus> Session<'b, B> {
             protocol_version: MIN_PROTOCOL_VERSION,
             original: [0; WRITTEN_LEN],
             ended: false,
+            lost: false,
         };
         session.reset();
 
         for i in 0..session.original_len() {
             session.original[i] = session.bus.read(config.bch_start + i as u32);
         }
-
-        // The device reports progress and response by writing these two
-        // values, so each has to differ from what the image already holds
-        // there.
-        session.complete = unlike(session.read_hdr(PROGRESS), DEFAULT_COMPLETE);
-        session.status_ok = unlike(session.read_hdr(RESPONSE), DEFAULT_STATUS_OK);
-
-        let page = config.command_page.to_le_bytes();
-        let start = config.bch_start.to_le_bytes();
-        let size = config.bch_size.to_le_bytes();
-        let args = [
-            page[0],
-            page[1],
-            start[0],
-            start[1],
-            start[2],
-            size[0],
-            size[1],
-            session.complete,
-            session.status_ok,
-        ];
-        session.issue(true, group::CONTROL, control::ENTER_CMD_RESP, &args)?;
+        session.open()?;
 
         session.issue(false, group::READ, read::GET_PROTOCOL_VERSION, &[])?;
         let mut v = [0u8; 3];
@@ -365,32 +348,66 @@ impl<'b, B: Bus> Session<'b, B> {
         self.restore()
     }
 
+    /// Sends ENTER_CMD_RESP.
+    fn open(&mut self) -> Result<(), Error> {
+        // The device reports progress and response by writing these two
+        // values, so each has to differ from what the image already holds
+        // there.
+        self.complete = unlike(self.read_hdr(PROGRESS), DEFAULT_COMPLETE);
+        self.status_ok = unlike(self.read_hdr(RESPONSE), DEFAULT_STATUS_OK);
+
+        let page = self.config.command_page.to_le_bytes();
+        let start = self.config.bch_start.to_le_bytes();
+        let size = self.config.bch_size.to_le_bytes();
+        let args = [
+            page[0],
+            page[1],
+            start[0],
+            start[1],
+            start[2],
+            size[0],
+            size[1],
+            self.complete,
+            self.status_ok,
+        ];
+        self.issue(true, group::CONTROL, control::ENTER_CMD_RESP, &args)
+    }
+
     /// The specification's way of putting back the back-channel: SLOT_POKE for
     /// the bytes past the header, then EXIT_CMD_RESP_RESTORE for the header.
+    ///
+    /// Where the session is lost, the device is reset and the bytes saved at
+    /// the start of the session are put back from a new session. Where that
+    /// session is lost too, the device is reset and the error returned.
     fn restore(&mut self) -> Result<(), Error> {
-        self.issue(false, group::READ, read::GET_RAM_SLOT_INFO_ALL, &[])?;
-        let mut info = [0u8; 2];
-        self.read_data(0, &mut info);
-        let slot = info[1];
-        if slot == NO_SLOT {
-            return Err(Error::NotRestored);
-        }
-
-        let hdr = HDR_SIZE as usize;
-        for i in hdr..self.original_len() {
-            let addr = self.config.bch_start + i as u32;
-            if self.bus.read(addr) != self.original[i] {
-                let a = addr.to_le_bytes();
-                let args = [self.original[i], a[0], a[1], a[2], slot];
-                self.issue(false, group::MODIFY, modify::SLOT_POKE, &args)?;
+        if !self.lost {
+            let data = self.restore_data();
+            if !self.lost {
+                return self.exit_restore(data);
             }
         }
 
-        let count = hdr.min(self.original_len());
+        // A reset puts the device back in step with the host.
+        self.lost = false;
+        self.reset();
+        let data = self.open().and_then(|()| self.restore_data());
+        if self.lost {
+            self.reset();
+            return data;
+        }
+        self.exit_restore(data)
+    }
+
+    /// Sends EXIT_CMD_RESP_RESTORE with the saved header, even after `data`
+    /// failed, and checks the back-channel reads as it did before the session.
+    /// Returns `data`'s failure first.
+    fn exit_restore(&mut self, data: Result<(), Error>) -> Result<(), Error> {
+        let count = (HDR_SIZE as usize).min(self.original_len());
         let mut args = [0u8; 9];
         args[..count].copy_from_slice(&self.original[..count]);
         args[8] = count as u8;
         self.send(group::CONTROL, control::EXIT_CMD_RESP_RESTORE, &args);
+        data?;
 
         for _ in 0..self.config.poll_limit {
             if (0..self.original_len())
@@ -400,6 +417,28 @@ impl<'b, B: Bus> Session<'b, B> {
             }
         }
         Err(Error::NotRestored)
+    }
+
+    /// Puts back the bytes past the header with SLOT_POKE, stopping at the
+    /// first command that fails.
+    fn restore_data(&mut self) -> Result<(), Error> {
+        self.issue(false, group::READ, read::GET_RAM_SLOT_INFO_ALL, &[])?;
+        let mut info = [0u8; 2];
+        self.read_data(0, &mut info);
+        let slot = info[1];
+        if slot == NO_SLOT {
+            return Err(Error::NotRestored);
+        }
+
+        for i in HDR_SIZE as usize..self.original_len() {
+            let addr = self.config.bch_start + i as u32;
+            if self.bus.read(addr) != self.original[i] {
+                let a = addr.to_le_bytes();
+                let args = [self.original[i], a[0], a[1], a[2], slot];
+                self.issue(false, group::MODIFY, modify::SLOT_POKE, &args)?;
+            }
+        }
+        Ok(())
     }
 
     /// How many bytes of `original` are saved: no more than the back-channel
@@ -455,10 +494,12 @@ impl<'b, B: Bus> Session<'b, B> {
         self.send(group, cmd, args);
 
         if !self.poll(TOKEN_LSB, |t| t != before) {
+            self.lost = true;
             return Err(Error::NotReceived);
         }
         let complete = self.complete;
         if !self.poll(PROGRESS, |p| p == complete) {
+            self.lost = true;
             return Err(Error::NeverCompleted);
         }
         if self.read_hdr(RESPONSE) != self.status_ok {
@@ -636,7 +677,10 @@ pub mod reset {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
+    use std::vec::Vec;
 
     #[test]
     fn version_rules() {
@@ -659,5 +703,246 @@ mod tests {
         assert_eq!(unlike(0x00, DEFAULT_COMPLETE), DEFAULT_COMPLETE);
         assert_eq!(unlike(DEFAULT_COMPLETE, DEFAULT_COMPLETE), 0x44);
         assert_eq!(unlike(DEFAULT_STATUS_OK, DEFAULT_STATUS_OK), 0x33);
+    }
+
+    const BCH: usize = 0x100;
+    const PAGE: u16 = 0x0F;
+    const CONFIG: Config = Config {
+        command_page: PAGE,
+        bch_start: BCH as u32,
+        bch_size: WRITTEN_LEN as u16,
+        unobserved: 0,
+        poll_limit: 4,
+    };
+
+    const RAM_INFO: (u8, u8) = (group::READ, read::GET_RAM_SLOT_INFO_ALL);
+    const POKE: (u8, u8) = (group::MODIFY, modify::SLOT_POKE);
+    const EXIT: (u8, u8) = (group::CONTROL, control::EXIT_CMD_RESP_RESTORE);
+
+    /// The image byte at `addr` before any session.
+    fn original(addr: usize) -> u8 {
+        0x80 | (addr & 0x7F) as u8
+    }
+
+    /// A device answering the commands a session and its restore send. It
+    /// reports failure for `fail`.
+    struct FakeDevice {
+        image: Vec<u8>,
+        pending: Vec<u8>,
+        /// Every command received, group and CMD first.
+        frames: Vec<Vec<u8>>,
+        cmd_resp: bool,
+        complete: u8,
+        status_ok: u8,
+        fail: Option<(u8, u8)>,
+        /// Commands that never complete, each once, in the order received.
+        stalls: Vec<(u8, u8)>,
+    }
+
+    impl FakeDevice {
+        fn new(fail: Option<(u8, u8)>) -> Self {
+            FakeDevice {
+                image: (0..0x1000).map(original).collect(),
+                pending: Vec::new(),
+                frames: Vec::new(),
+                cmd_resp: false,
+                complete: 0,
+                status_ok: 0,
+                fail,
+                stalls: Vec::new(),
+            }
+        }
+
+        fn receive(&mut self, byte: u8) {
+            self.pending.push(byte);
+            if KNOCK.starts_with(&self.pending) {
+                if self.pending.len() == KNOCK.len() {
+                    self.pending.clear();
+                }
+                return;
+            }
+            let len = match self.pending[..] {
+                [g, c, ..] => 2 + arg_count(g, c),
+                _ => return,
+            };
+            if self.pending.len() == len {
+                let frame = core::mem::take(&mut self.pending);
+                self.execute(&frame);
+                self.frames.push(frame);
+            }
+        }
+
+        fn execute(&mut self, f: &[u8]) {
+            match (f[0], f[1]) {
+                (group::RESET, _) => self.cmd_resp = false,
+                (group::CONTROL, control::ENTER_CMD_RESP) => {
+                    self.complete = f[9];
+                    self.status_ok = f[10];
+                    self.cmd_resp = true;
+                    self.respond(f, &[]);
+                }
+                EXIT => {
+                    let count = usize::from(f[10]);
+                    self.image[BCH..BCH + count].copy_from_slice(&f[2..2 + count]);
+                    self.cmd_resp = false;
+                }
+                (group::READ, read::GET_PROTOCOL_VERSION) => {
+                    self.respond(f, &[0, 1, 2]);
+                }
+                // One RAM slot, slot 0 active.
+                RAM_INFO => {
+                    self.respond(f, &[1, 0]);
+                }
+                POKE => {
+                    if self.respond(f, &[]) {
+                        let addr = u32::from_le_bytes([f[3], f[4], f[5], 0]);
+                        self.image[addr as usize] = f[2];
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        /// The specification's command processing sequence, at once. Returns
+        /// whether the command succeeded.
+        fn respond(&mut self, f: &[u8], data: &[u8]) -> bool {
+            assert!(self.cmd_resp);
+            let ok = self.fail != Some((f[0], f[1]));
+            self.image[BCH + TOKEN_LSB as usize] =
+                self.image[BCH + TOKEN_LSB as usize].wrapping_add(1);
+            if ok {
+                let start = BCH + HDR_SIZE as usize;
+                self.image[start..start + data.len()].copy_from_slice(data);
+            }
+            self.image[BCH + RESPONSE as usize] = if ok { self.status_ok } else { !self.status_ok };
+            let stall = self.stalls.first() == Some(&(f[0], f[1]));
+            if stall {
+                self.stalls.remove(0);
+            }
+            self.image[BCH + PROGRESS as usize] =
+                if stall { !self.complete } else { self.complete };
+            ok
+        }
+
+        /// The commands sent after the session was entered.
+        fn restore_commands(&self) -> Vec<(u8, u8)> {
+            let enter = self
+                .frames
+                .iter()
+                .position(|f| (f[0], f[1]) == (group::READ, read::GET_PROTOCOL_VERSION))
+                .unwrap();
+            self.frames[enter + 1..]
+                .iter()
+                .map(|f| (f[0], f[1]))
+                .collect()
+        }
+    }
+
+    fn arg_count(group: u8, cmd: u8) -> usize {
+        match (group, cmd) {
+            (group::RESET, reset::RBCP_RESET)
+            | (group::READ, read::GET_PROTOCOL_VERSION)
+            | RAM_INFO => 0,
+            (group::CONTROL, control::ENTER_CMD_RESP) | EXIT => 9,
+            POKE => 5,
+            _ => panic!("unexpected command {group:#04x} {cmd:#04x}"),
+        }
+    }
+
+    impl Bus for FakeDevice {
+        fn read(&mut self, addr: u32) -> u8 {
+            if addr >> 8 == u32::from(PAGE) {
+                self.receive(addr as u8);
+            }
+            self.image[addr as usize]
+        }
+    }
+
+    const VERSION: (u8, u8) = (group::READ, read::GET_PROTOCOL_VERSION);
+    const ENTER: (u8, u8) = (group::CONTROL, control::ENTER_CMD_RESP);
+    const RESET: (u8, u8) = (group::RESET, reset::RBCP_RESET);
+
+    fn restore_with(fail: Option<(u8, u8)>) -> (FakeDevice, Result<(), Error>) {
+        let mut dev = FakeDevice::new(fail);
+        let result = Session::enter(&mut dev, CONFIG).unwrap().restore_and_exit();
+        (dev, result)
+    }
+
+    /// The commands `reset` sends.
+    fn reset_commands() -> Vec<(u8, u8)> {
+        std::vec![RESET; 7]
+    }
+
+    /// Whether the back-channel holds the bytes from before the session.
+    fn restored(dev: &FakeDevice) -> bool {
+        (BCH..BCH + WRITTEN_LEN).all(|addr| dev.image[addr] == original(addr))
+    }
+
+    #[test]
+    fn restore_puts_back_the_back_channel() {
+        let (dev, result) = restore_with(None);
+        assert_eq!(result, Ok(()));
+        // GET_PROTOCOL_VERSION and GET_RAM_SLOT_INFO_ALL changed 3 data bytes.
+        assert_eq!(dev.restore_commands(), [RAM_INFO, POKE, POKE, POKE, EXIT]);
+        let expected: Vec<u8> = (BCH..BCH + WRITTEN_LEN).map(original).collect();
+        assert_eq!(dev.image[BCH..BCH + WRITTEN_LEN], expected[..]);
+    }
+
+    #[test]
+    fn restore_puts_back_the_header_after_a_failure() {
+        for (fail, sent) in [
+            (RAM_INFO, &[RAM_INFO, EXIT][..]),
+            (POKE, &[RAM_INFO, POKE, EXIT]),
+        ] {
+            let (dev, result) = restore_with(Some(fail));
+            assert_eq!(result, Err(Error::Failed));
+            assert_eq!(dev.restore_commands(), sent);
+            let header: Vec<u8> = (BCH..BCH + HDR_SIZE as usize).map(original).collect();
+            let exit = dev.frames.last().unwrap();
+            assert_eq!(exit[2..10], header[..]);
+            assert_eq!(exit[10], HDR_SIZE as u8);
+            assert_eq!(dev.image[BCH..BCH + HDR_SIZE as usize], header[..]);
+        }
+    }
+
+    #[test]
+    fn restore_after_a_lost_session_starts_again() {
+        let mut dev = FakeDevice::new(None);
+        dev.stalls = std::vec![VERSION];
+        assert_eq!(
+            Session::enter(&mut dev, CONFIG).err(),
+            Some(Error::NeverCompleted)
+        );
+        let mut sent = reset_commands();
+        sent.extend([ENTER, RAM_INFO, POKE, POKE, POKE, EXIT]);
+        assert_eq!(dev.restore_commands(), sent);
+        assert!(restored(&dev));
+    }
+
+    #[test]
+    fn restore_starts_again_where_its_own_command_is_lost() {
+        let mut dev = FakeDevice::new(None);
+        dev.stalls = std::vec![RAM_INFO];
+        let result = Session::enter(&mut dev, CONFIG).unwrap().restore_and_exit();
+        assert_eq!(result, Ok(()));
+        let mut sent = std::vec![RAM_INFO];
+        sent.extend(reset_commands());
+        sent.extend([ENTER, RAM_INFO, POKE, POKE, POKE, EXIT]);
+        assert_eq!(dev.restore_commands(), sent);
+        assert!(restored(&dev));
+    }
+
+    #[test]
+    fn restore_starts_again_once() {
+        let mut dev = FakeDevice::new(None);
+        dev.stalls = std::vec![RAM_INFO, RAM_INFO];
+        let result = Session::enter(&mut dev, CONFIG).unwrap().restore_and_exit();
+        assert_eq!(result, Err(Error::NeverCompleted));
+        let mut sent = std::vec![RAM_INFO];
+        sent.extend(reset_commands());
+        sent.extend([ENTER, RAM_INFO]);
+        sent.extend(reset_commands());
+        assert_eq!(dev.restore_commands(), sent);
+        assert!(!dev.cmd_resp);
     }
 }

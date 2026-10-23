@@ -45,6 +45,12 @@ pub static SCENARIOS: &[Scenario] = &[
                    CS monitor captures the glitches",
         run: lab::c64_identity,
     },
+    Scenario {
+        name: "host.lab_enter_never_completed",
+        spec_ref: "One ROM Lab's host bus, a glitch in front of ENTER_CMD_RESP's A7: enter \
+                   fails as never completed and the back-channel is restored",
+        run: lab::enter_never_completed,
+    },
 ];
 
 /// The tester's bus as `onerom-rbcp-host` reads it.
