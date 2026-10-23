@@ -10,8 +10,11 @@ use core::num::Wrapping;
 use embassy_rp::gpio::{Drive, Flex, Pull, SlewRate};
 use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::hw::Board;
+use onerom_lab_bus::{BurstState, HostProfile, Profile};
 use sha1::{Digest, Sha1};
 
+use crate::error::Error;
+use crate::host::{self, HostBus, Lines};
 use crate::hw::steal_gpio;
 
 // ---------------------------------------------------------------------------
@@ -104,22 +107,25 @@ impl ChecksumState {
 struct ControlLine {
     flex: Flex<'static>,
     gpio: u8,
+    socket_pin: u8,
     assert_high: bool,
 }
 
 impl ControlLine {
-    fn active_low(flex: Flex<'static>, gpio: u8) -> Self {
+    fn active_low(flex: Flex<'static>, gpio: u8, socket_pin: u8) -> Self {
         Self {
             flex,
             gpio,
+            socket_pin,
             assert_high: false,
         }
     }
 
-    fn configurable(flex: Flex<'static>, gpio: u8, assert_high: bool) -> Self {
+    fn configurable(flex: Flex<'static>, gpio: u8, socket_pin: u8, assert_high: bool) -> Self {
         Self {
             flex,
             gpio,
+            socket_pin,
             assert_high,
         }
     }
@@ -153,8 +159,14 @@ impl ControlLine {
 // ---------------------------------------------------------------------------
 
 pub struct RomReader {
+    /// The machines running `host`, from `begin_read` to `end_read`.
+    /// Declared before the pins, so it drops first and returns them to SIO.
+    host_bus: Option<HostBus>,
+    board: Board,
     addr: Vec<Flex<'static>>,
     data: Vec<Flex<'static>>,
+    /// The socket pin of each entry in `addr`
+    addr_pins: Vec<u8>,
     /// The GPIO of each entry in `addr`
     addr_gpios: Vec<u8>,
     /// The GPIO of each entry in `data`
@@ -172,6 +184,13 @@ pub struct RomReader {
     /// Read-delay cycles for 16-bit mode (27C400 only).
     read_delay_16bit_cycles: u32,
     tristate_settle_cycles: Option<u32>,
+    /// The host profile reads use, or `None` for Lab's own timing.
+    host: Option<Profile>,
+    /// The host bus counters and the bit mode they are for.  They continue
+    /// from one `begin_read` to the next in the same mode.
+    host_state: Option<(u8, BurstState)>,
+    /// The first host bus fault.
+    host_fault: Option<Error>,
 }
 
 impl RomReader {
@@ -213,11 +232,14 @@ impl RomReader {
         }
 
         // Build address-line GPIO list (A0 … An, or A-1 … An for 27C400).
-        let addr_gpios: Vec<u8> = chip
+        let addr_pins: Vec<u8> = chip
             .address_pins()
             .iter()
+            .map(|&phys| Self::remap_phys_pin(chip, board, phys))
+            .collect();
+        let addr_gpios: Vec<u8> = addr_pins
+            .iter()
             .map(|&phys| {
-                let phys = Self::remap_phys_pin(chip, board, phys);
                 gpio_for_socket_pin(board, phys).unwrap_or_else(|| {
                     panic!(
                         "address pin {} not mapped for chip {} on this board",
@@ -267,12 +289,13 @@ impl RomReader {
             let flex = steal_gpio(gpio);
 
             match ctrl.name {
-                "ce" => ce = Some(ControlLine::active_low(flex, gpio)),
-                "oe" => oe = Some(ControlLine::active_low(flex, gpio)),
+                "ce" => ce = Some(ControlLine::active_low(flex, gpio, phys)),
+                "oe" => oe = Some(ControlLine::active_low(flex, gpio, phys)),
                 "cs1" => {
                     cs1 = Some(ControlLine::configurable(
                         flex,
                         gpio,
+                        phys,
                         cs.cs1.expect("cs1 polarity required"),
                     ))
                 }
@@ -280,6 +303,7 @@ impl RomReader {
                     cs2 = Some(ControlLine::configurable(
                         flex,
                         gpio,
+                        phys,
                         cs.cs2.expect("cs2 polarity required"),
                     ))
                 }
@@ -287,6 +311,7 @@ impl RomReader {
                     cs3 = Some(ControlLine::configurable(
                         flex,
                         gpio,
+                        phys,
                         cs.cs3.expect("cs3 polarity required"),
                     ))
                 }
@@ -315,8 +340,11 @@ impl RomReader {
             None
         };
         Self {
+            host_bus: None,
+            board,
             addr,
             data,
+            addr_pins,
             addr_gpios,
             data_gpios,
             ce,
@@ -329,7 +357,81 @@ impl RomReader {
             read_delay_cycles,
             read_delay_16bit_cycles,
             tristate_settle_cycles,
+            host: None,
+            host_state: None,
+            host_fault: None,
         }
+    }
+
+    /// Reads with `profile`'s bus timing, or Lab's own for `None`.  A profile
+    /// turns tristate testing off.
+    pub fn set_host(&mut self, profile: Option<HostProfile>) -> Result<(), Error> {
+        self.host = match profile {
+            Some(profile) => {
+                let profile = profile.to_bus().map_err(Error::HostProfile)?;
+                self.with_lines(8, host::check)?;
+                if self.chip.supports_bit_mode(16) {
+                    self.with_lines(16, host::check)?;
+                }
+                self.tristate_settle_cycles = None;
+                Some(profile)
+            }
+            None => None,
+        };
+        Ok(())
+    }
+
+    /// The first host bus fault since the last call.
+    pub fn host_fault(&mut self) -> Result<(), Error> {
+        self.host_fault.take().map_or(Ok(()), Err)
+    }
+
+    /// Calls `f` with the lines a host bus read in `mode` uses.  In 16-bit
+    /// mode A-1 isn't driven and D15 is read.
+    fn with_lines<T>(&self, mode: u8, f: impl FnOnce(Board, &Lines) -> T) -> T {
+        let selects: Vec<(u8, bool)> = self
+            .select_lines()
+            .map(|l| (l.socket_pin, l.assert_high))
+            .collect();
+        let sio: Vec<u8> = self
+            .addr_gpios
+            .iter()
+            .copied()
+            .chain(self.select_lines().map(|l| l.gpio))
+            .collect();
+        let (addr, data_lines) = if mode == 16 {
+            (&self.addr_pins[1..], 16)
+        } else {
+            (&self.addr_pins[..], 8)
+        };
+        let lines = Lines {
+            addr,
+            selects: &selects,
+            data: &self.data_gpios[..data_lines.min(self.data_gpios.len())],
+            sio: &sio,
+        };
+        f(self.board, &lines)
+    }
+
+    fn select_lines(&self) -> impl Iterator<Item = &ControlLine> {
+        [&self.ce, &self.oe, &self.cs1, &self.cs2, &self.cs3]
+            .into_iter()
+            .flatten()
+    }
+
+    /// Reads `phys_addr` through the host bus and returns the data lines, D0
+    /// in bit 0.  After a fault every read returns all ones.
+    fn host_read(&mut self, phys_addr: usize) -> u16 {
+        if self.host_fault.is_some() {
+            return u16::MAX;
+        }
+        let (Some(bus), Some((_, state))) = (&mut self.host_bus, &mut self.host_state) else {
+            return u16::MAX;
+        };
+        bus.read(phys_addr, state).unwrap_or_else(|e| {
+            self.host_fault = Some(e);
+            u16::MAX
+        })
     }
 
     /// Initialise all GPIO directions and drive control lines to their
@@ -405,11 +507,19 @@ impl RomReader {
 
         let mut failures = 0u32;
         for addr in 0..addr_count {
-            self.set_addr(addr << addr_shift);
-            cortex_m::asm::delay(read_delay);
+            let host_value = if self.host.is_some() {
+                Some(self.host_read(addr << addr_shift))
+            } else {
+                self.set_addr(addr << addr_shift);
+                cortex_m::asm::delay(read_delay);
+                None
+            };
 
             for b in 0..data_bytes {
-                let byte = self.read_data_byte(b);
+                let byte = match host_value {
+                    Some(value) => (value >> (8 * b)) as u8,
+                    None => self.read_data_byte(b),
+                };
                 sha.update([byte]);
                 csum.update(byte);
             }
@@ -540,7 +650,8 @@ impl RomReader {
         data[..data_bytes * 8].iter().all(|p| p.is_low())
     }
 
-    /// Configure the BYTE# pin and assert all control lines.
+    /// Configure the BYTE# pin and assert all control lines, or under a host
+    /// profile start the host bus.
     ///
     /// Must be called before any `read_byte_at` calls.  Pair every call to
     /// `begin_read` with exactly one call to `end_read`.
@@ -555,7 +666,27 @@ impl RomReader {
                 }
             }
         }
-        self.assert_control();
+        match self.host {
+            Some(profile) => {
+                self.host_bus = None;
+                let addr_shift = u32::from(mode == 16);
+                let bus = self.with_lines(mode, |board, lines| {
+                    HostBus::start(board, profile, lines, addr_shift)
+                });
+                match bus {
+                    Ok(bus) => {
+                        if !matches!(self.host_state, Some((m, _)) if m == mode) {
+                            self.host_state = Some((mode, bus.burst_state()));
+                        }
+                        self.host_bus = Some(bus);
+                    }
+                    Err(e) => {
+                        self.host_fault.get_or_insert(e);
+                    }
+                }
+            }
+            None => self.assert_control(),
+        }
     }
 
     /// Read a single byte from the ROM at the given byte address.
@@ -569,6 +700,9 @@ impl RomReader {
     /// this method in a read session.
     pub fn read_byte_at(&mut self, byte_addr: usize, mode: u8) -> u8 {
         let (phys_addr, byte_index, delay) = self.locate(byte_addr, mode);
+        if self.host.is_some() {
+            return (self.host_read(phys_addr) >> (8 * byte_index)) as u8;
+        }
         self.set_addr(phys_addr);
         cortex_m::asm::delay(delay);
         self.read_data_byte(byte_index)
@@ -581,6 +715,9 @@ impl RomReader {
     /// so RBCP needs a cycle per read.
     pub fn read_byte_cycled(&mut self, byte_addr: usize, mode: u8) -> u8 {
         let (phys_addr, byte_index, delay) = self.locate(byte_addr, mode);
+        if self.host.is_some() {
+            return (self.host_read(phys_addr) >> (8 * byte_index)) as u8;
+        }
         self.deassert_control();
         self.set_addr(phys_addr);
         self.assert_control();
@@ -629,6 +766,7 @@ impl RomReader {
     ///
     /// Call after all `read_byte_at` calls in a read session are complete.
     pub fn end_read(&mut self) {
+        self.host_bus = None;
         self.deassert_control();
         if let Some(ref mut byte_n) = self.byte_n {
             byte_n.set_high();
@@ -638,6 +776,39 @@ impl RomReader {
                 a1.set_pull(Pull::Down);
                 a1.set_as_input();
             }
+        }
+    }
+
+    /// Starts an 8-bit read that yields to the executor between lines.  Read
+    /// each line with `read_line` and finish with `end_lines`.
+    ///
+    /// A host bus runs from here to `end_lines`, as each switch of the select
+    /// lines between SIO and PIO risks a stray edge on the bus.
+    pub fn begin_lines(&mut self) {
+        if self.host.is_some() {
+            self.begin_read(8);
+        }
+    }
+
+    /// Reads `buf.len()` bytes from `addr`.  Lab's own timing asserts the
+    /// control lines for this line alone, so they are deasserted while the
+    /// executor yields.
+    pub fn read_line(&mut self, addr: usize, buf: &mut [u8]) {
+        if self.host.is_none() {
+            self.begin_read(8);
+        }
+        for (i, byte) in buf.iter_mut().enumerate() {
+            *byte = self.read_byte_at(addr + i, 8);
+        }
+        if self.host.is_none() {
+            self.end_read();
+        }
+    }
+
+    /// Finishes a read started with `begin_lines`.
+    pub fn end_lines(&mut self) {
+        if self.host.is_some() {
+            self.end_read();
         }
     }
 

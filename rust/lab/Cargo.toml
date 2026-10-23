@@ -29,6 +29,7 @@ rp235xb = [ "embassy-rp/rp235xb" ]
 [dependencies]
 onerom-app = { workspace = true }
 onerom-config = { workspace = true }
+onerom-lab-bus = { workspace = true }
 onerom-lab-metadata = { workspace = true }
 onerom-metadata = { workspace = true }
 onerom-rbcp-host = { workspace = true }
@@ -56,6 +57,7 @@ critical-section = { version = "1.2.0" }
 hex = { version = "0.4", default-features = false, features = [ "alloc" ] }
 hex-literal = "1.0.0"
 log = "0.4"
+pio = "0.3"
 sha1 = { version = "0.11", default-features = false }
 rtt-target = { version = "0.6", features = [ "log" ] }
 panic-probe = { version = "1.0" }

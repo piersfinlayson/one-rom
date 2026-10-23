@@ -482,6 +482,10 @@ test_family_24_part_2() {
     test_24_config_monitor onerom-config/test/24-min-cs-act.json
     run_boards run_config_monitor onerom-config/test/24-min-cs-act-multi.json $FIRE_24_LATE_BOARDS
 
+    # RBCP behaviour coverage — a slot with a minimum CS-active time, whose CS
+    # monitor doesn't capture One ROM Lab's c64 profile glitches.
+    test_24_config_rbcp onerom-config/test/24-min-cs-act.json
+
     # USB plugin.  The whole suite runs on every board of the family, and the
     # logical ROM scenarios run again for each config.  Board coverage is not a
     # formality here: what the plugin reports and what the firmware beneath it
@@ -594,6 +598,10 @@ test_family_28_part_2() {
     # It is also the only shape where a flash slot and the RAM slot it is loaded
     # into can differ in size, which the bootloader flow turns on.
     test_config_rbcp fire-28-c onerom-config/test/28-bank-27xxx.json
+
+    # RBCP behaviour coverage — a slot with a minimum CS-active time, whose CS
+    # monitor doesn't capture One ROM Lab's c64 profile glitches.
+    test_28_config_rbcp onerom-config/test/28-min-cs-act.json
 }
 
 test_family_28() {
@@ -643,6 +651,14 @@ test_family_32() {
     test_32_usb_all onerom-config/test/32-random-27c080.json
     test_32_config_usb onerom-config/test/32-random-27c080.json
     test_32_config_rbcp onerom-config/test/32-random-27c080.json
+
+    # RBCP behaviour coverage — One ROM Lab's c64 profile glitches, captured by
+    # the CS monitor of a slot without a minimum CS-active time and not by one
+    # with.  Only fire-32-a reads a 27C301 with AlgCs0, which captures them at
+    # every phase.  fire-32-a can't serve a 23C1001.
+    test_config_rbcp fire-32-a onerom-config/test/32-random-27c301.json
+    test_config_rbcp fire-32-b onerom-config/test/32-min-cs-act.json
+    test_config_rbcp fire-32-c onerom-config/test/32-min-cs-act.json
 
     # One run of the plugin API suite against a firmware compiled with its
     # switchable logging options off.  What that setting reaches is the
@@ -710,6 +726,10 @@ test_family_40() {
     # through — runs against a word-organised ROM.  On fire-40-a the same part
     # gets a 512KB region, one slot, and a read-only NV storage.
     test_40_config_rbcp onerom-config/test/40-random-27c200.json
+
+    # RBCP behaviour coverage — a slot with a minimum CS-active time, whose CS
+    # monitor doesn't capture One ROM Lab's c64 profile glitches.
+    test_40_config_rbcp onerom-config/test/40-min-cs-act.json
 }
 
 usage() {

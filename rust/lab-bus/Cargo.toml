@@ -1,0 +1,19 @@
+[package]
+name = "onerom-lab-bus"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "One ROM Lab's PIO host bus"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "embedded", "no_std"]
+categories = ["embedded", "hardware-support", "no-std"]
+
+[dependencies]
+onerom-config = { workspace = true }
+pio = "0.3"
+
+[lints]
+workspace = true

@@ -16,6 +16,7 @@
 
 use alloc::format;
 use alloc::string::String;
+use core::ops::RangeInclusive;
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
@@ -417,6 +418,99 @@ pub async fn get_lines(
                     s
                 ))
                 .await?
+            }
+        }
+    }
+}
+
+/// The first argument of `H`.
+pub enum HostChoice {
+    Off,
+    C64,
+    /// A custom profile's cycle in ns.
+    Cycle(u32),
+}
+
+/// Resolve `H`'s first argument from an inline token or an interactive
+/// prompt.  Blank input returns `default`.
+pub async fn get_host(
+    token: Option<&str>,
+    default: &str,
+    editor: &mut LineEditor,
+) -> Result<HostChoice, Error> {
+    let parse = |s: &str| {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("off") {
+            Some(HostChoice::Off)
+        } else if s.eq_ignore_ascii_case("c64") {
+            Some(HostChoice::C64)
+        } else {
+            s.parse::<u32>().ok().map(HostChoice::Cycle)
+        }
+    };
+    if let Some(t) = token {
+        return parse(t).ok_or(Error::Syntax);
+    }
+
+    loop {
+        let input = prompt(
+            editor,
+            &format!("Host (off, c64 or cycle in ns) [{default}]: "),
+        )
+        .await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => String::from(default),
+            Some(s) => s,
+        };
+
+        match parse(&s) {
+            Some(choice) => return Ok(choice),
+            None => super::send_line("Enter off, c64 or a cycle in ns.").await?,
+        }
+    }
+}
+
+/// Resolve a number in `range` from an inline token or an interactive prompt.
+/// Blank input returns `default` and Ctrl-C returns [`Error::Cancelled`].
+pub async fn get_number(
+    token: Option<&str>,
+    default: u32,
+    label: &str,
+    range: RangeInclusive<u32>,
+    editor: &mut LineEditor,
+) -> Result<u32, Error> {
+    if let Some(t) = token {
+        return t
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|n| range.contains(n))
+            .ok_or(Error::Syntax);
+    }
+
+    loop {
+        let input = prompt(editor, &format!("{label} [{default}]: ")).await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match s.parse::<u32>() {
+            Ok(n) if range.contains(&n) => return Ok(n),
+            Ok(_) => {
+                super::send_line(&format!(
+                    "{label} must be from {} to {}.",
+                    range.start(),
+                    range.end()
+                ))
+                .await?;
+            }
+            Err(_) => {
+                super::send_line(&format!("Invalid number '{}'.", s)).await?;
             }
         }
     }

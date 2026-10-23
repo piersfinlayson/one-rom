@@ -5026,6 +5026,7 @@ dependencies = [
  "once_cell",
  "onerom-app",
  "onerom-config",
+ "onerom-lab-bus",
  "onerom-lab-metadata",
  "onerom-metadata",
  "onerom-rbcp-host",
@@ -5034,11 +5035,20 @@ dependencies = [
  "picobootx",
  "picobootx-embassy",
  "picobootx-rp2350",
+ "pio",
  "portable-atomic",
  "rp-binary-info",
  "rtt-target",
  "sha1 0.11.0",
  "static_cell",
+]
+
+[[package]]
+name = "onerom-lab-bus"
+version = "0.1.0"
+dependencies = [
+ "onerom-config",
+ "pio",
 ]
 
 [[package]]
@@ -5129,9 +5139,11 @@ dependencies = [
  "onerom-fw-emulator",
  "onerom-fw-tester",
  "onerom-gen",
+ "onerom-lab-bus",
  "onerom-metadata",
  "onerom-plugin-tester",
  "onerom-rbcp-host",
+ "pio",
  "serde_json",
 ]
 

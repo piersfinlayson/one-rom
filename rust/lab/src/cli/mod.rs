@@ -21,6 +21,7 @@ use embassy_time::Timer;
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
+use onerom_lab_bus::HostProfile;
 
 use crate::CsPolarities;
 use crate::error::Error;
@@ -163,6 +164,8 @@ pub struct SessionState {
     pub cs: CsSettings,
     /// Tri-state testing flag for checksum mode.
     pub tri_state: bool,
+    /// Host bus timing for reads and RBCP, or `None` for Lab's own.
+    pub host: Option<HostProfile>,
 }
 
 impl SessionState {
@@ -180,6 +183,7 @@ impl SessionState {
             drive_delay: crate::drive::DEFAULT_DELAY_CYCLES,
             cs: CsSettings::unset(),
             tri_state: true,
+            host: None,
         }
     }
 }
@@ -429,6 +433,9 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("        p[:<chip>]").await?;
     send_line("  T   List supported board types").await?;
     send_line("  R   Query a One ROM in the socket over RBCP").await?;
+    send_line("  H   Set host bus timing for r, q, b, a and R").await?;
+    send_line("        H:off, H:c64 or H[:<cycle>[:<extra>[:<glitch>[:<cs>[:<pos>[:<every>]]]]]]")
+        .await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;
     send_line("").await?;
@@ -442,6 +449,13 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("           len=0 means to end of ROM.").await?;
     send_line("").await?;
     send_line("CS polarity: 0=active-low  1=active-high  ?=auto-detect").await?;
+    send_line("").await?;
+    send_line("Host bus:  <extra> non-ROM cycles precede each read. Each cycle is <cycle> ns.")
+        .await?;
+    send_line("           1 in <every> non-ROM cycles has a <glitch> ns chip select pulse,")
+        .await?;
+    send_line("           <pos> ns after the cycle starts. Chip select is active for the").await?;
+    send_line("           last <cs> ns of the read.").await?;
     send_line("").await?;
     Ok(())
 }

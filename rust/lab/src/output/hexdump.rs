@@ -11,10 +11,6 @@
 //!
 //! Lines are 16 bytes wide.  The final line may be shorter if `count` is not
 //! a multiple of 16.
-//!
-//! Control lines are asserted and deasserted around each 16-byte read so
-//! that the executor can be yielded between lines without holding a mutable
-//! borrow across an `.await` point.
 
 use embassy_time::Timer;
 
@@ -50,18 +46,12 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
     let end = start + count;
     let mut addr = start;
 
+    reader.begin_lines();
     while addr < end {
         let chunk_len = (end - addr).min(16);
         let mut chunk = [0u8; 16];
 
-        // Assert control lines, read exactly one line's worth of bytes, then
-        // deassert.  This keeps the borrow of `reader` confined to a sync
-        // scope so it does not cross the `.await` below.
-        reader.begin_read(8);
-        for (i, byte) in chunk.iter_mut().enumerate().take(chunk_len) {
-            *byte = reader.read_byte_at(addr + i, 8);
-        }
-        reader.end_read();
+        reader.read_line(addr, &mut chunk[..chunk_len]);
 
         // Format into a stack buffer — no heap allocation.
         let mut line = [0u8; LINE_BUF];
@@ -75,6 +65,7 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
         // Yield to the executor so the USB task can send buffered data.
         Timer::after_millis(1).await;
     }
+    reader.end_lines();
 
     Ok(())
 }

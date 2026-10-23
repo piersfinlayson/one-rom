@@ -12,6 +12,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use core::num::NonZeroU8;
 
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant, Timer};
@@ -23,6 +24,7 @@ use onerom_config::mcu::Family;
 use onerom_app::{
     SignerTable, Verdict, board_size_text, escape_controls, format_date, verdict_text,
 };
+use onerom_lab_bus::{C64, HostProfile};
 use onerom_metadata::otp::parse_chip_id;
 use onerom_metadata::{MaybeKnown, OneromBoardSize};
 use sha1::{Digest, Sha1};
@@ -31,12 +33,13 @@ use crate::commissioning::Check;
 use crate::drive::Driver;
 use crate::error::Error;
 use crate::fast_read::{self, FastReader};
+use crate::host;
 use crate::rbcp::Commissioning;
 use crate::rom::RomReader;
 use crate::usb;
 
 use super::super::serial_id;
-use super::parser::{self, Args};
+use super::parser::{self, Args, HostChoice};
 use super::{CsPolaritySetting, CsSettings, OutputFormat, ReadRange, SessionState};
 use super::{default_chip_for_board, send_line};
 
@@ -84,6 +87,7 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'B' => cmd_set_board(&mut args, state).await,
         'T' => cmd_list_board_types(state).await,
         'R' => cmd_rbcp(state).await,
+        'H' => cmd_set_host(&mut args, state).await,
         'z' => cmd_reset_to_bootloader().await,
         '?' | 'h' => super::show_help(state).await,
         _ => {
@@ -148,20 +152,12 @@ async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), E
     state.cs = CsSettings { cs1, cs2, cs3 };
 
     send_line(&format!(
-        "Reading {chip}, range {}, output {fmt}",
-        state.range
+        "Reading {chip}, range {}, output {fmt}{}",
+        state.range,
+        host_suffix(state.host)
     ))
     .await?;
-    do_read(
-        board,
-        chip,
-        state.range,
-        fmt,
-        state.cs,
-        state.tri_state,
-        false,
-    )
-    .await
+    do_read(board, chip, state, false).await
 }
 
 /// How long a fast read reads before checking for a key.
@@ -446,7 +442,11 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState, rbcp: bool) ->
         require_cs(chip, state.cs)?;
     }
 
-    send_line("Batch read started. Press any key to stop.").await?;
+    send_line(&format!(
+        "Batch read started{}. Press any key to stop.",
+        host_suffix(state.host)
+    ))
+    .await?;
 
     // Drain any bytes buffered during command entry (e.g. trailing LF from CR+LF).
     while let Ok(Some(_)) = usb::cdc_try_recv().await {}
@@ -456,16 +456,7 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState, rbcp: bool) ->
         pass += 1;
         send_line(&format!("--- Pass {} ---", pass)).await?;
 
-        do_read(
-            board,
-            chip,
-            state.range,
-            fmt,
-            state.cs,
-            state.tri_state,
-            rbcp,
-        )
-        .await?;
+        do_read(board, chip, state, rbcp).await?;
 
         // Wait for the interval to expire OR a keypress, whichever comes first.
         // A key pressed during a read is buffered and will be returned here
@@ -584,20 +575,13 @@ async fn cmd_quick_read(state: &mut SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
     let chip = state.chip.ok_or(Error::ChipNotSet)?;
     send_line(&format!(
-        "Reading {chip}, range {}, output {}",
-        state.range, state.format
-    ))
-    .await?;
-    do_read(
-        board,
-        chip,
+        "Reading {chip}, range {}, output {}{}",
         state.range,
         state.format,
-        state.cs,
-        state.tri_state,
-        false,
-    )
-    .await
+        host_suffix(state.host)
+    ))
+    .await?;
+    do_read(board, chip, state, false).await
 }
 
 async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
@@ -703,6 +687,13 @@ async fn cmd_default_info(state: &SessionState) -> Result<(), Error> {
     send_line(&format!(
         "Tri-state: {}",
         if state.tri_state { "on" } else { "off" }
+    ))
+    .await?;
+    send_line(&format!(
+        "Host:      {}",
+        state
+            .host
+            .map_or(String::from("off"), |host| host::driven(&host))
     ))
     .await?;
     send_line("").await?;
@@ -878,9 +869,94 @@ async fn cmd_rbcp(state: &SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
     let chip = state.chip.ok_or(Error::ChipNotSet)?;
     require_cs(chip, state.cs)?;
-    send_line(&format!("Querying a One ROM serving {chip} over RBCP")).await?;
+    send_line(&format!(
+        "Querying a One ROM serving {chip} over RBCP{}",
+        host_suffix(state.host)
+    ))
+    .await?;
     send_line("").await?;
-    do_rbcp(board, chip, state.cs, true).await
+    do_rbcp(board, chip, state.cs, true, state.host).await
+}
+
+/// Set the host bus timing, or turn it off.
+async fn cmd_set_host(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
+    let current = match state.host {
+        None => String::from("off"),
+        Some(host) if host == C64 => String::from("c64"),
+        Some(host) => host.cycle_ns.to_string(),
+    };
+    let cycle_ns = match parser::get_host(args.next_token(), &current, &mut state.editor).await? {
+        HostChoice::Off => return set_host(state, None).await,
+        HostChoice::C64 => return set_host(state, Some(C64)).await,
+        HostChoice::Cycle(ns) => ns,
+    };
+
+    // Fields left out default to the current profile, or to the C64's.
+    let base = state.host.unwrap_or(C64);
+    let extra = parser::get_number(
+        args.next_token(),
+        base.extra.into(),
+        "Non-ROM cycles",
+        0..=u8::MAX.into(),
+        &mut state.editor,
+    )
+    .await?;
+    let glitch_ns = parser::get_number(
+        args.next_token(),
+        base.glitch_ns,
+        "Glitch (ns, 0=none)",
+        0..=u32::MAX,
+        &mut state.editor,
+    )
+    .await?;
+    let cs_ns = parser::get_number(
+        args.next_token(),
+        base.cs_ns,
+        "Chip select active (ns)",
+        0..=u32::MAX,
+        &mut state.editor,
+    )
+    .await?;
+    let glitch_pos_ns = parser::get_number(
+        args.next_token(),
+        base.glitch_pos_ns,
+        "Glitch position (ns)",
+        0..=u32::MAX,
+        &mut state.editor,
+    )
+    .await?;
+    let glitch_every = parser::get_number(
+        args.next_token(),
+        base.glitch_every.get().into(),
+        "Non-ROM cycles per glitch",
+        1..=u8::MAX.into(),
+        &mut state.editor,
+    )
+    .await?;
+
+    let profile = HostProfile {
+        cycle_ns,
+        extra: extra as u8,
+        glitch_ns,
+        cs_ns,
+        glitch_pos_ns,
+        glitch_every: NonZeroU8::new(glitch_every as u8).ok_or(Error::Syntax)?,
+    };
+    profile.to_bus().map_err(Error::HostProfile)?;
+    set_host(state, Some(profile)).await
+}
+
+async fn set_host(state: &mut SessionState, host: Option<HostProfile>) -> Result<(), Error> {
+    state.host = host;
+    let name = host.map_or(String::from("off"), |host| host::name(&host));
+    send_line(&format!("Host set to '{name}'.")).await
+}
+
+/// The profile for the first line of a read or RBCP query, if one is set.
+fn host_suffix(host: Option<HostProfile>) -> String {
+    host.map_or(String::new(), |host| {
+        format!(", host {}", host::name(&host))
+    })
 }
 
 /// RBCP and a fast read require every configurable control line's polarity,
@@ -909,7 +985,13 @@ fn require_cs(chip: ChipType, cs: CsSettings) -> Result<(), Error> {
 /// `full` prints the whole query, as `R` does. Otherwise each mode is one line,
 /// as a batch pass prints it, plus any warning. A
 /// failed query is printed and the next mode is still queried.
-async fn do_rbcp(board: Board, chip: ChipType, cs: CsSettings, full: bool) -> Result<(), Error> {
+async fn do_rbcp(
+    board: Board,
+    chip: ChipType,
+    cs: CsSettings,
+    full: bool,
+    host: Option<HostProfile>,
+) -> Result<(), Error> {
     let modes = chip.bit_modes();
     let table = SignerTable::built_in();
 
@@ -917,9 +999,14 @@ async fn do_rbcp(board: Board, chip: ChipType, cs: CsSettings, full: bool) -> Re
         yield_to_usb().await;
         let mut reader = RomReader::new(board, chip, cs.to_polarities(), false);
         reader.init();
+        reader.set_host(host)?;
         reader.begin_read(mode);
         let result = crate::rbcp::query(&mut reader, board, mode);
         reader.end_read();
+        // A host bus fault replaces the RBCP error it caused.
+        let result = reader
+            .host_fault()
+            .and_then(|()| result.map_err(Error::Rbcp));
 
         let label = mode_label(mode, modes.len());
         if full && modes.len() > 1 {
@@ -927,9 +1014,9 @@ async fn do_rbcp(board: Board, chip: ChipType, cs: CsSettings, full: bool) -> Re
         }
         let report = match result {
             Ok(id) => Report::new(&id, &table).await,
-            Err(f) => {
+            Err(e) => {
                 let indent = if full { "" } else { "  " };
-                send_line(&format!("{indent}{label}Error: {}", Error::Rbcp(f))).await?;
+                send_line(&format!("{indent}{label}Error: {e}")).await?;
                 if full {
                     send_line("").await?;
                 }
@@ -1214,12 +1301,16 @@ async fn yield_to_usb() {
 async fn do_read(
     board: Board,
     chip: ChipType,
-    range: ReadRange,
-    fmt: OutputFormat,
-    cs: CsSettings,
-    tristate: bool,
+    state: &SessionState,
     rbcp: bool,
 ) -> Result<(), Error> {
+    let (range, fmt, cs, tristate, host) = (
+        state.range,
+        state.format,
+        state.cs,
+        state.tri_state,
+        state.host,
+    );
     let needs_scan = chip.control_lines().iter().any(|c| {
         c.line_type == ControlLineType::Configurable
             && match c.name {
@@ -1231,12 +1322,13 @@ async fn do_read(
     });
 
     if needs_scan {
-        return scan_cs(board, chip, cs, tristate).await;
+        return scan_cs(board, chip, cs, tristate, host).await;
     }
 
     let (start, count) = resolve_range(range, chip);
     let mut reader = RomReader::new(board, chip, cs.to_polarities(), tristate);
     reader.init();
+    reader.set_host(host)?;
 
     match fmt {
         OutputFormat::Checksum => output_checksum(&mut reader, chip, start, count).await?,
@@ -1244,8 +1336,9 @@ async fn do_read(
         OutputFormat::IntelHex => crate::output::ihex::dump(&mut reader, start, count).await?,
         OutputFormat::Srec => crate::output::srec::dump(&mut reader, start, count).await?,
     }
+    reader.host_fault()?;
     if rbcp {
-        do_rbcp(board, chip, cs, false).await?;
+        do_rbcp(board, chip, cs, false, host).await?;
     }
     if fmt == OutputFormat::Checksum || rbcp {
         send_line("").await?;
@@ -1277,6 +1370,7 @@ async fn output_checksum(
 
     yield_to_usb().await;
     let results = reader.read();
+    reader.host_fault()?;
 
     send_line("").await?;
     for r in &results {
@@ -1345,6 +1439,7 @@ async fn scan_cs(
     chip: ChipType,
     cs: CsSettings,
     tristate: bool,
+    host: Option<HostProfile>,
 ) -> Result<(), Error> {
     let auto: alloc::vec::Vec<&'static str> = chip
         .control_lines()
@@ -1388,6 +1483,7 @@ async fn scan_cs(
 
         let mut reader = RomReader::new(board, chip, test, tristate);
         reader.init();
+        reader.set_host(host)?;
 
         let label = auto
             .iter()
@@ -1408,6 +1504,7 @@ async fn scan_cs(
                 checksum += core::num::Wrapping(byte as u32);
             }
             reader.end_read();
+            reader.host_fault()?;
 
             let mut sha1 = [0u8; 20];
             sha1.copy_from_slice(&sha.finalize());

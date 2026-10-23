@@ -95,6 +95,9 @@ cargo test -p onerom-metadata
 echo "Testing onerom-metadata-gen..."
 cargo test -p onerom-metadata-gen
 
+echo "Testing onerom-lab-bus..."
+cargo test -p onerom-lab-bus
+
 echo "Testing onerom-lab-metadata..."
 cargo test -p onerom-lab-metadata
 

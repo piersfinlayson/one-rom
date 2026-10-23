@@ -70,6 +70,7 @@ unsafe extern "C" {
 }
 
 mod driver;
+mod lab_host;
 mod suites;
 
 use driver::{Bus, CsCycles};
@@ -100,6 +101,19 @@ pub struct Ctx {
     pub active_ram_slot: u8,
     /// Size of the device's dedicated NV storage, in bytes.
     pub nv_size: u32,
+    /// The served slot's CS monitor.
+    pub monitor: Monitor,
+}
+
+/// The served slot's CS monitor, as the firmware sets it up.
+#[derive(Debug, Clone)]
+pub struct Monitor {
+    /// The CS algorithm, from the slot's metadata, or why it isn't known.
+    pub cs: Result<min_cs_act::Cs, String>,
+    /// The minimum CS-active time in PIO cycles, where the slot has one.
+    pub min_cycles: Option<u32>,
+    /// The clock the slot runs at.
+    pub mhz: u16,
 }
 
 impl Ctx {
@@ -258,8 +272,13 @@ fn main() {
         .unwrap_or_else(|e| panic!("Failed to parse config '{config_path}': {e}"));
 
     let modes = modes_to_run(&config);
-    let cs = cs_cycles(&config, board, &base_dir, log_enabled)
+    let monitor = monitor(&config, board, &base_dir, log_enabled)
         .unwrap_or_else(|e| panic!("Failed to work out the chip select timing: {e}"));
+    let slot = Slot {
+        cs: cs_cycles(&monitor)
+            .unwrap_or_else(|e| panic!("Failed to work out the chip select timing: {e}")),
+        monitor,
+    };
 
     let mut tally = Tally::new();
 
@@ -284,7 +303,7 @@ fn main() {
             // once per mode the chip supports, as the PIO tester does.
             for &mode in modes {
                 let label = format!("{} [{mode}-bit]", sc.name);
-                let result = run_scenario(sc, board, &config, &base_dir, log_enabled, mode, cs);
+                let result = run_scenario(sc, board, &config, &base_dir, log_enabled, mode, &slot);
                 tally.record(&label, sc.spec_ref, result);
             }
         }
@@ -369,34 +388,52 @@ fn native_word_size(config: &Config) -> u8 {
         .unwrap_or(8)
 }
 
-/// How long the host holds chip select each way for one read.  A served
-/// slot's minimum CS-active time can lengthen the hold past
-/// [`driver::CS_ACTIVE_CYCLES`], and the break so the CS monitor is sampling
-/// for the next read in time.
-fn cs_cycles(
+/// The served slot's CS monitor.
+fn monitor(
     config: &Config,
     board: Board,
     base_dir: &Path,
     log_enabled: bool,
-) -> Result<CsCycles, String> {
+) -> Result<Monitor, String> {
     let set = served_set(config).ok_or("config has no chip sets")?;
-    let Some(ns) = min_cs_act::slot_min_cs_act_ns(config, set) else {
+    let mhz = min_cs_act::slot_sysclk_mhz(set.firmware_overrides.as_ref());
+    let cs = (|| -> Result<min_cs_act::Cs, String> {
+        let version = geometry::firmware_version(board, log_enabled)?;
+        let header = geometry::build_header(config, board, version, base_dir)?;
+        let alg = header
+            .rom_slots
+            .get(plugin_sets(config) + SEL_IMAGE as usize)
+            .and_then(|slot| slot.alg.as_ref())
+            .ok_or("the metadata doesn't have the served slot's CS configuration")?;
+        min_cs_act::Cs::from_metadata(&alg.alg_cs)
+    })();
+    Ok(Monitor {
+        cs,
+        min_cycles: min_cs_act::slot_min_cs_act_ns(config, set)
+            .map(|ns| min_cs_act::min_cycles(ns, u32::from(mhz))),
+        mhz,
+    })
+}
+
+/// How long the host holds chip select each way for one read.  A served
+/// slot's minimum CS-active time can lengthen the hold past
+/// [`driver::CS_ACTIVE_CYCLES`], and the break so the CS monitor is sampling
+/// for the next read in time.
+fn cs_cycles(monitor: &Monitor) -> Result<CsCycles, String> {
+    let Some(min_cycles) = monitor.min_cycles else {
         return Ok(CsCycles::DEFAULT);
     };
-    let version = geometry::firmware_version(board, log_enabled)?;
-    let header = geometry::build_header(config, board, version, base_dir)?;
-    let alg = header
-        .rom_slots
-        .get(plugin_sets(config) + SEL_IMAGE as usize)
-        .and_then(|slot| slot.alg.as_ref())
-        .ok_or("the metadata doesn't have the served slot's CS configuration")?;
-    let cs = min_cs_act::Cs::from_metadata(&alg.alg_cs)?;
-    let mhz = min_cs_act::slot_sysclk_mhz(set.firmware_overrides.as_ref());
-    let min_cycles = min_cs_act::min_cycles(ns, u32::from(mhz));
+    let cs = monitor.cs.clone()?;
     Ok(CsCycles {
         active: driver::CS_ACTIVE_CYCLES.max(min_cs_act::access_cycles(cs, Some(min_cycles))),
         inactive: min_cs_act::break_cycles(cs, Some(min_cycles)),
     })
+}
+
+/// The served slot's bus timing.
+struct Slot {
+    cs: CsCycles,
+    monitor: Monitor,
 }
 
 /// Why the RBCP driver cannot exercise a chip type, if it cannot.
@@ -428,7 +465,7 @@ fn run_scenario(
     base_dir: &Path,
     log_enabled: bool,
     word_size: u8,
-    cs: CsCycles,
+    slot: &Slot,
 ) -> Result<Outcome, String> {
     let plugin_sets = plugin_sets(config);
     let set_idx = plugin_sets + SEL_IMAGE as usize;
@@ -542,10 +579,13 @@ fn run_scenario(
         ram_slot_count: emu.get_ram_slot_count(),
         active_ram_slot,
         nv_size,
+        monitor: slot.monitor.clone(),
     };
 
     let cache = PinCache::build(chip_type, chip, board);
-    let mut bus = Bus::new(&emu, &plugin, &cache, chip_type, unobserved, word_size, cs);
+    let mut bus = Bus::new(
+        &emu, &plugin, &cache, chip_type, unobserved, word_size, slot.cs,
+    );
 
     // Settle before the first access, as the other testers do.
     emu.step_cycles(timing::CYCLES_BEFORE_START);

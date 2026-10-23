@@ -6,7 +6,7 @@ MAKEFLAGS += --no-builtin-rules --no-builtin-variables
 # directory after changing these, so it is re-cloned.  Note that epio pins its
 # own apio version for its internal build, in epio/Makefile.
 APIO_VERSION ?= v0.3.0
-EPIO_VERSION ?= v0.2.2
+EPIO_VERSION ?= v0.2.3
 
 # Build mode.  WASM=1 cross-compiles the library to WebAssembly with the
 # Emscripten toolchain (for One ROM Lens); the default is a native host build.

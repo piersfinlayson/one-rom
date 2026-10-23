@@ -331,6 +331,7 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-app`](rust/app) | ✓ | Transport-free logic shared by the CLI, Studio and the web tools. |
 | [`onerom-studio`](rust/studio) | | The desktop GUI, released at [onerom.org/studio](https://onerom.org/studio). |
 | [`onerom-lab`](rust/lab) | | One ROM Lab, above. |
+| [`onerom-lab-bus`](rust/lab-bus) | | One ROM Lab's host bus timing. |
 | [`onerom-signing-server`](rust/signing-server) | | Signs commissioning instances. |
 | [`onerom-lens`](rust/lens) | | One ROM Lens — compiles the firmware emulator to WebAssembly and draws PIO and DMA activity as waveforms in a browser, cycle by cycle. |
 | [`onerom-fw-emulator`](rust/fw-emulator) | | Compiles and runs the real firmware C on a host, PIOs and all. |

@@ -20,6 +20,7 @@ use embedded_alloc::LlffHeap as Heap;
 use panic_rtt_target as _;
 
 use once_cell::sync::OnceCell;
+use onerom_lab_bus::SYS_CLOCK_HZ;
 use static_cell::StaticCell;
 
 mod cdc;
@@ -28,6 +29,7 @@ mod commissioning;
 mod drive;
 mod error;
 mod fast_read;
+mod host;
 mod hw;
 mod logs;
 mod metadata;
@@ -94,9 +96,9 @@ async fn main(spawner: Spawner) -> ! {
 
     // Clocks
     let mut config = Config::default();
-    config.clocks = ClockConfig::system_freq(150_000_000).expect("Failed to configure clocks");
+    config.clocks = ClockConfig::system_freq(SYS_CLOCK_HZ).expect("Failed to configure clocks");
     let p = embassy_rp::init(config);
-    debug!("Clocks configured to 150MHz");
+    debug!("Clocks configured to {}MHz", SYS_CLOCK_HZ / 1_000_000);
 
     init_serial_id();
     debug!("Serial ID: {}", serial_id());

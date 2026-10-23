@@ -106,6 +106,7 @@ Commands are case sensitive.
 | `d` | `d:<chip>:<lines>:<cycles>` | Drive the data lines as a square wave, with the chip deselected |
 | `R` | | Query a One ROM over RBCP |
 | `a` | `a:<chip>:<start>:<len>:<fmt>:<secs>:<cs1>:<cs2>:<cs3>` | Read the chip and query the One ROM every `<secs>` seconds |
+| `H` | `H:<cycle>:<extra>:<glitch>:<cs>:<pos>:<every>` | Set the host bus timing |
 | `p` | `p:<chip>` | Display the GPIO wired to each socket pin and X header pin |
 | `s` | | Display settings |
 | `v` | | Display the version and serial number |
@@ -217,6 +218,22 @@ Commissioned: yes
 Revision and batch are displayed where the One ROM was commissioned with them.
 Where a One ROM's size differs from the size it was commissioned as,
 `Board size` displays both, for example `L (commissioned as M)`.
+
+### Host bus timing
+
+`H` sets the bus timing of `r`, `q`, `b`, `a` and `R`.
+
+- `H:off` is Lab's own timing, the default.
+- `H:c64` is a PAL C64 whose chip select glitches.
+- `H:<cycle>:<extra>:<glitch>:<cs>:<pos>:<every>` sets each field, times in ns:
+  - `<cycle>` is the bus cycle.
+  - `<extra>` is the non-ROM cycles before each read, 0 to 255.
+  - `<glitch>` is the chip select glitch, 0 for none.
+  - `<pos>` is the glitch's start within its cycle.
+  - `<every>` puts a glitch on 1 in `<every>` non-ROM cycles.
+  - `<cs>` is how long chip select is active for a read.
+
+Tri-state isn't tested while `H` is set.
 
 ## Releasing
 

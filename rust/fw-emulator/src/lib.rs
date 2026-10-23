@@ -9,10 +9,12 @@
 //!
 //! * [`ffi`] — raw, unsafe bindgen-generated bindings (escape hatch)
 //! * [`Emulator`] — safe wrapper for test code
+//! * [`epio::Epio`] — an epio instance apart from the firmware's
 //! * [`driver`] — GPIO bitmask builders shared by the tester and One ROM Lens
 //! * [`build_options`] — the logging the C under test was compiled with
 
 mod emulator;
+pub mod epio;
 pub mod ffi;
 
 // The bitmask builders that feed `Emulator::drive_gpios` need no emulator to

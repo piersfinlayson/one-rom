@@ -15,6 +15,7 @@ members = [
     "fw-parser",
     "gen",
     "lab",
+    "lab-bus",
     "lens",
     "metadata",
     "lab-metadata",
@@ -73,6 +74,7 @@ onerom-fw-parser = { path="fw-parser", version="0.11.0", default-features=false 
 onerom-fw-tester = { path="fw-tester", version="0.1.0" }
 onerom-gen = { path="gen", version="0.10.0" }
 onerom-metadata = { path="metadata", version="0.4.0" }
+onerom-lab-bus = { path="lab-bus", version="0.1.0" }
 onerom-lab-metadata = { path="lab-metadata", version="0.2.0" }
 onerom-lab-parser = { path="lab-parser", version="0.2.0" }
 onerom-metadata-gen = { path="metadata-gen", version="0.2.0" }

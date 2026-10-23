@@ -424,6 +424,12 @@ impl<'a> Bus<'a> {
     /// so it can consume whatever this read put in its capture ring.
     pub fn read(&mut self, byte_addr: u32) -> Result<u8, String> {
         let data = self.read_without_resuming(byte_addr);
+        self.resume_after(byte_addr)?;
+        Ok(data)
+    }
+
+    /// Lets the device run after a read of `byte_addr`, as [`Bus::read`] does.
+    pub fn resume_after(&mut self, byte_addr: u32) -> Result<(), String> {
         self.plugin
             .resume(&format!("after read of 0x{byte_addr:06X}"))?;
 
@@ -443,7 +449,27 @@ impl<'a> Bus<'a> {
         // driver which command a given byte belongs to.
         self.emu.update_from_apio();
 
-        Ok(data)
+        Ok(())
+    }
+
+    /// The emulator.
+    pub fn emu(&self) -> &'a Emulator {
+        self.emu
+    }
+
+    /// The served chip's GPIOs.
+    pub fn cache(&self) -> &'a PinCache {
+        self.cache
+    }
+
+    /// The lines held throughout a read, as `(mask, levels)`.
+    pub fn background(&self) -> (u64, u64) {
+        self.background
+    }
+
+    /// Whether the ROM is being served as words rather than bytes.
+    pub fn word_mode(&self) -> bool {
+        self.word_mode
     }
 
     /// As [`Bus::read`], but without letting the device run afterwards.

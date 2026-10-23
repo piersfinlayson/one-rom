@@ -49,6 +49,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-metadata --no-deps
 echo "Generating documentation for onerom-metadata-gen..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-metadata-gen --no-deps
 
+echo "Generating documentation for onerom-lab-bus..."
+RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-lab-bus --no-deps
+
 echo "Generating documentation for onerom-lab-metadata..."
 RUSTDOCFLAGS="-D warnings" cargo doc -p onerom-lab-metadata --no-deps
 

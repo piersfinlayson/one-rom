@@ -6,6 +6,7 @@
 - `a` is a batch read that reads the ROM and queries One ROM information.
 - `x` reads a chip continuously at MHz rates.
 - `d` drives a chip's data lines as a square wave, with the chip deselected.
+- `H` emulates a host's bus timing, including chip select glitches.
 - 8-bit and 16-bit result lines now line up.
 
 ## v0.4.0 - 2026-10-06

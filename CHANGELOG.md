@@ -32,6 +32,7 @@ In detail:
   - `a` is a batch read that reads the ROM and queries One ROM information.
   - `x` reads a chip continuously at MHz rates.
   - `d` drives a chip's data lines as a square wave, with the chip deselected.
+  - `H` emulates a host's bus timing, including chip select glitches.
 - Plugins:
   - host-control 0.1.7
     - Requires firmware 0.8.1.

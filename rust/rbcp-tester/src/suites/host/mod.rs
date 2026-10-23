@@ -16,6 +16,8 @@ use crate::Scenario;
 use crate::driver::{Bus, POLL_LIMIT};
 use crate::{Ctx, Outcome};
 
+mod lab;
+
 pub static SCENARIOS: &[Scenario] = &[
     Scenario {
         name: "host.identity",
@@ -26,6 +28,22 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "host.restore_on_drop",
         spec_ref: "onerom-rbcp-host: a session dropped without restore_and_exit",
         run: restore_on_drop,
+    },
+    Scenario {
+        name: "host.lab_bus_timing",
+        spec_ref: "One ROM Lab's host bus: each line and R's sample at the burst's cycle",
+        run: lab::bus_timing,
+    },
+    Scenario {
+        name: "host.lab_c64_read",
+        spec_ref: "One ROM Lab's host bus, c64 profile: a ROM read returns the ROM's data",
+        run: lab::c64_read,
+    },
+    Scenario {
+        name: "host.lab_c64_identity",
+        spec_ref: "One ROM Lab's host bus, c64 profile: the identity query works unless the \
+                   CS monitor captures the glitches",
+        run: lab::c64_identity,
     },
 ];
 

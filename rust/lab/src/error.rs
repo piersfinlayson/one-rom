@@ -51,6 +51,14 @@ pub enum Error {
     DrivePins,
     /// A drive's data lines include one the chip doesn't have
     DriveLines(usize),
+    /// A host profile breaks a limit
+    HostProfile(onerom_lab_bus::ProfileError),
+    /// The board's pins for this chip can't be driven by the host bus
+    HostPins,
+    /// The host bus didn't return a sample in time
+    HostTimeout,
+    /// A host bus machine ran out of words mid-burst
+    HostStall,
 }
 
 impl From<crate::usb::Error> for Error {
@@ -95,6 +103,12 @@ impl fmt::Display for Error {
                 write!(f, "data lines can't be driven for this chip on this board")
             }
             Self::DriveLines(n) => write!(f, "this chip has {n} data lines"),
+            Self::HostProfile(e) => write!(f, "{}", crate::host::profile_error(*e)),
+            Self::HostPins => {
+                write!(f, "the host bus doesn't support this chip on this board")
+            }
+            Self::HostTimeout => write!(f, "host bus read timed out"),
+            Self::HostStall => write!(f, "host bus stalled"),
         }
     }
 }

@@ -525,6 +525,52 @@ pub fn break_cycles(cs: Cs, min_cycles: Option<u32>) -> u32 {
         .fold(0, u32::max)
 }
 
+/// Whether the CS monitor captures any of the CS-active pulses of `pulse`
+/// cycles that start at the cycles in `starts`, with the monitor idle before
+/// the first.  `None` where that depends on the phase of the monitor's
+/// sampling.
+///
+/// A pulse of up to `Timing::ignored` cycles is never captured and one of
+/// `Timing::captured` cycles or more always is, at either level of AlgCs1's
+/// masked GPIO and whatever AlgCs2's qualifier lines read.
+///
+/// Between the two, AlgCs0 captures a pulse whose first sample comes under
+/// `pulse - Timing::ignored` cycles after it starts.  It samples every
+/// `Timing::poll` cycles whether chip select is active or not, so a pulse it
+/// misses leaves its samples where they were.
+pub fn pulses_captured(
+    cs: Cs,
+    min_cycles: Option<u32>,
+    pulse: u32,
+    starts: &[u32],
+) -> Option<bool> {
+    let timings = [Masked::Low, Masked::High].into_iter().flat_map(|masked| {
+        [false, true].map(|end_deselects| {
+            Timing::expected(cs, min_cycles, masked, Edges::Together, end_deselects)
+        })
+    });
+    let ignored = timings.clone().map(|t| t.ignored).min()?;
+    let captured = timings.map(|t| t.captured).max()?;
+    if starts.is_empty() || pulse <= ignored {
+        return Some(false);
+    }
+    if pulse >= captured {
+        return Some(true);
+    }
+    if cs.alg != CsAlg::Cs0 {
+        return None;
+    }
+
+    let poll = Timing::expected(cs, min_cycles, Masked::Low, Edges::Together, false).poll;
+    let window = pulse - ignored;
+    let every_phase = (0..poll).all(|phase| {
+        starts
+            .iter()
+            .any(|&start| (phase + poll - start % poll) % poll < window)
+    });
+    every_phase.then_some(true)
+}
+
 /// What a pulse left in the ring.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Capture {
@@ -1192,5 +1238,30 @@ mod tests {
                 "{alg:?}"
             );
         }
+    }
+
+    // Unset, AlgCs0 never captures 6 cycles, always captures 9 and samples
+    // every 3.  A 7-cycle pulse is captured at 1 phase in 3.
+    #[test]
+    fn pulses_captured_at_every_phase() {
+        let cs = |alg| Cs {
+            alg,
+            masked_gpio: None,
+            sides: None,
+            lone_gpio: None,
+            select_gpios: None,
+            qualifiers: None,
+        };
+        let cs0 = cs(CsAlg::Cs0);
+        let one_phase = [0, 147, 294];
+        let every_phase = [0, 152, 304];
+        assert_eq!(pulses_captured(cs0, None, 9, &[]), Some(false));
+        assert_eq!(pulses_captured(cs0, None, 6, &every_phase), Some(false));
+        assert_eq!(pulses_captured(cs0, None, 9, &one_phase), Some(true));
+        assert_eq!(pulses_captured(cs0, None, 7, &every_phase), Some(true));
+        assert_eq!(pulses_captured(cs0, None, 7, &one_phase), None);
+        assert_eq!(pulses_captured(cs0, None, 8, &[0, 1]), Some(true));
+        assert_eq!(pulses_captured(cs0, None, 7, &[0, 1]), None);
+        assert_eq!(pulses_captured(cs(CsAlg::Cs1), None, 7, &every_phase), None);
     }
 }
