@@ -16,7 +16,8 @@ It reads:
 ## Build and flash
 
 `scripts/flash.sh` builds Lab and loads it with `picotool`. A board running Lab
-or One ROM with the USB plugin is rebooted into its bootloader by the script.
+or One ROM with the USB plugin is rebooted into its bootloader by the script,
+using the `onerom` CLI.
 Hold BOOTSEL while connecting any other board.
 
 ```bash

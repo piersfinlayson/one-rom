@@ -1267,8 +1267,10 @@ async fn cmd_reset_to_bootloader() -> Result<(), Error> {
     Timer::after_millis(100).await;
     // 0x102 - Reboot to BOOTSEL, don't return
     // 100ms delay before rebooting
-    // 0x1 - No USB drive, matching One ROM.  A PICOBOOT host can ask for one.
-    embassy_rp::rom_data::reboot(0x102, 100, 0, 0x1);
+    // 0x1 in p0 - No mass storage device, matching One ROM.  A PICOBOOT host
+    // can ask for one.  The datasheet swaps p0 and p1 - see rom_reboot() in
+    // firmware/src/rp235x.c.
+    embassy_rp::rom_data::reboot(0x102, 100, 0x1, 0);
     Ok(())
 }
 

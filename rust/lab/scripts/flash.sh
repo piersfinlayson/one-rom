@@ -24,12 +24,14 @@ usage() {
 }
 
 SER=()
+ONEROM_SER=()
 BOARD=
 while [ $# -gt 0 ]; do
     case $1 in
         --serial)
             [ -n "${2:-}" ] || usage
             SER=(--ser "$2")
+            ONEROM_SER=(--serial "$2")
             shift 2
             ;;
         *)
@@ -43,9 +45,6 @@ echo "Board:   $BOARD"
 
 ELF=../target/thumbv8m.main-none-eabihf/release/onerom-lab-fire
 
-# A running Lab, or One ROM with the USB plugin.
-RUNNING=(--vid 0x1209 --pid 0xf542)
-
 # A commissioned board's bootloader.  A board that hasn't been commissioned
 # appears as a stock RP2350, which picotool finds without arguments.
 COMMISSIONED=(--vid 0x1209 --pid 0xf540)
@@ -58,10 +57,14 @@ env "${ENV_VARS[@]}" cargo build --release
 
 # --- Reboot into the bootloader and flash ---
 
+# The onerom CLI reboots a running Lab, or One ROM with the USB plugin, without
+# the mass storage device, which `picotool reboot -u` always enables.  A drive
+# mounted here is removed without being ejected when the board restarts.
+#
 # The reboot fails for a board already in its bootloader, so its error is
 # displayed only where no bootloader is found.
 REBOOT_ERROR=
-if REBOOT_ERROR=$(picotool reboot -u "${RUNNING[@]}" "${SER[@]}" 2>&1); then
+if REBOOT_ERROR=$(onerom control reboot --stopped --yes "${ONEROM_SER[@]}" 2>&1); then
     echo "Rebooted the running board into its bootloader"
 fi
 
