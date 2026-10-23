@@ -8,6 +8,7 @@
 - `d` drives a chip's data lines as a square wave, with the chip deselected.
 - `H` emulates a host's bus timing, including chip select glitches.
 - 8-bit and 16-bit result lines now line up.
+- `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
 
 ## v0.4.0 - 2026-10-06
 

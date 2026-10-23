@@ -1267,7 +1267,8 @@ async fn cmd_reset_to_bootloader() -> Result<(), Error> {
     Timer::after_millis(100).await;
     // 0x102 - Reboot to BOOTSEL, don't return
     // 100ms delay before rebooting
-    embassy_rp::rom_data::reboot(0x102, 100, 0, 0);
+    // 0x1 - No USB drive, matching One ROM.  A PICOBOOT host can ask for one.
+    embassy_rp::rom_data::reboot(0x102, 100, 0, 0x1);
     Ok(())
 }
 
