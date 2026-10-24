@@ -343,7 +343,7 @@ pub struct ProgramArgs {
     #[arg(long, visible_aliases = ["name", "instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
     pub instance_name: Option<String>,
 
-    /// Give this One ROM a custom USB serial number, in place of the RP2350
+    /// Assign this One ROM a custom USB serial number, in place of the RP2350
     /// chip ID it would otherwise report.
     ///
     /// Used by the USB plugin while One ROM is running. A stopped One ROM is on
@@ -364,7 +364,7 @@ pub struct ProgramArgs {
 
     /// Enable turbo boot - starts ROM serving faster by not reading the image
     /// select jumpers, so the first non-plugin slot is always the one served.
-    /// More than one non-plugin slot is refused unless --force is given.
+    /// More than one non-plugin slot is refused unless --force is provided.
     #[arg(long, visible_aliases = ["turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
 

@@ -103,7 +103,7 @@ pub enum HardwareCommands {
     /// Sign a One ROM's commissioning instance
     ///
     /// Generates a commissioning instance's signature for the One ROM with the
-    /// given Chip ID which can be used with hardware commission's --signature
+    /// provided Chip ID which can be used with hardware commission's --signature
     /// option.
     ///
     /// This command does not operate on One ROM hardware directly.

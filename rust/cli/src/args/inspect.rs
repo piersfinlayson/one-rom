@@ -102,7 +102,7 @@ pub enum InspectCommands {
     /// Show what the connected One ROM's status LED is doing.
     ///
     /// Reports the mode it is in, how fast it is running, and which GPIO it is
-    /// on. Use 'onerom inspect rgb' for the RGB LED some models carry.
+    /// on. Use 'onerom inspect rgb' for the RGB LED some models support.
     ///
     /// Examples:
     ///

@@ -198,7 +198,7 @@ pub struct Cli {
     /// times.
     ///
     /// Use in conjunction with --unrecognised to manage One ROMs that do not
-    /// have a known One ROM firmware signature, such as unprogrammed or
+    /// have a known One ROM firmware signature, for example unprogrammed or
     /// bricked One ROMs.
     #[arg(global = true, long, visible_alias="id", value_name = "VID:PID", value_parser = parse_vid_pid, action = clap::ArgAction::Append)]
     pub vid_pid: Vec<(u16, u16)>,
@@ -207,7 +207,7 @@ pub struct Cli {
     ///
     /// This is a global flag that can be used with any command to allow
     /// this tool to manage RP2350-based One ROMs that do not have a known One
-    /// ROM firmware signature, such as unprogrammed or bricked One ROMs.
+    /// ROM firmware signature, for example unprogrammed or bricked One ROMs.
     ///
     /// Note that even unrecognised One ROMs must answer on a valid picoboot
     /// USB interface to be detected and managed by this tool.  A device that
@@ -731,7 +731,7 @@ pub enum Commands {
 
     /// List supported One ROM board types, or view a board's pin layouts.
     ///
-    /// `list` names the supported One ROM board types. `header` and `socket`
+    /// `list` prints the supported One ROM board types. `header` and `socket`
     /// draw a board's pin (jumper) header and ROM socket pinout as ASCII.
     ///
     /// Examples:
