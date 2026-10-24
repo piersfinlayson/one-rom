@@ -161,14 +161,18 @@ endif
   BOARD_FLAG = --board $(BOARD)
 endif
 
-# Set up CARGO_TARGET_DIR
+# The folder fw-config-gen is built into and run from.  The fw-config-gen rule
+# passes cargo a matching --target-dir, so a CARGO_TARGET_DIR in the environment
+# cannot build it elsewhere and leave gen-config running an old copy.  It is not
+# itself called CARGO_TARGET_DIR, because make passes a variable of that name on
+# to every cargo it runs whenever the environment already has one.
 ifeq ($(CARGO_PROFILE),)
-  CARGO_TARGET_DIR := rust/target/debug
+  FW_CONFIG_GEN_DIR := rust/target/debug
 else
-  CARGO_TARGET_DIR := rust/target/$(CARGO_PROFILE)
+  FW_CONFIG_GEN_DIR := rust/target/$(CARGO_PROFILE)
 endif
 ifneq ($(SUPPRESS_OUTPUT),1)
-$(info - CARGO_TARGET_DIR=$(CARGO_TARGET_DIR))
+$(info - FW_CONFIG_GEN_DIR=$(FW_CONFIG_GEN_DIR))
 endif
 
 ifneq ($(ARGS),)
@@ -223,7 +227,7 @@ generated:
 	@$(SCRUB_CARGO_ENV) cd rust && cargo build --$(CARGO_PROFILE) -p onerom-metadata
 
 fw-config-gen:
-	@$(SCRUB_CARGO_ENV) cd rust && cargo build --$(CARGO_PROFILE) -p fw-config-gen --quiet
+	@$(SCRUB_CARGO_ENV) cd rust && cargo build --$(CARGO_PROFILE) -p fw-config-gen --target-dir target --quiet
 
 firmware: generated
 	@echo "=========================================="
@@ -266,7 +270,7 @@ gen-config: fw-config-gen
 	@echo "=========================================="
 	@echo "Generating C-based metadata"
 	@echo "-----"
-	@$(CARGO_TARGET_DIR)/fw-config-gen \
+	@$(FW_CONFIG_GEN_DIR)/fw-config-gen \
 		$(CONFIG_FLAG) \
 		--version $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH).$(BUILD_NUMBER) \
 		$(BOARD_FLAG) \
