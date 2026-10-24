@@ -20,6 +20,8 @@ In detail:
   - `firmware inspect` displays each slot's firmware overrides.
   - Breaking: `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
   - `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
+  - Breaking: `onerom program` fails on options it previously ignored when used with `--firmware` or `--base-firmware`, for example `--instance-name`.
+  - Breaking: `onerom program --base-firmware` without `--config` or `--slot` requires `--no-config`.
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
   - The One ROM Builder tab's Load from Device and Load from File buttons copy the configuration and ROM images of a One ROM or firmware file into the One ROM Builder tab.

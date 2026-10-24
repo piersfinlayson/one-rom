@@ -284,3 +284,50 @@ fn an_addr_mon_min_cs_act_ns_that_fails_to_parse() {
         "onerom program --no-config --addr-mon-min-cs-act-ns 140",
     ]);
 }
+
+/// Each option written into a firmware the CLI builds, with a firmware it
+/// doesn't build.
+const BUILD_OPTIONS: [&str; 10] = [
+    "--config-name c64",
+    "--config-description c64",
+    "--save-config c64.json",
+    "--instance-name kernal",
+    "--serial-override 0001",
+    "--logging",
+    "--disable-swd",
+    "--turbo-boot",
+    "--reserve-pin x1",
+    "--addr-mon-min-cs-act-ns 140",
+];
+
+/// Each of these fails to parse.
+#[test]
+fn a_build_option_with_a_prebuilt_image() {
+    let lines: Vec<String> = BUILD_OPTIONS
+        .iter()
+        .map(|option| format!("onerom program --firmware image.bin {option}"))
+        .collect();
+    super::refused_lines(&lines);
+}
+
+/// Each fails to parse except the last three, which have `--no-config` or a
+/// config source.
+#[test]
+fn a_base_firmware_without_a_config_or_slot() {
+    let mut lines: Vec<String> = BUILD_OPTIONS
+        .iter()
+        .chain(&["--plugin usb", "--no-plugin"])
+        .map(|option| format!("onerom program --base-firmware base.bin {option}"))
+        .collect();
+    lines.push("onerom program --base-firmware base.bin --no-config --config-name c64".into());
+    lines.push("onerom program --base-firmware base.bin".into());
+    lines.push("onerom program --base-firmware base.bin --no-config".into());
+    lines.push(
+        "onerom program --base-firmware base.bin --config c64.json --instance-name kernal".into(),
+    );
+    lines.push(
+        "onerom program --base-firmware base.bin --slot file=kernal.bin,type=2364 --instance-name kernal"
+            .into(),
+    );
+    super::refused_lines(&lines);
+}

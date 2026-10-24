@@ -81,6 +81,13 @@ release, and never in a minor or a patch.
 - An unused signature from an earlier CLI fails with
   `hardware commission --signature`. One ROMs already commissioned aren't
   affected. Raise a new signing request, or sign again with `hardware sign`.
+- `--config-name`, `--config-description`, `--save-config` and the
+  [per-device overrides](#per-device-overrides) are rejected when used with
+  `program --firmware`. When used with `program --base-firmware` these,
+  `--plugin` and `--no-plugin` are rejected unless `--config` or `--slot` is
+  used. Previously they were ignored.
+- `program --base-firmware` without `--config` or `--slot` requires
+  `--no-config`.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -853,8 +860,8 @@ onerom program --config c64.json --out firmware.bin
 |---|---|
 | `--config, -j <FILE>` (aliases `--config-file`, `--config-json`, `--json`) | ROM configuration JSON file or http(s) URL. Conflicts with `--slot`, `--config-name`, `--config-description`, `--save-config`, `--no-config`, `--firmware`. |
 | `--slot <SPEC>` (alias `--rom`) | ROM slot specification; repeatable. See [ROM slot specification](#rom-slot-specification). Conflicts with `--config`, `--no-config`, `--firmware`. |
-| `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config`, `--slot`, `--base-firmware` and `--plugin` because a pre-built firmware already contains all ROMs/plugins. Also conflicts with `--version`. |
-| `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. With `--slot`, ROMs are built into it; alone, requires `--no-config`. Conflicts with `--firmware`, `--version`. |
+| `--firmware <FILE>` (alias `--fw`) | Flash a pre-built complete firmware binary directly. Conflicts with `--config`, `--slot`, `--base-firmware` and `--plugin` because a pre-built firmware already contains all ROMs/plugins. Also conflicts with `--version`, `--config-name`, `--config-description`, `--save-config` and the per-device overrides. |
+| `--base-firmware <FILE>` | Use a local minimal firmware instead of downloading. Without `--config` or `--slot` it requires `--no-config` and is flashed as is. It then can't be used with `--plugin`, `--no-plugin`, `--config-name`, `--config-description`, `--save-config` or the per-device overrides. Conflicts with `--firmware`, `--version`. |
 | `--no-config` | Confirm flashing a base firmware with no ROM configuration. Only valid with `--config-name` and/or `--config-description`. Conflicts with `--config`, `--slot`, `--firmware`, and the config-override options below. |
 
 ### Configuration metadata
@@ -869,7 +876,7 @@ onerom program --config c64.json --out firmware.bin
 
 ### Per-device overrides
 
-These are rejected with `--no-config`.
+These are rejected when used with `--no-config` or `--firmware`. When used with `--base-firmware` they're rejected unless `--config` or `--slot` is used.
 
 | Option | Description |
 |---|---|
@@ -3404,6 +3411,13 @@ release. Newest release first.
 - An unused signature from an earlier CLI fails with
   `hardware commission --signature`. One ROMs already commissioned aren't
   affected. Raise a new signing request, or sign again with `hardware sign`.
+- `--config-name`, `--config-description`, `--save-config` and the
+  [per-device overrides](#per-device-overrides) are rejected when used with
+  `program --firmware`. When used with `program --base-firmware` these,
+  `--plugin` and `--no-plugin` are rejected unless `--config` or `--slot` is
+  used. Previously they were ignored.
+- `program --base-firmware` without `--config` or `--slot` requires
+  `--no-config`.
 
 ### v0.5.0
 

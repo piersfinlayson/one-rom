@@ -4,9 +4,10 @@
 
 //! Argument definitions for `onerom program`.
 
-use crate::args::CommandTrait;
+use crate::args::{CommandTrait, arg_error};
 use crate::utils::parse_addr_mon_min_cs_act_ns;
 use clap::Args;
+use clap::error::ErrorKind;
 use onerom_cli::pin::{Pin, parse_pin, parse_reserve_pin};
 use onerom_cli::usb::RebootArgs;
 
@@ -214,21 +215,26 @@ pub struct ProgramArgs {
     ///
     /// Mutually exclusive with --config, --slot, --base-firmware,
     /// and --plugin because a pre-built firmware already contains all of the
-    /// ROMs, plugins, etc.  Also conflicts with --version.
+    /// ROMs, plugins, etc.  Also conflicts with --version, --config-name,
+    /// --config-description, --save-config, --instance-name, --serial-override,
+    /// --logging, --disable-swd, --turbo-boot, --reserve-pin and
+    /// --addr-mon-min-cs-act-ns.
     #[arg(
         long,
         value_name = "FILE",
         visible_alias = "fw",
-        conflicts_with_all = ["config_file", "slot", "base_firmware", "version", "plugin"]
+        conflicts_with_all = ["config_file", "slot", "base_firmware", "version", "plugin", "config_name", "config_description", "save_config", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin", "addr_mon_min_cs_act_ns"]
     )]
     pub firmware: Option<String>,
 
     /// Use a local minimal firmware binary instead of downloading from the
     /// release server.
     ///
-    /// When used with --slot, the ROM images are built into this firmware.
-    /// When used alone, requires --no-config to confirm flashing without
-    /// ROM images.
+    /// Without --config or --slot it requires --no-config and is flashed as
+    /// is. It then can't be used with --plugin, --no-plugin, --config-name,
+    /// --config-description, --save-config, --instance-name, --serial-override,
+    /// --logging, --disable-swd, --turbo-boot, --reserve-pin or
+    /// --addr-mon-min-cs-act-ns.
     ///
     /// Must be built with EXCLUDE_METADATA=1 and ROM_CONFIGS= in order to
     /// be suitable.
@@ -387,6 +393,48 @@ pub struct ProgramArgs {
 impl CommandTrait for ProgramArgs {
     fn requires_device(&self) -> bool {
         true
+    }
+
+    fn check_args(&self) -> Result<(), clap::Error> {
+        // clap can't express a conflict or a requirement that applies only
+        // without a config source.
+        if self.base_firmware.is_none() || self.config_file.is_some() || !self.slot.is_empty() {
+            return Ok(());
+        }
+        let given = [
+            ("--plugin", !self.plugin.is_empty()),
+            ("--no-plugin", self.no_plugin),
+            ("--config-name", self.config_name.is_some()),
+            ("--config-description", self.config_description.is_some()),
+            ("--save-config", self.save_config.is_some()),
+            ("--instance-name", self.instance_name.is_some()),
+            ("--serial-override", self.serial_override.is_some()),
+            ("--logging", self.logging.is_some()),
+            ("--disable-swd", self.disable_swd.is_some()),
+            ("--turbo-boot", self.turbo_boot.is_some()),
+            ("--reserve-pin", !self.reserve_pin.is_empty()),
+            (
+                "--addr-mon-min-cs-act-ns",
+                self.addr_mon_min_cs_act_ns.is_some(),
+            ),
+        ];
+        if let Some((option, _)) = given.iter().find(|(_, given)| *given) {
+            return Err(arg_error(
+                &["program"],
+                ErrorKind::ArgumentConflict,
+                format!(
+                    "the argument '--base-firmware <FILE>' cannot be used with '{option}' without --config or --slot"
+                ),
+            ));
+        }
+        if !self.no_config {
+            return Err(arg_error(
+                &["program"],
+                ErrorKind::MissingRequiredArgument,
+                "the argument '--base-firmware <FILE>' requires '--no-config' without --config or --slot",
+            ));
+        }
+        Ok(())
     }
 }
 
