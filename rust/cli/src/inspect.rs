@@ -35,6 +35,7 @@ use onerom_fw_parser::{
     NewerGeneration, ParseError, ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind,
 };
 use onerom_lab_parser::Lab;
+use onerom_metadata::{OneromAlgDataConfig, OneromFirmwareOverrides, OneromRomSlot};
 
 pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), Error> {
     // Print the device summary
@@ -360,11 +361,37 @@ pub fn unrecognised_firmware_error(reasons: &[ParseError]) -> Error {
     Error::Other(unrecognised_firmware_lines(reasons).join("\n"))
 }
 
-/// The lines `inspect slots` prints for a slot's firmware overrides, empty
-/// where none is set.
-pub(crate) fn override_lines(overrides: &onerom_metadata::OneromFirmwareOverrides) -> Vec<String> {
+/// The lines printed for `slot`'s firmware overrides, empty where none is set.
+pub(crate) fn slot_override_lines(slot: &OneromRomSlot) -> Vec<String> {
+    let overrides = slot.firmware_overrides.clone().unwrap_or_default();
+    override_lines(&overrides, forces_16_bit(slot))
+}
+
+/// Whether `slot` was built with force-16-bit, which isn't stored as an
+/// override. A chip with an 8-bit mode is served as 16-bit `AlgData0` only
+/// with force-16-bit. See onerom-gen's `reads_byte_pin`.
+fn forces_16_bit(slot: &OneromRomSlot) -> bool {
+    let has_8_bit_mode = slot
+        .roms
+        .first()
+        .and_then(|rom| ChipType::try_from_str(&rom.rom_type))
+        .is_some_and(|chip| chip.supports_bit_mode(8));
+    has_8_bit_mode
+        && slot.alg.as_ref().is_some_and(|alg| {
+            matches!(
+                alg.alg_data,
+                OneromAlgDataConfig::AlgData0 { word_size: 16, .. }
+            )
+        })
+}
+
+/// The lines for `overrides` and force-16-bit, empty where none is set.
+pub(crate) fn override_lines(
+    overrides: &OneromFirmwareOverrides,
+    force_16_bit: bool,
+) -> Vec<String> {
     let mut lines = Vec::new();
-    if !overrides.any_present() {
+    if !overrides.any_present() && !force_16_bit {
         return lines;
     }
     lines.push("    Firmware overrides:".to_string());
@@ -394,6 +421,9 @@ pub(crate) fn override_lines(overrides: &onerom_metadata::OneromFirmwareOverride
     }
     if let Some(ns) = overrides.addr_mon_min_cs_act_ns() {
         lines.push(format!("      {}", addr_mon_min_cs_act_text(ns)));
+    }
+    if force_16_bit {
+        lines.push("      Force 16-bit".to_string());
     }
     lines
 }
@@ -608,11 +638,9 @@ pub async fn output_slot_info(
                     );
                 }
 
-                if let Some(overrides) = &slot.firmware_overrides {
-                    for line in override_lines(overrides) {
-                        print!("{prefix}");
-                        println!("{line}");
-                    }
+                for line in slot_override_lines(slot) {
+                    print!("{prefix}");
+                    println!("{line}");
                 }
 
                 for (j, rom) in slot.roms.iter().enumerate() {
@@ -1817,17 +1845,26 @@ mod tests {
         let line = addr_mon_min_cs_act_line(&parsed).unwrap();
         assert!(holds(&line, &["150ns"]), "{line}");
         let slots = &parsed.as_schema().unwrap().metadata().unwrap().rom_slots;
-        let lines = |slot: usize| {
-            slots[slot]
-                .firmware_overrides
-                .as_ref()
-                .map_or(Vec::new(), override_lines)
-        };
+        let lines = |slot: usize| slot_override_lines(&slots[slot]);
         assert!(shows(lines(0), &["300ns"]), "{:?}", lines(0));
         assert!(lines(1).is_empty(), "{:?}", lines(1));
 
         let unset = parse_firmware(&image_addr_mon(None, &[None]).await).await;
         assert_eq!(addr_mon_min_cs_act_line(&unset), None);
+    }
+
+    /// A 27C400 slot built with force-16-bit is detected and one built without
+    /// it isn't.
+    #[tokio::test]
+    async fn force_16_bit_is_detected_where_set() {
+        use crate::test_board::image_overrides;
+        use onerom_cli::image::parse_firmware;
+
+        let overrides = serde_json::json!({ "fire": { "force_16_bit": true } });
+        let parsed = parse_firmware(&image_overrides(overrides).await).await;
+        let slots = &parsed.as_schema().unwrap().metadata().unwrap().rom_slots;
+        assert!(forces_16_bit(&slots[0]));
+        assert!(!forces_16_bit(&slots[1]));
     }
 
     /// Print every shape the table takes, for eyeballing:

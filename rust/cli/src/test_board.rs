@@ -222,14 +222,26 @@ pub fn config_27c400(sets: usize, dir: &Path) -> String {
 /// An image file built for a `size` fire-40-a with v0.8.0 firmware from
 /// [`base_firmware`]. It holds `sets` single 27C400 chip sets.
 pub async fn image_file(size: BoardSize, sets: usize) -> Vec<u8> {
+    image_27c400(size, &config_27c400(sets, Path::new("rom")), sets).await
+}
+
+/// An [`image_file`] for an M board with two chip sets. Set 0 has `overrides`
+/// as its `firmware_overrides`.
+pub async fn image_overrides(overrides: serde_json::Value) -> Vec<u8> {
+    let mut config: serde_json::Value =
+        serde_json::from_str(&config_27c400(2, Path::new("rom"))).unwrap();
+    config["chip_sets"][0]["firmware_overrides"] = overrides;
+    image_27c400(BoardSize::M, &config.to_string(), 2).await
+}
+
+/// An [`image_file`] built from `config`, which has `sets` chip sets.
+async fn image_27c400(size: BoardSize, config: &str, sets: usize) -> Vec<u8> {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::mcu::{Family, Variant};
     use onerom_gen::{Builder, FileData};
 
     let version = FirmwareVersion::new(0, 8, 0, 0);
-    let dir = Path::new("rom");
-    let mut builder =
-        Builder::from_json(version, Family::Rp2350, &config_27c400(sets, dir)).unwrap();
+    let mut builder = Builder::from_json(version, Family::Rp2350, config).unwrap();
     for n in 0..sets {
         builder
             .add_file(FileData::new(n, vec![n as u8; IMAGE_27C400]))

@@ -5,7 +5,9 @@
 - **Breaking** `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
 - Reword several error messages and `board` output.
 - `--config` on `program` and `firmware build` can be an http(s) URL.
-- Add the address monitor's minimum CS-active time to `program` and `firmware build` as `--addr-mon-min-cs-act-ns` and the `--slot` key `addr-mon-min-cs-act-ns`. `scan --slots` and `inspect slots` now display it, and `firmware inspect` displays the global value.
+- Add the address monitor's minimum CS-active time to `program` and `firmware build` as `--addr-mon-min-cs-act-ns` and the `--slot` key `addr-mon-min-cs-act-ns`. `scan --slots`, `inspect slots` and `firmware inspect` display it.
+- `firmware inspect` displays each slot's firmware overrides.
+- `firmware inspect`, `scan --slots` and `inspect slots` display a slot's `force-16-bit` setting.
 - Add `update` which updates a One ROM's firmware version, one ROM image or a plugin.
 - Add `clone`, which copies a One ROM or firmware file to another One ROM.
 - Add `save`, which saves a One ROM's or firmware file's configuration and ROM images to a PC.

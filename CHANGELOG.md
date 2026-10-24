@@ -17,6 +17,7 @@ In detail:
   - `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
   - `onerom monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
   - `onerom inspect peek memory` can also read USB DPRAM.
+  - `firmware inspect` displays each slot's firmware overrides.
   - Breaking: `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
   - `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
 - Web Programmer:

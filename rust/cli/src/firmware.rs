@@ -976,6 +976,9 @@ fn schema_summary(
             "  Slot {user_index}: {} ROM(s), {size} bytes",
             slot.roms().count()
         ));
+        lines.extend(crate::inspect::slot_override_lines(
+            &metadata.rom_slots[slot.slot_index],
+        ));
         for (j, rom) in slot.roms().enumerate() {
             let name = rom.filename.unwrap_or("<unnamed>");
             lines.push(format!("    Chip {j}: {} {name}", rom.rom_type));
