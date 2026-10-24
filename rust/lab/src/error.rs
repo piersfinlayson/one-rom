@@ -18,6 +18,10 @@ pub enum Error {
     NonFireBoard,
     /// Unrecognised or unsupported chip type
     InvalidChip,
+    /// The chip type isn't one the board supports
+    ChipNotOnBoard,
+    /// A socket pin the chip uses has no GPIO on the board
+    NoGpio(u8),
     /// Unrecognised output format specifier
     InvalidFormat,
     /// Board must be configured before this command can run
@@ -78,6 +82,11 @@ impl fmt::Display for Error {
             Self::InvalidBoard => write!(f, "unrecognised board type"),
             Self::NonFireBoard => write!(f, "only Fire boards are supported"),
             Self::InvalidChip => write!(f, "unrecognised chip type"),
+            Self::ChipNotOnBoard => write!(
+                f,
+                "chip type isn't supported on this board - use 'l' to list supported chips"
+            ),
+            Self::NoGpio(pin) => write!(f, "socket pin {pin} has no GPIO on this board"),
             Self::InvalidFormat => write!(f, "unrecognised output format"),
             Self::BoardNotSet => write!(f, "board not set — use 'B:<name>' to configure it"),
             Self::ChipNotSet => write!(f, "chip type not set"),

@@ -33,6 +33,8 @@ In detail:
   - `x` reads a chip continuously at MHz rates.
   - `d` drives a chip's data lines as a square wave, with the chip deselected.
   - `H` emulates a host's bus timing, including chip select glitches.
+  - Fix: Lab no longer hangs reading a chip with fixed chip selects, for example the HM7641.
+  - Fix: selecting an unsupported chip type no longer hangs Lab.
   - `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
 - Plugins:
   - host-control 0.1.7

@@ -15,11 +15,12 @@ use log::{debug, error, info, trace, warn};
 
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
 
-use onerom_config::chip::ChipType;
+use onerom_config::chip::{ChipType, chip_type_names_for_pins};
 use onerom_config::hw::Board;
 use onerom_lab_bus::HostProfile;
 
@@ -493,6 +494,28 @@ pub async fn send_line(s: &str) -> Result<(), Error> {
         }
         Timer::after_millis(10).await;
     }
+}
+
+/// The chip types `l` lists for `board`, or `None` where none are known for
+/// its pin count.
+fn board_chip_names(board: Board) -> Option<Vec<&'static str>> {
+    let mut names = chip_type_names_for_pins(board.chip_pins())?.to_vec();
+    let extra_chip_types = board.extra_chip_types();
+    if !extra_chip_types.is_empty() {
+        names.extend(extra_chip_types.iter().map(|c| c.name()));
+        names.sort_unstable();
+        names.dedup();
+    }
+    Some(names)
+}
+
+/// Whether `chip` is one of the chip types `l` lists for `board`.
+fn board_has_chip(board: Board, chip: ChipType) -> bool {
+    board_chip_names(board).is_some_and(|names| {
+        names
+            .iter()
+            .any(|&name| ChipType::try_from_str(name) == Some(chip))
+    })
 }
 
 fn default_chip_for_board(board: Board) -> Option<ChipType> {

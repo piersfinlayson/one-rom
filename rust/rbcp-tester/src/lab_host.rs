@@ -110,7 +110,7 @@ impl LabHost {
         // The select lines Lab drives, at the config's levels.
         let mut selects = Vec::new();
         for spec in chip_type.control_lines() {
-            if !matches!(spec.name, "ce" | "oe" | "cs1" | "cs2" | "cs3") {
+            if !matches!(spec.name, "ce" | "oe" | "cs1" | "cs2" | "cs3" | "cs4") {
                 continue;
             }
             if let Some(line) = cache.control_lines.iter().find(|l| l.name == spec.name) {

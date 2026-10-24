@@ -131,13 +131,23 @@ async fn prompt(editor: &mut LineEditor, msg: &str) -> Result<Option<String>, Er
 /// - Blank input or Ctrl-C accepts `default` if one is set.
 /// - Ctrl-C with no default returns `Err(Cancelled)`.
 /// - An unrecognised name prints a message and re-prompts.
+/// - Where `board` is set, a chip type `l` doesn't list for it fails with
+///   [`Error::ChipNotOnBoard`] inline and re-prompts otherwise.
 pub async fn require_chip(
     token: Option<&str>,
     default: Option<ChipType>,
+    board: Option<Board>,
     editor: &mut LineEditor,
 ) -> Result<ChipType, Error> {
+    let on_board = |chip| board.is_none_or(|board| super::board_has_chip(board, chip));
+
     if let Some(t) = token {
-        return ChipType::try_from_str(t).ok_or(Error::InvalidChip);
+        let chip = ChipType::try_from_str(t).ok_or(Error::InvalidChip)?;
+        return if on_board(chip) {
+            Ok(chip)
+        } else {
+            Err(Error::ChipNotOnBoard)
+        };
     }
 
     loop {
@@ -147,29 +157,37 @@ pub async fn require_chip(
             prompt(editor, "Chip type: ").await?
         };
 
-        let s = match input {
+        let (chip, s) = match input {
             None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => match default {
-                Some(d) => return Ok(d),
+                Some(d) => (d, String::from(d.name())),
                 None => {
                     super::send_line("Chip type is required. Use 'l' to list supported chips.")
                         .await?;
                     continue;
                 }
             },
-            Some(s) => s,
+            Some(s) => match ChipType::try_from_str(&s) {
+                Some(c) => (c, s),
+                None => {
+                    super::send_line(&format!(
+                        "Unknown chip '{}'. Use 'l' to list supported chips.",
+                        s
+                    ))
+                    .await?;
+                    continue;
+                }
+            },
         };
 
-        match ChipType::try_from_str(&s) {
-            Some(c) => return Ok(c),
-            None => {
-                super::send_line(&format!(
-                    "Unknown chip '{}'. Use 'l' to list supported chips.",
-                    s
-                ))
-                .await?;
-            }
+        if on_board(chip) {
+            return Ok(chip);
         }
+        super::send_line(&format!(
+            "Chip '{}' isn't supported on this board. Use 'l' to list supported chips.",
+            s
+        ))
+        .await?;
     }
 }
 

@@ -430,7 +430,7 @@ mod tests {
         let selects = chip
             .control_lines()
             .iter()
-            .filter(|c| ["ce", "oe", "cs1", "cs2", "cs3"].contains(&c.name))
+            .filter(|c| ["ce", "oe", "cs1", "cs2", "cs3", "cs4"].contains(&c.name))
             .map(|c| {
                 (
                     c.pin + offset,

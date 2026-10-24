@@ -17,7 +17,7 @@ use core::num::NonZeroU8;
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Instant, Timer};
 
-use onerom_config::chip::{ChipType, ControlLineType, chip_type_names_for_pins};
+use onerom_config::chip::{ChipType, ControlLineType};
 use onerom_config::hw::{BOARDS, Board};
 use onerom_config::mcu::Family;
 
@@ -41,7 +41,7 @@ use crate::usb;
 use super::super::serial_id;
 use super::parser::{self, Args, HostChoice};
 use super::{CsPolaritySetting, CsSettings, OutputFormat, ReadRange, SessionState};
-use super::{default_chip_for_board, send_line};
+use super::{board_chip_names, default_chip_for_board, send_line};
 
 const CS_KEY: &str = "(0=active-low 1=active-high ?=auto)";
 
@@ -103,7 +103,13 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
 async fn cmd_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
-    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let chip = parser::require_chip(
+        args.next_token(),
+        state.chip,
+        state.board,
+        &mut state.editor,
+    )
+    .await?;
     let start = parser::get_addr(
         args.next_token(),
         state.range.start,
@@ -170,7 +176,13 @@ const FAST_READ_STATUS: Duration = Duration::from_secs(1);
 async fn cmd_fast_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
-    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let chip = parser::require_chip(
+        args.next_token(),
+        state.chip,
+        state.board,
+        &mut state.editor,
+    )
+    .await?;
     let delay = parser::get_delay(
         args.next_token(),
         state.fast_read_delay,
@@ -211,7 +223,7 @@ async fn cmd_fast_read(args: &mut Args<'_>, state: &mut SessionState) -> Result<
         return Err(Error::FastReadChipSize);
     }
 
-    let mut reader = RomReader::new(board, chip, state.cs.to_polarities(), false);
+    let mut reader = RomReader::new(board, chip, state.cs.to_polarities(), false)?;
     reader.init();
     let pins = reader.begin_fast_read();
     let result = match FastReader::new(&pins, chip.size_bytes(), delay) {
@@ -283,7 +295,13 @@ const DRIVE_BURST: u32 = 4096;
 async fn cmd_drive(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
-    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let chip = parser::require_chip(
+        args.next_token(),
+        state.chip,
+        state.board,
+        &mut state.editor,
+    )
+    .await?;
     let lines = parser::get_lines(args.next_token(), state.drive_lines, &mut state.editor).await?;
     let delay = parser::get_delay(
         args.next_token(),
@@ -298,7 +316,7 @@ async fn cmd_drive(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), 
     state.drive_delay = delay;
     require_cs(chip, state.cs)?;
 
-    let mut reader = RomReader::new(board, chip, state.cs.to_polarities(), false);
+    let mut reader = RomReader::new(board, chip, state.cs.to_polarities(), false)?;
     reader.init();
     let gpios = reader.begin_drive();
     let result = match Driver::new(&gpios, lines, delay) {
@@ -389,7 +407,13 @@ fn fast_read_status(fast: &FastReader, elapsed: Duration) -> String {
 async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState, rbcp: bool) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
 
-    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let chip = parser::require_chip(
+        args.next_token(),
+        state.chip,
+        state.board,
+        &mut state.editor,
+    )
+    .await?;
     let start = parser::get_addr(
         args.next_token(),
         state.range.start,
@@ -475,7 +499,13 @@ async fn cmd_batch(args: &mut Args<'_>, state: &mut SessionState, rbcp: bool) ->
 }
 
 async fn cmd_chip_info(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
-    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let chip = parser::require_chip(
+        args.next_token(),
+        state.chip,
+        state.board,
+        &mut state.editor,
+    )
+    .await?;
     state.chip = Some(chip);
 
     let n_addr = chip.address_pins().len();
@@ -521,7 +551,13 @@ async fn cmd_chip_info(args: &mut Args<'_>, state: &mut SessionState) -> Result<
 }
 
 async fn cmd_set_chip_type(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
-    let chip = parser::require_chip(args.next_token(), state.chip, &mut state.editor).await?;
+    let chip = parser::require_chip(
+        args.next_token(),
+        state.chip,
+        state.board,
+        &mut state.editor,
+    )
+    .await?;
     let cs1 = parser::get_cs_polarity(
         args.next_token(),
         state.cs.cs1,
@@ -588,24 +624,15 @@ async fn cmd_list_chips(state: &SessionState) -> Result<(), Error> {
     let board = state.board.ok_or(Error::BoardNotSet)?;
     let pins = board.chip_pins();
 
-    let mut names: Vec<&'static str> = match chip_type_names_for_pins(pins) {
-        Some(n) => n.to_vec(),
-        None => {
-            send_line(&format!(
-                "No chips known for {}-pin board '{}'.",
-                pins,
-                board.name()
-            ))
-            .await?;
-            return Ok(());
-        }
+    let Some(names) = board_chip_names(board) else {
+        send_line(&format!(
+            "No chips known for {}-pin board '{}'.",
+            pins,
+            board.name()
+        ))
+        .await?;
+        return Ok(());
     };
-    let extra_chip_types = board.extra_chip_types();
-    if !extra_chip_types.is_empty() {
-        names.extend(extra_chip_types.iter().map(|c| c.name()));
-        names.sort_unstable();
-        names.dedup();
-    }
 
     send_line("").await?;
     send_line(&format!(
@@ -997,7 +1024,7 @@ async fn do_rbcp(
 
     for &mode in modes {
         yield_to_usb().await;
-        let mut reader = RomReader::new(board, chip, cs.to_polarities(), false);
+        let mut reader = RomReader::new(board, chip, cs.to_polarities(), false)?;
         reader.init();
         reader.set_host(host)?;
         reader.begin_read(mode);
@@ -1329,7 +1356,7 @@ async fn do_read(
     }
 
     let (start, count) = resolve_range(range, chip);
-    let mut reader = RomReader::new(board, chip, cs.to_polarities(), tristate);
+    let mut reader = RomReader::new(board, chip, cs.to_polarities(), tristate)?;
     reader.init();
     reader.set_host(host)?;
 
@@ -1484,7 +1511,7 @@ async fn scan_cs(
             }
         }
 
-        let mut reader = RomReader::new(board, chip, test, tristate);
+        let mut reader = RomReader::new(board, chip, test, tristate)?;
         reader.init();
         reader.set_host(host)?;
 

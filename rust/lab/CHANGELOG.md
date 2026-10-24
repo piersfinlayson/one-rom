@@ -9,6 +9,8 @@
 - `H` emulates a host's bus timing, including chip select glitches.
 - 8-bit and 16-bit result lines now line up.
 - `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
+- Fix: Lab no longer hangs reading a chip with fixed chip selects, for example the HM7641, and now drives its fourth chip select.
+- Fix: selecting an unsupported chip type no longer hangs Lab.
 
 ## v0.4.0 - 2026-10-06
 
