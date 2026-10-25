@@ -314,7 +314,7 @@ the ARM/Pi build).
 
 **Windows SmartScreen** — as a relatively new publisher, the first run may raise
 a *"Windows protected your PC"* dialog. Click **More info**, confirm the
-publisher reads *"Open Source Developer, Piers Finlayson"*, then **Run anyway**.
+publisher reads *"Open Source Developer Piers Finlayson"*, then **Run anyway**.
 
 Verify it runs:
 
