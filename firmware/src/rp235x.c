@@ -935,5 +935,10 @@ void setup_xosc(void) {
     // Switch CLK_REF to use XOSC instead of the ROSC
     CLOCK_REF_CTRL = CLOCK_REF_SRC_XOSC;
     while ((CLOCK_REF_SELECTED & CLOCK_REF_SRC_SEL_XOSC) != CLOCK_REF_SRC_SEL_XOSC);
+
+    // The delay passed to the bootrom's reboot() is in 1us watchdog ticks.
+    TICKS_WATCHDOG_CTRL &= ~TICKS_CTRL_ENABLE;
+    TICKS_WATCHDOG_CYCLES = ora_get_clkref_mhz();
+    TICKS_WATCHDOG_CTRL |= TICKS_CTRL_ENABLE;
 }
 #endif // !TEST_BUILD

@@ -6,6 +6,12 @@ With firmware 0.8.1, a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets
 
 USB DPRAM can be read over picobootx.
 
+REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
+
+If the reboot fails, REBOOT2 now returns an error instead of success.
+
+Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
+
 ## [0.3.2] - 2026-10-06
 
 Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.

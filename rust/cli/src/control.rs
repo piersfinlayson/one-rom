@@ -267,7 +267,7 @@ pub async fn cmd_reboot(
         println!("Rebooting device...");
     }
     let serial = device.serial.clone();
-    reboot(device, &reboot_args).await?;
+    reboot(device, &reboot_args, options).await?;
     println!("Rebooted device into {} mode", reboot_args.mode);
 
     if options.verbose {
@@ -1057,7 +1057,7 @@ async fn ensure_stopped(options: &mut Options) -> Result<(), Error> {
         println!("Device is running, rebooting into stopped mode...");
     }
     let serial = device.serial.clone();
-    reboot(device, &RebootArgs::stopped(false, false)).await?;
+    reboot(device, &RebootArgs::stopped(false, false), options).await?;
 
     let selector = serial.as_deref();
     let new_device = select_device(selector, options).await?;
@@ -1093,7 +1093,7 @@ async fn reboot_after_erase(
     let device = options.device.as_ref().unwrap();
 
     let reboot_args = args.into();
-    reboot(device, &reboot_args).await?;
+    reboot(device, &reboot_args, options).await?;
     if !reboot_args.is_none() {
         println!("Rebooted device into {} mode", reboot_args.mode);
     }

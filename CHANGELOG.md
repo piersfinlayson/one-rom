@@ -9,10 +9,12 @@ Headline changes in this release:
 
 In detail:
 - RBCP can now be tuned for machines with glitchy chip select lines, using the `addr_mon_min_cs_act_ns` firmware override.
+- Fix: reboots requested over USB or by a plugin took up to 10 times longer than asked.
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
   - Add `onerom update`, `onerom clone` and `onerom save`.
   - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
+  - Fix: a reboot no longer fails when the One ROM resets before the CLI reads its reply to the reboot command.
   - When the One ROM selected with `--serial` can't be opened the error message is now "could not be opened".
   - `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
   - `onerom monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
@@ -47,6 +49,8 @@ In detail:
   - USB 0.3.3
     - With firmware 0.8.1, supports a plugin with exclusive use of the serial port.
     - USB DPRAM can be read over picobootx.
+    - REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
+    - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
 - Plugin APIs:
   - New: `ora_reboot()` can be used to reboot One ROM.
   - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.

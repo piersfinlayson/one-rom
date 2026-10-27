@@ -94,7 +94,53 @@ pub fn init_logging(options: &Options) {
         let level = format!("{}: ", record.level());
         writeln!(buf, "{:07}{}", level, record.args())
     });
-    log_builder.init();
+    let logger = log_builder.build();
+    log::set_max_level(logger.filter());
+    log::set_boxed_logger(Box::new(CliLogger(logger))).expect("logging already initialised");
+}
+
+/// Wraps env_logger to change the level of some log records.
+struct CliLogger(env_logger::Logger);
+
+impl log::Log for CliLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        // nusb logs a failed USB transfer submission as an error and also
+        // returns the error to the caller.
+        if is_nusb_submit_failed(record) {
+            self.0.log(
+                &log::Record::builder()
+                    .level(log::Level::Info)
+                    .target(record.target())
+                    .args(*record.args())
+                    .module_path(record.module_path())
+                    .file(record.file())
+                    .line(record.line())
+                    .build(),
+            );
+        } else {
+            self.0.log(record);
+        }
+    }
+
+    fn flush(&self) {
+        self.0.flush();
+    }
+}
+
+fn is_nusb_submit_failed(record: &log::Record) -> bool {
+    if record.level() != log::Level::Error {
+        return false;
+    }
+    let prefix = match record.target() {
+        "nusb::platform::windows_winusb::device" => "submit failed:",
+        "nusb::platform::macos_iokit::device" => "Failed to submit ",
+        _ => return false,
+    };
+    record.args().to_string().starts_with(prefix)
 }
 
 pub fn check_device_nand_board(options: &Options, board_arg: &Option<String>) -> Result<(), Error> {
@@ -570,6 +616,60 @@ pub fn read_char() -> Result<KeyEvent, Error> {
 mod tests {
     use super::*;
     use onerom_config::hw::BOARDS;
+
+    /// The targets and messages are nusb's own, from
+    /// `src/platform/windows_winusb/device.rs` and
+    /// `src/platform/macos_iokit/device.rs`.
+    #[test]
+    fn only_nusbs_submit_failed_error_is_logged_as_info() {
+        const NUSB: &str = "nusb::platform::windows_winusb::device";
+        const NUSB_MACOS: &str = "nusb::platform::macos_iokit::device";
+        let matches = |level, target, args: std::fmt::Arguments| {
+            is_nusb_submit_failed(
+                &log::Record::builder()
+                    .level(level)
+                    .target(target)
+                    .args(args)
+                    .build(),
+            )
+        };
+        use log::Level::{Error, Warn};
+        assert!(matches(
+            Error,
+            NUSB,
+            format_args!("submit failed: gone (os error 22)")
+        ));
+        assert!(!matches(
+            Warn,
+            NUSB,
+            format_args!("submit failed: gone (os error 22)")
+        ));
+        assert!(!matches(
+            Error,
+            "nusb::device",
+            format_args!("submit failed: gone")
+        ));
+        assert!(!matches(
+            Error,
+            NUSB,
+            format_args!("Failed to read config descriptor")
+        ));
+        assert!(matches(
+            Error,
+            NUSB_MACOS,
+            format_args!("Failed to submit control In 0x0: e00002c0")
+        ));
+        assert!(matches(
+            Error,
+            NUSB_MACOS,
+            format_args!("Failed to submit In transfer 0x0 of len 64 on endpoint 84: e00002d8")
+        ));
+        assert!(!matches(
+            Error,
+            NUSB_MACOS,
+            format_args!("submit failed: gone (os error 22)")
+        ));
+    }
 
     /// Every board must fall into exactly one of the two lists the CLI shows -
     /// a board in neither would be invisible to `board list`, and one in both

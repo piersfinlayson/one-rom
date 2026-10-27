@@ -339,6 +339,8 @@
 // TICKS Registers
 #define TICKS_TIMER0_CTRL   (*((volatile uint32_t *)(TICKS_BASE + 0x18)))
 #define TICKS_TIMER0_CYCLES (*((volatile uint32_t *)(TICKS_BASE + 0x1C)))
+#define TICKS_WATCHDOG_CTRL   (*((volatile uint32_t *)(TICKS_BASE + 0x30)))
+#define TICKS_WATCHDOG_CYCLES (*((volatile uint32_t *)(TICKS_BASE + 0x34)))
 #define TICKS_CTRL_ENABLE   (1 << 0)
 
 // USB Registers

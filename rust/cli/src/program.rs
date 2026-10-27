@@ -291,7 +291,7 @@ pub(crate) async fn reboot_to_stopped(
         println!("Device is {state}, rebooting into stopped mode...");
     }
     let chip_id = device.chip_id;
-    reboot(device, &RebootArgs::stopped(false, false)).await?;
+    reboot(device, &RebootArgs::stopped(false, false), options).await?;
 
     let new_device = select_device_by_chip_id(chip_id, options).await?;
     if states.contains(&new_device.state) {
@@ -308,7 +308,7 @@ async fn reboot_to_running(options: &Options) -> Result<(), Error> {
     if options.verbose {
         println!("Rebooting device into running mode...");
     }
-    reboot(device, &RebootArgs::running(false, false)).await
+    reboot(device, &RebootArgs::running(false, false), options).await
 }
 
 /// Reboots a One ROM this command `stopped` back into running mode and
@@ -337,7 +337,7 @@ pub(crate) async fn reboot_stopped(options: &Options) -> Result<(), Error> {
     if options.verbose {
         println!("Rebooting device into stopped mode...");
     }
-    reboot(device, &RebootArgs::stopped(false, false)).await
+    reboot(device, &RebootArgs::stopped(false, false), options).await
 }
 
 /// Reboots a stopped device into the bootloader again and selects it by its
@@ -392,7 +392,7 @@ pub(crate) async fn reboot_and_rescan(
         println!("Rebooting device...");
     }
     let chip_id = device.chip_id;
-    reboot(device, reboot_args).await?;
+    reboot(device, reboot_args, options).await?;
 
     if !reboot_args.fast {
         let device = select_device_by_chip_id(chip_id, options).await?;

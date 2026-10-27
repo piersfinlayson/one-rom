@@ -14,6 +14,7 @@
 - `firmware inspect` prints `Chip N` instead of `ROM N`.
 - Remove `inspect image`, which wasn't implemented. Use `save`.
 - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
+- Fix: a reboot no longer fails when the One ROM resets before the CLI reads its reply to the reboot command, for example after `program --verify`.
 - When the One ROM selected with `--serial` can't be opened the error is now "could not be opened", not "not found".
 - `program` and `firmware build` fail when a plugin's boot slot address is outside its region.
 - `monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.

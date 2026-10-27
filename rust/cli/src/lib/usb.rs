@@ -26,7 +26,7 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
-use crate::device::{board_size, matches_serial};
+use crate::device::{board_size, matches_serial, select_device_by_chip_id};
 use crate::otp::{Commissioning, PicobootOtp, read_otp_board_size};
 use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
@@ -722,7 +722,7 @@ impl RebootArgs {
 }
 
 /// Reboot the chosen One ROM
-pub async fn reboot(device: &Device, args: &RebootArgs) -> Result<(), Error> {
+pub async fn reboot(device: &Device, args: &RebootArgs, options: &Options) -> Result<(), Error> {
     // Check we can actually reboot into running mode if requested
     if args.mode == RebootMode::Running && args.check_usb_can_run && !device.usb_can_run() {
         return Err(Error::NoRebootIntoRunning(device.to_string()));
@@ -740,16 +740,46 @@ pub async fn reboot(device: &Device, args: &RebootArgs) -> Result<(), Error> {
 
     const REBOOT_TIMER: Duration = Duration::from_millis(10);
     debug!("Rebooting device {device} with type {reboot_type:?} and timer {REBOOT_TIMER:?}");
-    picoboot
-        .reboot(reboot_type, REBOOT_TIMER)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))?;
-
-    if !args.fast {
-        pause_reenumeration().await;
+    match picoboot.reboot(reboot_type, REBOOT_TIMER).await {
+        Ok(()) => {
+            if !args.fast {
+                pause_reenumeration().await;
+            }
+            Ok(())
+        }
+        // One ROM can reset before the host reads its acknowledgement, so the
+        // device is rescanned to check it reached the requested mode.
+        // Once the device has gone, macOS fails either the read or the claim
+        // of its endpoint.
+        Err(
+            e @ (picoboot::Error::UsbReadBulkFailure(..)
+            | picoboot::Error::UsbInEndpointClaimFailure(..)),
+        ) => {
+            debug!("Reboot acknowledgement not read, rescanning: {e}");
+            pause_reenumeration().await;
+            match select_device_by_chip_id(device.chip_id, options).await {
+                Ok(found) if rebooted_into(args.mode, found.state) => Ok(()),
+                Ok(found) => {
+                    debug!("Device is {} after reboot", found.state);
+                    Err(Error::Usb(e.to_string()))
+                }
+                Err(rescan) => {
+                    debug!("Device not found after reboot: {rescan}");
+                    Err(Error::Usb(e.to_string()))
+                }
+            }
+        }
+        Err(e) => Err(Error::Usb(e.to_string())),
     }
+}
 
-    Ok(())
+/// Whether a device found in `state` has rebooted into `mode`.
+fn rebooted_into(mode: RebootMode, state: DeviceState) -> bool {
+    match mode {
+        RebootMode::Stopped { .. } => state == DeviceState::Stopped,
+        RebootMode::Running => state != DeviceState::Stopped,
+        RebootMode::None => false,
+    }
 }
 
 enum MemoryType {
@@ -1567,6 +1597,23 @@ mod tests {
         assert_eq!(package(Some(0), Some(Rp235xB)), Some(Rp235xB));
         assert_eq!(package(None, Some(Rp235xA)), Some(Rp235xA));
         assert_eq!(package(None, None), None);
+    }
+
+    /// Only a stopped device has rebooted into stopped mode, and any other
+    /// into running mode.
+    #[test]
+    fn a_device_that_is_not_stopped_has_rebooted_into_running() {
+        use DeviceState::{Limp, Running, Stopped, Unknown};
+        for state in [Running, Limp, Unknown] {
+            assert!(rebooted_into(RebootMode::Running, state), "{state}");
+            assert!(
+                !rebooted_into(RebootMode::Stopped { msd: false }, state),
+                "{state}"
+            );
+        }
+        assert!(!rebooted_into(RebootMode::Running, Stopped));
+        assert!(rebooted_into(RebootMode::Stopped { msd: true }, Stopped));
+        assert!(!rebooted_into(RebootMode::None, Running));
     }
 
     /// A device that could not be read, with everything but the class fixed,
