@@ -1,0 +1,53 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "Amiga 32-bit Bootloader, High Word (512KB)",
+    "description": "Reference bootloader and DiagROM V2 for an A1200's U6A",
+    "categories": [
+        "computer",
+        "commodore",
+        "amiga",
+        "rbcp"
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "system_plugin",
+                    "plugin": "usb"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "user_plugin",
+                    "plugin": "host-control"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Bootloader",
+                    "file": "https://images.onerom.org/roms/host-control/amiga-boot/latest/amiga_boot_32bit_512k_hi.bin",
+                    "type": "27C400"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "DiagROM V2.0",
+                    "file": "https://github.com/ChuckyGang/DiagROMV2/releases/download/v2.0/DiagROM-v2.0.zip",
+                    "extract": "DiagROM/32bitHI.bin",
+                    "type": "27C400"
+                }
+            ]
+        }
+    ]
+}
