@@ -422,10 +422,9 @@ pb_status_t picoboot_default_exclusive_access(uint8_t excl, void *ctx) {
 }
 pb_status_t picoboot_default_exit_xip(void *ctx) { (void)ctx; return PB_DEFAULT_REFUSED; }
 pb_status_t picoboot_default_enter_xip(void *ctx) { (void)ctx; return PB_DEFAULT_REFUSED; }
-pb_status_t picoboot_default_reboot2_prepare(const pb_reboot2_args_t *args, void *ctx) {
+pb_status_t picoboot_default_reboot2(const pb_reboot2_args_t *args, void *ctx) {
     (void)args; (void)ctx; return PB_DEFAULT_REFUSED;
 }
-void picoboot_default_reboot2_execute(void *ctx) { (void)ctx; }
 pb_status_t picoboot_default_read_prepare(uint32_t addr, uint32_t size, void *ctx) {
     (void)addr; (void)size; (void)ctx; return PB_STATUS_NOT_FOUND;
 }
