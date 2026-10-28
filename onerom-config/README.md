@@ -13,7 +13,7 @@ The format is defined by [schema.json](schema.json), also published at https://i
 
 | Path | Contents |
 | --- | --- |
-| `*.json` | Published configs.  `set-` holds several jumper-selected sets, `bank-` bank-switched sets, `28-` targets 28-pin boards. |
+| `*.json` | Published configs.  `set-` holds several jumper-selected sets, `bank-` bank-switched sets, `28-` targets 28-pin boards, `40-` 40-pin boards and `40l-` 40-pin boards with 4MB of flash. |
 | `blank.json` | No ROMs.  Flashes a One ROM that ships empty. |
 | `test/` | Configs CI builds and tests on hardware (`ci/test-emu.sh`). |
 | `user/` | Your own configs.  Git-ignored. |

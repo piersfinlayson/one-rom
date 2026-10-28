@@ -1,0 +1,202 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "C64 r107sl Bootloader (multi-ROM)",
+    "description": "r107sl's bootloader, stock kernal and the RBCP test applications, each with the stock BASIC and character ROMs",
+    "categories": [
+        "computer",
+        "commodore",
+        "c64",
+        "rbcp"
+    ],
+    "detail": "Install One ROM in the kernal socket. Connect the BASIC ROM socket's CS pin (20) to X1 and the character ROM socket's CS1 pin (20) to X2.",
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "system_plugin",
+                    "plugin": "usb"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "user_plugin",
+                    "plugin": "host-control"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "chips": [
+                {
+                    "label": "Bootloader",
+                    "file": "https://images.onerom.org/roms/host-control/c64-bootloader/latest/c64_bootloader.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "BASIC 901226-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "Characters 901225-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "chips": [
+                {
+                    "label": "Kernal 901227-03",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/kernal.901227-03.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "BASIC 901226-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "Characters 901225-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "chips": [
+                {
+                    "label": "Terminal",
+                    "file": "https://images.onerom.org/roms/host-control/c64-rbcp-term/latest/c64_term_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "BASIC 901226-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "Characters 901225-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "chips": [
+                {
+                    "label": "LED Tester",
+                    "file": "https://images.onerom.org/roms/host-control/c64-led-test/latest/c64_led_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "BASIC 901226-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "Characters 901225-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "chips": [
+                {
+                    "label": "Aux I/O Tester",
+                    "file": "https://images.onerom.org/roms/host-control/c64-aux-io/latest/c64_auxio_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "BASIC 901226-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "Characters 901225-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "chips": [
+                {
+                    "label": "Pipe Throughput Test",
+                    "file": "https://images.onerom.org/roms/host-control/c64-pipe-test/latest/c64_pipe_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "BASIC 901226-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "Characters 901225-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "chips": [
+                {
+                    "label": "Reliability Meter",
+                    "file": "https://images.onerom.org/roms/host-control/c64-rbcp-stress/latest/c64_meter_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "BASIC 901226-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/basic.901226-01.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "label": "Characters 901225-01",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/characters.901225-01.bin",
+                    "type": "2332",
+                    "cs1": "active_low",
+                    "cs2": "ignore"
+                }
+            ]
+        }
+    ],
+    "notes": "Character ROM CS2 is set to `ignore` as it is tied to 5V within the C64. Requires fire-24-c or later."
+}

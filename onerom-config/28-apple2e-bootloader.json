@@ -1,0 +1,114 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "Apple IIe Bootloader",
+    "description": "Reference bootloader, stock ROM, dead test and the RBCP test applications",
+    "categories": [
+        "computer",
+        "apple",
+        "apple2",
+        "rbcp"
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "system_plugin",
+                    "plugin": "usb"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "user_plugin",
+                    "plugin": "host-control"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Bootloader",
+                    "file": "https://images.onerom.org/roms/host-control/apple2-boot/latest/apple2_boot_ef.bin",
+                    "type": "2764"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Stock ROM 342-0134-A",
+                    "file": "https://raw.githubusercontent.com/Abdess/retrobios/13c561888d4d0cc2f8e00e53fe91405cc09ab7f1/bios/Apple/Apple%20II/apple2e.zip",
+                    "extract": "342-0134-a.64",
+                    "type": "2764"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Dead Test",
+                    "file": "https://github.com/misterblack1/appleII_deadtest/releases/download/v1.0.2/apple2dead.bin",
+                    "type": "2764",
+                    "size_handling": "duplicate"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Terminal",
+                    "file": "https://images.onerom.org/roms/host-control/apple2-rbcp-term/latest/apple2_term.bin",
+                    "type": "2764"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Aux I/O Tester",
+                    "file": "https://images.onerom.org/roms/host-control/apple2-aux-io/latest/apple2_auxio.bin",
+                    "type": "2764"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Pipe Throughput (PAL)",
+                    "file": "https://images.onerom.org/roms/host-control/apple2-pipe-test/latest/apple2_pipe_pal.bin",
+                    "type": "2764"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Pipe Throughput (NTSC)",
+                    "file": "https://images.onerom.org/roms/host-control/apple2-pipe-test/latest/apple2_pipe_ntsc.bin",
+                    "type": "2764"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Reliability Meter",
+                    "file": "https://images.onerom.org/roms/host-control/apple2-rbcp-stress/latest/apple2_meter.bin",
+                    "type": "2764"
+                }
+            ]
+        }
+    ]
+}

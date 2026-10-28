@@ -1,0 +1,109 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "VIC-20 Bootloader",
+    "description": "Reference bootloader, PAL and NTSC stock kernals and the RBCP test applications",
+    "categories": [
+        "computer",
+        "commodore",
+        "vic20",
+        "rbcp"
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "system_plugin",
+                    "plugin": "usb"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "user_plugin",
+                    "plugin": "host-control"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Bootloader",
+                    "file": "https://images.onerom.org/roms/host-control/vic20-boot/latest/vic20_boot.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Stock Kernal (PAL)",
+                    "file": "http://www.zimmers.net/anonftp/pub/cbm/firmware/computers/vic20/kernal.901486-07.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Stock Kernal (NTSC)",
+                    "file": "http://www.zimmers.net/anonftp/pub/cbm/firmware/computers/vic20/kernal.901486-06.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Terminal",
+                    "file": "https://images.onerom.org/roms/host-control/vic20-rbcp-term/latest/vic20_term.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Aux I/O Tester (3K)",
+                    "file": "https://images.onerom.org/roms/host-control/vic20-aux-io/latest/vic20_auxio.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Pipe Speed (3K)",
+                    "file": "https://images.onerom.org/roms/host-control/vic20-pipe-test/latest/vic20_pipe.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Reliability (3K)",
+                    "file": "https://images.onerom.org/roms/host-control/vic20-rbcp-stress/latest/vic20_meter.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        }
+    ]
+}

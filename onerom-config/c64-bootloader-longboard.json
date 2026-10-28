@@ -1,0 +1,109 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "C64 Bootloader (longboard)",
+    "description": "Reference bootloader, stock kernal and the RBCP test applications",
+    "categories": [
+        "computer",
+        "commodore",
+        "c64",
+        "rbcp"
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "system_plugin",
+                    "plugin": "usb"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "user_plugin",
+                    "plugin": "host-control"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Bootloader",
+                    "file": "https://images.onerom.org/roms/host-control/c64-boot/latest/c64_boot.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Kernal 901227-03",
+                    "file": "https://www.zimmers.net/anonftp/pub/cbm/firmware/computers/c64/kernal.901227-03.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Terminal",
+                    "file": "https://images.onerom.org/roms/host-control/c64-rbcp-term/latest/c64_term_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "LED Tester",
+                    "file": "https://images.onerom.org/roms/host-control/c64-led-test/latest/c64_led_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Aux I/O Tester",
+                    "file": "https://images.onerom.org/roms/host-control/c64-aux-io/latest/c64_auxio_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Pipe Throughput Test",
+                    "file": "https://images.onerom.org/roms/host-control/c64-pipe-test/latest/c64_pipe_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Reliability Meter",
+                    "file": "https://images.onerom.org/roms/host-control/c64-rbcp-stress/latest/c64_meter_kernal.bin",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        }
+    ]
+}

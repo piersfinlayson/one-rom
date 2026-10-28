@@ -1,0 +1,92 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "Amiga Bootloader (512KB)",
+    "description": "Reference bootloader and the RBCP test applications",
+    "categories": [
+        "computer",
+        "commodore",
+        "amiga",
+        "rbcp"
+    ],
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "system_plugin",
+                    "plugin": "usb"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "type": "user_plugin",
+                    "plugin": "host-control"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Bootloader",
+                    "file": "https://images.onerom.org/roms/host-control/amiga-boot/latest/amiga_boot_512k.bin",
+                    "type": "27C400"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Terminal",
+                    "file": "https://images.onerom.org/roms/host-control/amiga-rbcp-term/latest/amiga_term_512k.bin",
+                    "type": "27C400"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "LED Tester",
+                    "file": "https://images.onerom.org/roms/host-control/amiga-led-test/latest/amiga_led_test_512k.bin",
+                    "type": "27C400"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Aux I/O Tester",
+                    "file": "https://images.onerom.org/roms/host-control/amiga-aux-io/latest/amiga_auxio_512k.bin",
+                    "type": "27C400"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Pipe Throughput Test",
+                    "file": "https://images.onerom.org/roms/host-control/amiga-pipe-test/latest/amiga_pipe_512k.bin",
+                    "type": "27C400"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "label": "Reliability Meter",
+                    "file": "https://images.onerom.org/roms/host-control/amiga-rbcp-stress/latest/amiga_meter_512k.bin",
+                    "type": "27C400"
+                }
+            ]
+        }
+    ]
+}
