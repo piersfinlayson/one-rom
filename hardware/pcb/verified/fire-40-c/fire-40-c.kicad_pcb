@@ -8688,7 +8688,7 @@
 			(uuid "16034c72-0fb6-41f1-bf3e-6ac8eb717030")
 		)
 		(embedded_fonts no)
-		(model "${ONEDRIVE}/kicad/3d/C6332304.step"
+		(model "${KIPRJMOD}/../../3dmodels/MC-118LD-H65.step"
 			(offset
 				(xyz 0 0 0)
 			)

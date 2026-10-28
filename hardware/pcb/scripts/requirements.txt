@@ -1,0 +1,4 @@
+# Requirements for mc_118ld_h65.py and render.py
+cadquery
+numpy
+pillow
