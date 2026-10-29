@@ -249,6 +249,7 @@ pub fn run_all(board: Board, config: &Config, base_dir: &std::path::Path, report
         crate::exclusive_serial::run(report);
         crate::plugin_launch::run(report);
         crate::usb_dpram::run(report);
+        crate::log_channels::run(report);
     }
     if num_sets > 2 {
         crate::boot_slot::run(board, num_sets, max_images, report);

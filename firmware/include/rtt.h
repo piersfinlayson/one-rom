@@ -34,7 +34,7 @@
 #define ONEROM_RTT_MAX_DOWN_BUFFERS     3
 
 // Number of plugin API channels.
-#define ONEROM_RTT_CHANNELS             2
+#define ONEROM_RTT_CHANNELS             4
 
 // Channel operating mode.  Only skip is implemented: a record that does not
 // fit is dropped whole, and the calling core is never blocked.
@@ -84,6 +84,11 @@ void onerom_rtt_plugins_init(void);
 unsigned onerom_rtt_move_log(char *buffer, unsigned size);
 
 unsigned onerom_rtt_log_moved(void);
+
+// Give channel 2 or 3 an empty ring in `buffer`, or remove the channel if
+// `buffer` is NULL.  Call at plugin launch before either plugin runs.  Returns
+// 0 if `channel` isn't 2 or 3, or if `buffer` is set and `size` is 0.
+unsigned onerom_rtt_set_buffer(unsigned channel, char *buffer, unsigned size);
 
 #if defined(TEST_BUILD)
 void onerom_rtt_test_unmove_log(void);

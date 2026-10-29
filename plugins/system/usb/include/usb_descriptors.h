@@ -41,4 +41,8 @@ extern uint8_t const desc_ms_os_20[];
 #define EPNUM_VENDOR_OUT  0x03
 #define EPNUM_VENDOR_IN   0x83
 
+#define EPNUM_CDC2_NOTIF  0x84
+#define EPNUM_CDC2_OUT    0x05
+#define EPNUM_CDC2_IN     0x85
+
 #endif /* USB_DESCRIPTORS_H_ */

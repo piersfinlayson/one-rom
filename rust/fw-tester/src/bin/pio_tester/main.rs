@@ -32,6 +32,7 @@ mod boot_slot;
 mod commissioning;
 mod exclusive_serial;
 mod flash_range;
+mod log_channels;
 mod plugin_launch;
 mod report;
 mod runner;

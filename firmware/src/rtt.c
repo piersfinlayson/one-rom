@@ -165,6 +165,19 @@ static void onerom_rtt_init(void) {
     ONEROM_RTT_DMB();
 }
 
+// The descriptor of channel 2 or 3, whether or not it has a buffer, or NULL for
+// any other channel.  These are the channels onerom_rtt_set_buffer() creates.
+static onerom_rtt_ring_t *onerom_rtt_created_ring(unsigned channel) {
+    switch (channel) {
+        case 2u:
+            return &_SEGGER_RTT.up[2];
+        case 3u:
+            return &_SEGGER_RTT.down[1];
+        default:
+            return 0;
+    }
+}
+
 // The descriptor for a channel, or NULL if there is none or it has no buffer.
 static onerom_rtt_ring_t *onerom_rtt_ring(unsigned channel) {
     onerom_rtt_ring_t *ring;
@@ -181,7 +194,11 @@ static onerom_rtt_ring_t *onerom_rtt_ring(unsigned channel) {
             ring = &_SEGGER_RTT.down[0];
             break;
         default:
-            return 0;
+            ring = onerom_rtt_created_ring(channel);
+            if (ring == 0) {
+                return 0;
+            }
+            break;
     }
     if ((ring->buffer == 0) || (ring->size == 0u)) {
         return 0;
@@ -232,6 +249,39 @@ unsigned onerom_rtt_move_log(char *buffer, unsigned size) {
     // onerom_rtt_log_moved() reads up[1]'s buffer, so it is written last.
     ONEROM_RTT_DMB();
     log->buffer = buffer;
+
+    return 1u;
+}
+
+unsigned onerom_rtt_set_buffer(unsigned channel, char *buffer, unsigned size) {
+    onerom_rtt_ring_t *ring = onerom_rtt_created_ring(channel);
+
+    if (ring == 0) {
+        return 0u;
+    }
+    if ((buffer != 0) && (size == 0u)) {
+        return 0u;
+    }
+
+    ONEROM_RTT_CRITICAL_SECTION();
+
+    onerom_rtt_init();
+
+    // A debug probe can read the descriptor at any time so clear the buffer
+    // pointer first and set it last.
+    ring->buffer = 0;
+    ONEROM_RTT_DMB();
+    if (buffer == 0) {
+        memset(ring, 0, sizeof(*ring));
+        return 1u;
+    }
+    ring->name = onerom_rtt_channel_name;
+    ring->size = size;
+    ring->flags = ONEROM_RTT_MODE_NO_BLOCK_SKIP;
+    ring->read_offset = 0u;
+    ring->write_offset = 0u;
+    ONEROM_RTT_DMB();
+    ring->buffer = buffer;
 
     return 1u;
 }

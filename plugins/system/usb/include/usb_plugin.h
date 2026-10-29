@@ -13,6 +13,7 @@
 #include "usb_led.h"
 #include "usb_gpio.h"
 #include "usb_log.h"
+#include "usb_peer.h"
 
 // Context structure for our plugin
 typedef struct {
@@ -61,6 +62,10 @@ typedef struct {
     ora_log_query_fn_t log_query;
 
     uint8_t exclusive_serial_in;
+
+    // Serial port 2's state using SERIAL_PORT_2_* bits.  Set by
+    // serial_port_2_init().
+    uint8_t serial_port_2;
 
     // Whether a terminal has the CDC port open, and whether a session it has
     // just started is still to be set up.  Both are set from tud_cdc_line_state_cb(),

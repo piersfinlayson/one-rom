@@ -13,6 +13,27 @@ STATIC_ASSERT(ORA_PLUGIN_MAGIC == PLUGIN_MAGIC, "plugin magic");
 
 #define PLUGIN_ERR(...) do { if (log) { ERR(__VA_ARGS__); } } while (0)
 
+// A firmware version as one number, so versions compare in order.
+static inline uint64_t fw_version(uint16_t major, uint16_t minor, uint16_t patch) {
+    return ((uint64_t)major << 32) | ((uint64_t)minor << 16) | patch;
+}
+
+// Whether `header` requires firmware before major.minor.patch.
+static uint8_t plugin_predates(
+    const ora_plugin_header_t *header,
+    uint16_t major,
+    uint16_t minor,
+    uint16_t patch
+) {
+    uint64_t required = fw_version(header->min_fw_major_version,
+        header->min_fw_minor_version, header->min_fw_patch_version);
+    return required < fw_version(major, minor, patch);
+}
+
+static uint8_t plugin_sets_log_channels(const ora_plugin_header_t *header) {
+    return (header->channel_2_size != 0u) || (header->channel_3_size != 0u);
+}
+
 static uint8_t plugin_valid(
     const onerom_rom_slot_t *slot,
     const ora_plugin_type_t expected_type,
@@ -71,6 +92,21 @@ static uint8_t plugin_valid(
         return 0;
     }
 
+    if (header->channel_2_size > LOG_CHANNEL_2_MAX_SIZE) {
+        PLUGIN_ERR("ORA channel 2 size 0x%x above 0x%x",
+            header->channel_2_size, LOG_CHANNEL_2_MAX_SIZE);
+        return 0;
+    }
+    if (header->channel_3_size > LOG_CHANNEL_3_MAX_SIZE) {
+        PLUGIN_ERR("ORA channel 3 size 0x%x above 0x%x",
+            header->channel_3_size, LOG_CHANNEL_3_MAX_SIZE);
+        return 0;
+    }
+    if (plugin_sets_log_channels(header) && plugin_predates(header, 0, 8, 1)) {
+        PLUGIN_ERR("ORA log channels require firmware 0.8.1");
+        return 0;
+    }
+
     return 1;
 }
 
@@ -115,13 +151,24 @@ static uint8_t usb_controller_dpram_clash(
         && (user->usb_controller_dpram_size != 0u);
 }
 
+// A system plugin requiring firmware before 0.8.1 leaves the pool empty, so the
+// user plugin's log channels can't be allocated.  See usb_dpram_pool_init().
+static uint8_t log_channels_unavailable(
+    const ora_plugin_header_t *system,
+    const ora_plugin_header_t *user
+) {
+    return plugin_sets_log_channels(user)
+        && plugin_predates(system, 0, 8, 1);
+}
+
 const ora_plugin_header_t *user_plugin_to_start(void) {
     const ora_plugin_header_t *system = system_plugin_to_start();
     if (system == NULL) {
         return NULL;
     }
     const ora_plugin_header_t *user = plugin_header(1);
-    if ((user != NULL) && usb_controller_dpram_clash(system, user)) {
+    if ((user != NULL) && (usb_controller_dpram_clash(system, user)
+                           || log_channels_unavailable(system, user))) {
         return NULL;
     }
     return user;
@@ -364,15 +411,8 @@ static void mem_pool_unlock(uint32_t primask) {
 
 // A plugin requiring firmware before 0.8.1 can't reserve USB controller DPRAM
 // but may use it.  The 0.8.0 USB plugin zeroes all of USB DPRAM at start.
-// A firmware version as one number, so versions compare in order.
-static inline uint64_t fw_version(uint16_t major, uint16_t minor, uint16_t patch) {
-    return ((uint64_t)major << 32) | ((uint64_t)minor << 16) | patch;
-}
-
 static uint8_t plugin_predates_usb_controller_dpram(const ora_plugin_header_t *header) {
-    uint64_t required = fw_version(header->min_fw_major_version,
-        header->min_fw_minor_version, header->min_fw_patch_version);
-    return required < fw_version(0, 8, 1);
+    return plugin_predates(header, 0, 8, 1);
 }
 
 static void usb_dpram_pool_init(void) {
@@ -402,6 +442,71 @@ static uint32_t usb_dpram_pool_end(void) {
     return USB_DPRAM_SIZE;
 }
 
+// Returns 1 and sets addr_out to the allocation's address, or 0 if the pool
+// doesn't have `bytes` free.
+static uint8_t usb_dpram_pool_alloc(uint32_t bytes, uint32_t *addr_out) {
+    uint32_t primask = mem_pool_lock();
+    uint32_t start = RUNTIME->usb_dpram_pool_offset;
+    uint32_t end = usb_dpram_pool_end();
+    if ((start > end) || (bytes > (end - start))) {
+        mem_pool_unlock(primask);
+        return 0;
+    }
+    RUNTIME->usb_dpram_pool_offset = (uint16_t)((start + bytes + 3u) & ~3u);
+    mem_pool_unlock(primask);
+
+    *addr_out = USB_DPRAM_BASE_ADDR + start;
+    return 1;
+}
+
+// Log channels 2 and 3 are allocated from the pool before either plugin
+// starts, so both always fit unless a system plugin requiring firmware before
+// 0.8.1 leaves the pool empty.
+STATIC_ASSERT(LOG_CHANNEL_2_MAX_SIZE + LOG_CHANNEL_3_MAX_SIZE
+    <= USB_DPRAM_SIZE - USB_CONTROLLER_DPRAM_MAX - USB_DPRAM_LOG_SIZE,
+    "Log channels 2 and 3 must fit the smallest pool");
+
+#if REAL_HARDWARE
+static char *usb_dpram_ptr(uint32_t addr) {
+    return (char *)(uintptr_t)addr;
+}
+#else // !REAL_HARDWARE
+static char *usb_dpram_ptr(uint32_t addr) {
+    return stub_usb_dpram() + (addr - USB_DPRAM_BASE_ADDR);
+}
+#endif // REAL_HARDWARE
+
+// The larger of the two plugins' sizes for log channel 2 or 3.
+static uint16_t log_channel_size(uint8_t channel) {
+    const ora_plugin_header_t *headers[] = {
+        system_plugin_to_start(), user_plugin_to_start(),
+    };
+    uint16_t size = 0u;
+    for (unsigned ii = 0; ii < (sizeof(headers) / sizeof(headers[0])); ii++) {
+        if (headers[ii] == NULL) {
+            continue;
+        }
+        uint16_t wanted = (channel == ORA_LOG_CHANNEL_2)
+            ? headers[ii]->channel_2_size : headers[ii]->channel_3_size;
+        if (wanted > size) {
+            size = wanted;
+        }
+    }
+    return size;
+}
+
+static void launch_log_channels(void) {
+    for (uint8_t channel = ORA_LOG_CHANNEL_2; channel <= ORA_LOG_CHANNEL_3; channel++) {
+        uint16_t size = log_channel_size(channel);
+        uint32_t addr;
+        char *buffer = NULL;
+        if ((size != 0u) && usb_dpram_pool_alloc(size, &addr)) {
+            buffer = usb_dpram_ptr(addr);
+        }
+        onerom_rtt_set_buffer(channel, buffer, size);
+    }
+}
+
 ora_result_t ora_alloc_mem(const ora_alloc_request_t *req, uint32_t *addr_out) {
     if ((req == NULL) || (addr_out == NULL)) {
         return ORA_RESULT_INVALID_ARG;
@@ -420,17 +525,9 @@ ora_result_t ora_alloc_mem(const ora_alloc_request_t *req, uint32_t *addr_out) {
         return ORA_RESULT_INSUFFICIENT_FREE_MEM;
     }
 
-    uint32_t primask = mem_pool_lock();
-    uint32_t start = RUNTIME->usb_dpram_pool_offset;
-    uint32_t end = usb_dpram_pool_end();
-    if ((start > end) || (req->bytes > (end - start))) {
-        mem_pool_unlock(primask);
+    if (!usb_dpram_pool_alloc(req->bytes, addr_out)) {
         return ORA_RESULT_INSUFFICIENT_FREE_MEM;
     }
-    RUNTIME->usb_dpram_pool_offset = (uint16_t)((start + req->bytes + 3u) & ~3u);
-    mem_pool_unlock(primask);
-
-    *addr_out = USB_DPRAM_BASE_ADDR + start;
     return ORA_RESULT_OK;
 }
 
@@ -1649,26 +1746,32 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
 // Logging API
 // ---------------------------------------------------------------------------
 
-// Which plugin holds each channel's write and read claim, indexed by channel.
-//
-// Zero means unclaimed, so .bss zeroing is the initialiser and this stays
-// correct however many channels the ring gains; a held claim stores the
-// claiming plugin's ora_plugin_type_t plus one.
-static uint8_t ora_log_writer[ONEROM_RTT_CHANNELS];
-static uint8_t ora_log_reader[ONEROM_RTT_CHANNELS];
+// Which plugin holds each channel's write and read claim, as
+// onerom_log_channel_claim_t bits in RUNTIME->log_channel_claims.
+#define ORA_LOG_WRITE   0u
+#define ORA_LOG_READ    1u
+
+STATIC_ASSERT(ONEROM_RTT_CHANNELS == 4, "One claim bit per plugin, direction and channel");
+STATIC_ASSERT(LOG_CLAIM_SYSTEM_WRITE_0 == (1u << 0), "claim bit layout");
+STATIC_ASSERT(LOG_CLAIM_SYSTEM_READ_0 == (1u << 4), "claim bit layout");
+STATIC_ASSERT(LOG_CLAIM_USER_WRITE_0 == (1u << 8), "claim bit layout");
+STATIC_ASSERT(LOG_CLAIM_USER_READ_3 == (1u << 15), "claim bit layout");
+
+static uint16_t ora_log_claim_bit(
+    ora_plugin_type_t plugin,
+    unsigned direction,
+    ora_log_channel_t channel
+) {
+    return (uint16_t)(1u << (((unsigned)plugin * 8u) + (direction * 4u)
+                             + (unsigned)channel));
+}
 
 #if defined(TEST_BUILD)
 // Give the channels back, as a device does by coming up with its RAM zeroed.
-//
-// A test build runs many boots in one process, where these are ordinary statics
-// and nothing clears them.  A plugin that claimed a channel in one run would
-// then find it held by itself in the next, and behave as it does on a device
-// whose channel another plugin owns.  Called from onerom_test_reset().
+// A harness that clears its plugin's state calls this alongside it.  See
+// onerom_test_reset().
 void ora_log_reset_claims(void) {
-    for (unsigned ii = 0; ii < ONEROM_RTT_CHANNELS; ii++) {
-        ora_log_writer[ii] = 0u;
-        ora_log_reader[ii] = 0u;
-    }
+    RUNTIME->log_channel_claims = 0u;
 }
 #endif // TEST_BUILD
 
@@ -1694,6 +1797,13 @@ static ora_plugin_type_t ora_calling_plugin(void) {
 }
 #endif // REAL_HARDWARE
 
+const uint32_t *ora_get_peer_data(void) {
+    const ora_plugin_header_t *other =
+        (ora_calling_plugin() == ORA_PLUGIN_TYPE_SYSTEM)
+            ? user_plugin_to_start() : system_plugin_to_start();
+    return (other != NULL) ? other->peer_data : NULL;
+}
+
 // A channel exists if it is in range and has a buffer.  rtt.c decides the
 // second, so adding or removing a channel needs no change here.
 static uint8_t ora_log_channel_exists(ora_log_channel_t channel) {
@@ -1708,13 +1818,13 @@ static uint8_t ora_log_channel_exists(ora_log_channel_t channel) {
 }
 
 // Does the calling plugin hold this claim on this channel?
-static uint8_t ora_log_holds(const uint8_t *claims, ora_log_channel_t channel) {
+static uint8_t ora_log_holds(unsigned direction, ora_log_channel_t channel) {
     if (!ora_log_channel_exists(channel)) {
         return 0u;
     }
 
-    return (claims[(unsigned)channel] ==
-            (uint8_t)(ora_calling_plugin() + 1u)) ? 1u : 0u;
+    uint16_t bit = ora_log_claim_bit(ora_calling_plugin(), direction, channel);
+    return (RUNTIME->log_channel_claims & bit) ? 1u : 0u;
 }
 
 // Spinlock guarding the log claim tables.
@@ -1758,23 +1868,37 @@ static void ora_log_unlock(uint32_t primask) {
 }
 #endif // TEST_BUILD
 
-static ora_result_t ora_log_claim(uint8_t *claims, ora_log_channel_t channel) {
+static ora_result_t ora_log_claim(unsigned direction, ora_log_channel_t channel) {
     ora_result_t result;
 
     if (!ora_log_channel_exists(channel)) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
 
+    uint16_t held = ora_log_claim_bit(ORA_PLUGIN_TYPE_SYSTEM, direction, channel)
+        | ora_log_claim_bit(ORA_PLUGIN_TYPE_USER, direction, channel);
     uint32_t primask = ora_log_lock();
-    if (claims[(unsigned)channel] != 0u) {
+    if (RUNTIME->log_channel_claims & held) {
         result = ORA_RESULT_LOG_CHANNEL_IN_USE;
     } else {
-        claims[(unsigned)channel] = (uint8_t)(ora_calling_plugin() + 1u);
+        RUNTIME->log_channel_claims |=
+            ora_log_claim_bit(ora_calling_plugin(), direction, channel);
         result = ORA_RESULT_OK;
     }
     ora_log_unlock(primask);
 
     return result;
+}
+
+// Release the calling plugin's claim, or return 0 if it doesn't hold it.
+// Called with the claim lock held.
+static uint8_t ora_log_release(unsigned direction, ora_log_channel_t channel) {
+    uint16_t bit = ora_log_claim_bit(ora_calling_plugin(), direction, channel);
+    if (!(RUNTIME->log_channel_claims & bit)) {
+        return 0u;
+    }
+    RUNTIME->log_channel_claims &= (uint16_t)~bit;
+    return 1u;
 }
 
 ora_result_t ora_log_open_write(ora_log_channel_t channel, const char *name) {
@@ -1784,7 +1908,7 @@ ora_result_t ora_log_open_write(ora_log_channel_t channel, const char *name) {
         return ORA_RESULT_INVALID_ARG;
     }
 
-    result = ora_log_claim(ora_log_writer, channel);
+    result = ora_log_claim(ORA_LOG_WRITE, channel);
     if (result != ORA_RESULT_OK) {
         return result;
     }
@@ -1809,7 +1933,7 @@ ora_result_t ora_log_write(ora_log_channel_t channel, const void *buf,
     if (!ora_log_channel_exists(channel)) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
-    if (!ora_log_holds(ora_log_writer, channel)) {
+    if (!ora_log_holds(ORA_LOG_WRITE, channel)) {
         return ORA_RESULT_INVALID_ARG;
     }
 
@@ -1833,14 +1957,13 @@ ora_result_t ora_log_close_write(ora_log_channel_t channel) {
     }
 
     uint32_t primask = ora_log_lock();
-    if (ora_log_writer[(unsigned)channel] !=
-        (uint8_t)(ora_calling_plugin() + 1u)) {
+    if (!ora_log_holds(ORA_LOG_WRITE, channel)) {
         result = ORA_RESULT_INVALID_ARG;
     } else {
         // The name goes back before the claim is released, so the next owner
         // cannot have its own name reverted under it.
         onerom_rtt_set_name((unsigned)channel, NULL);
-        ora_log_writer[(unsigned)channel] = 0u;
+        ora_log_release(ORA_LOG_WRITE, channel);
         result = ORA_RESULT_OK;
     }
     ora_log_unlock(primask);
@@ -1849,7 +1972,7 @@ ora_result_t ora_log_close_write(ora_log_channel_t channel) {
 }
 
 ora_result_t ora_log_open_read(ora_log_channel_t channel) {
-    return ora_log_claim(ora_log_reader, channel);
+    return ora_log_claim(ORA_LOG_READ, channel);
 }
 
 ora_result_t ora_log_read(ora_log_channel_t channel, void *buf,
@@ -1860,7 +1983,7 @@ ora_result_t ora_log_read(ora_log_channel_t channel, void *buf,
     if (!ora_log_channel_exists(channel)) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
-    if (!ora_log_holds(ora_log_reader, channel)) {
+    if (!ora_log_holds(ORA_LOG_READ, channel)) {
         return ORA_RESULT_INVALID_ARG;
     }
 
@@ -1878,13 +2001,8 @@ ora_result_t ora_log_close_read(ora_log_channel_t channel) {
     }
 
     uint32_t primask = ora_log_lock();
-    if (ora_log_reader[(unsigned)channel] !=
-        (uint8_t)(ora_calling_plugin() + 1u)) {
-        result = ORA_RESULT_INVALID_ARG;
-    } else {
-        ora_log_reader[(unsigned)channel] = 0u;
-        result = ORA_RESULT_OK;
-    }
+    result = ora_log_release(ORA_LOG_READ, channel)
+        ? ORA_RESULT_OK : ORA_RESULT_INVALID_ARG;
     ora_log_unlock(primask);
 
     return result;
@@ -2260,6 +2378,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_commissioning_instance;
         case ORA_ID_ALLOC_MEM:
             return ora_alloc_mem;
+        case ORA_ID_GET_PEER_DATA:
+            return ora_get_peer_data;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -2299,6 +2419,7 @@ uint8_t launch_usb_dpram(uint8_t entry_flags) {
 
     uint8_t moved = launch_log_move(entry_flags);
     usb_dpram_pool_init();
+    launch_log_channels();
     return moved;
 }
 
@@ -2385,6 +2506,10 @@ const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched) {
     const ora_plugin_header_t *system = system_plugin_to_start();
     if ((system != NULL) && usb_controller_dpram_clash(system, user)) {
         ERR("Both plugins reserve USB controller DPRAM - user plugin not started");
+        return NULL;
+    }
+    if ((system != NULL) && log_channels_unavailable(system, user)) {
+        ERR("No USB DPRAM for log channels - user plugin not started");
         return NULL;
     }
 

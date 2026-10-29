@@ -9,6 +9,9 @@
 //! log into that port's IN endpoint while a terminal has the port open, so
 //! reading it is how the CLI shows firmware and plugin logging.
 //!
+//! A user plugin can request serial port 2, a second CDC ACM interface for its
+//! own data. The two ports are identified by USB interface number.
+//!
 //! The port is reached through the operating system's own CDC class driver -
 //! cdc_acm, AppleUSBCDCACM or usbser - rather than by claiming the interface
 //! over USB directly, because that driver owns the interface on every platform
@@ -62,24 +65,31 @@ const READ_CHUNK: usize = 256;
 /// the same until this long has passed.
 pub const STALL_NOTICE: Duration = Duration::from_secs(1);
 
-/// Find the serial port `device` presents.
+/// Find serial port `port`, 1 or 2, of `device`.
 ///
-/// Returns [`Error::SerialPortNotFound`] if the device has no port, which is
-/// what a One ROM running a USB plugin that predates the CDC interface looks
-/// like from here.
-pub fn find_port(device: &Device) -> Result<String, Error> {
+/// Returns [`Error::SerialPortNotFound`] if the device has no serial port 1,
+/// which is what a One ROM running a USB plugin that predates the CDC
+/// interface looks like from here, and [`Error::SerialPort2NotFound`] if it has
+/// no serial port 2.
+pub fn find_port(device: &Device, port: u8) -> Result<String, Error> {
     let ports = serialport::available_ports()
         .map_err(|e| Error::SerialPort(format!("Failed to list serial ports: {e}")))?;
 
-    let mut matches = select_ports(&ports, device.vid, device.pid, device.serial.as_deref());
+    let mut matches = select_ports(
+        &ports,
+        device.vid,
+        device.pid,
+        device.serial.as_deref(),
+        port,
+    );
 
     match matches.len() {
+        0 if port == 2 => Err(Error::SerialPort2NotFound(device.to_string())),
         0 => Err(Error::SerialPortNotFound(device.to_string())),
         1 => Ok(matches.remove(0)),
         _ => {
-            // Only reachable with two devices presenting the same serial, which
-            // makes every other command ambiguous too. Say which was taken
-            // rather than choosing in silence.
+            // Reachable where select_ports() can't order the ports. Say which
+            // was taken rather than choosing in silence.
             warn!(
                 "More than one serial port matches this One ROM, using the first: {}",
                 matches.join(", ")
@@ -99,29 +109,53 @@ pub fn find_port(device: &Device) -> Result<String, Error> {
 /// is available to tell two apart, and refusing outright would be worse than
 /// naming the ambiguity, which the caller does.
 ///
+/// Serial port 2's interfaces follow serial port 1's, so the device's ports
+/// sorted by interface number are serial port 1 then serial port 2. Every
+/// matching port is returned if they can't be sorted, because:
+/// - the platform doesn't report an interface number
+/// - two devices have the same serial
+///
 /// macOS lists both nodes of each port, the callout `/dev/cu.*` and the dialin
 /// `/dev/tty.*`. Only the callout node is usable: opening the dialin node
 /// blocks until carrier is asserted, which a CDC device never does, so the
 /// command would hang rather than fail. Dropping names beginning `tty.` leaves
 /// Linux untouched, where the node is `/dev/ttyACM0` and has no dot.
-fn select_ports(ports: &[SerialPortInfo], vid: u16, pid: u16, serial: Option<&str>) -> Vec<String> {
-    ports
+fn select_ports(
+    ports: &[SerialPortInfo],
+    vid: u16,
+    pid: u16,
+    serial: Option<&str>,
+    port: u8,
+) -> Vec<String> {
+    let mut matched: Vec<(Option<u8>, String)> = ports
         .iter()
-        .filter(|port| {
+        .filter_map(|port| {
             let SerialPortType::UsbPort(info) = &port.port_type else {
-                return false;
+                return None;
             };
-            if info.vid != vid || info.pid != pid {
-                return false;
+            if info.vid != vid || info.pid != pid || is_dialin_node(&port.port_name) {
+                return None;
             }
-            match (serial, info.serial_number.as_deref()) {
+            let serial_matches = match (serial, info.serial_number.as_deref()) {
                 (Some(wanted), Some(found)) => wanted.eq_ignore_ascii_case(found),
                 (Some(_), None) => false,
                 (None, _) => true,
-            }
+            };
+            serial_matches.then(|| (info.interface, port.port_name.clone()))
         })
-        .map(|port| port.port_name.clone())
-        .filter(|name| !is_dialin_node(name))
+        .collect();
+
+    matched.sort_by_key(|(interface, _)| *interface);
+    let ordered = matched.iter().all(|(interface, _)| interface.is_some())
+        && matched.windows(2).all(|pair| pair[0].0 != pair[1].0);
+    if !ordered {
+        return matched.into_iter().map(|(_, name)| name).collect();
+    }
+    usize::from(port)
+        .checked_sub(1)
+        .and_then(|index| matched.into_iter().nth(index))
+        .map(|(_, name)| name)
+        .into_iter()
         .collect()
 }
 
@@ -297,6 +331,16 @@ mod tests {
     use serialport::UsbPortInfo;
 
     fn usb_port(name: &str, vid: u16, pid: u16, serial: Option<&str>) -> SerialPortInfo {
+        usb_port_on(name, vid, pid, serial, None)
+    }
+
+    fn usb_port_on(
+        name: &str,
+        vid: u16,
+        pid: u16,
+        serial: Option<&str>,
+        interface: Option<u8>,
+    ) -> SerialPortInfo {
         SerialPortInfo {
             port_name: name.to_string(),
             port_type: SerialPortType::UsbPort(UsbPortInfo {
@@ -305,7 +349,7 @@ mod tests {
                 serial_number: serial.map(str::to_string),
                 manufacturer: None,
                 product: None,
-                interface: None,
+                interface,
             }),
         }
     }
@@ -324,7 +368,7 @@ mod tests {
             usb_port("/dev/ttyACM1", VID, PID, Some("cafef00d")),
         ];
         assert_eq!(
-            select_ports(&ports, VID, PID, Some("cafef00d")),
+            select_ports(&ports, VID, PID, Some("cafef00d"), 1),
             vec!["/dev/ttyACM1".to_string()]
         );
     }
@@ -333,7 +377,7 @@ mod tests {
     fn ignores_serial_case() {
         let ports = [usb_port("/dev/ttyACM0", VID, PID, Some("DEADBEEF"))];
         assert_eq!(
-            select_ports(&ports, VID, PID, Some("deadbeef")),
+            select_ports(&ports, VID, PID, Some("deadbeef"), 1),
             vec!["/dev/ttyACM0".to_string()]
         );
     }
@@ -344,13 +388,13 @@ mod tests {
             usb_port("/dev/ttyACM0", 0x2e8a, 0x000f, Some("deadbeef")),
             other_port("/dev/ttyS0"),
         ];
-        assert!(select_ports(&ports, VID, PID, Some("deadbeef")).is_empty());
+        assert!(select_ports(&ports, VID, PID, Some("deadbeef"), 1).is_empty());
     }
 
     #[test]
     fn rejects_a_matching_device_with_the_wrong_serial() {
         let ports = [usb_port("/dev/ttyACM0", VID, PID, Some("deadbeef"))];
-        assert!(select_ports(&ports, VID, PID, Some("cafef00d")).is_empty());
+        assert!(select_ports(&ports, VID, PID, Some("cafef00d"), 1).is_empty());
     }
 
     /// The dialin node must never be chosen - opening it hangs.
@@ -361,7 +405,7 @@ mod tests {
             usb_port("/dev/cu.usbmodem1103", VID, PID, Some("deadbeef")),
         ];
         assert_eq!(
-            select_ports(&ports, VID, PID, Some("deadbeef")),
+            select_ports(&ports, VID, PID, Some("deadbeef"), 1),
             vec!["/dev/cu.usbmodem1103".to_string()]
         );
     }
@@ -371,7 +415,7 @@ mod tests {
     fn keeps_the_linux_node() {
         let ports = [usb_port("/dev/ttyACM0", VID, PID, Some("deadbeef"))];
         assert_eq!(
-            select_ports(&ports, VID, PID, Some("deadbeef")),
+            select_ports(&ports, VID, PID, Some("deadbeef"), 1),
             vec!["/dev/ttyACM0".to_string()]
         );
     }
@@ -383,8 +427,65 @@ mod tests {
             usb_port("/dev/ttyACM1", 0x2e8a, 0x000f, None),
         ];
         assert_eq!(
-            select_ports(&ports, VID, PID, None),
+            select_ports(&ports, VID, PID, None, 1),
             vec!["/dev/ttyACM0".to_string()]
         );
+    }
+
+    /// The ports are ordered by interface number, so a platform reporting the
+    /// control or the data interface both work.
+    #[test]
+    fn picks_each_serial_port_by_interface_order() {
+        for (port_1, port_2) in [(2, 4), (3, 5)] {
+            let ports = [
+                usb_port_on("/dev/ttyACM1", VID, PID, Some("deadbeef"), Some(port_2)),
+                usb_port_on("/dev/ttyACM0", VID, PID, Some("deadbeef"), Some(port_1)),
+            ];
+            assert_eq!(
+                select_ports(&ports, VID, PID, Some("deadbeef"), 1),
+                vec!["/dev/ttyACM0".to_string()]
+            );
+            assert_eq!(
+                select_ports(&ports, VID, PID, Some("deadbeef"), 2),
+                vec!["/dev/ttyACM1".to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn finds_no_serial_port_2_on_a_device_without_one() {
+        let ports = [usb_port_on(
+            "/dev/ttyACM0",
+            VID,
+            PID,
+            Some("deadbeef"),
+            Some(2),
+        )];
+        assert!(select_ports(&ports, VID, PID, Some("deadbeef"), 2).is_empty());
+    }
+
+    #[test]
+    fn matches_every_port_where_the_interface_is_not_reported() {
+        let ports = [
+            usb_port_on("/dev/ttyACM0", VID, PID, Some("deadbeef"), Some(2)),
+            usb_port("/dev/ttyACM1", VID, PID, Some("deadbeef")),
+        ];
+        for port in [1, 2] {
+            assert_eq!(
+                select_ports(&ports, VID, PID, Some("deadbeef"), port).len(),
+                2
+            );
+        }
+    }
+
+    /// Two devices presenting the same serial can't be ordered, so the caller
+    /// warns.
+    #[test]
+    fn matches_every_port_of_two_devices_with_the_same_serial() {
+        let ports = [
+            usb_port_on("/dev/ttyACM0", VID, PID, Some("deadbeef"), Some(2)),
+            usb_port_on("/dev/ttyACM1", VID, PID, Some("deadbeef"), Some(2)),
+        ];
+        assert_eq!(select_ports(&ports, VID, PID, Some("deadbeef"), 1).len(), 2);
     }
 }

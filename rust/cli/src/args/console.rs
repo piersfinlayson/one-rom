@@ -55,6 +55,19 @@ pub struct ConsoleArgs {
     /// line mode the terminal displays the line as you edit it.
     #[arg(long)]
     pub no_echo: bool,
+
+    /// Serial port to open: 1 or 2.  Default 1.
+    ///
+    /// - 1 is the USB plugin's default serial port.
+    /// - 2 requires the USB plugin and a user plugin that supports it.
+    #[arg(
+        long,
+        value_name = "PORT",
+        default_value_t = 1,
+        value_parser = clap::value_parser!(u8).range(1..=2),
+        verbatim_doc_comment
+    )]
+    pub serial_port: u8,
 }
 
 impl CommandTrait for ConsoleArgs {

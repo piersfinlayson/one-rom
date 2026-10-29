@@ -837,6 +837,13 @@ typedef enum {
      */
     ORA_ID_ALLOC_MEM                 = 0x00000045,
 
+    /**
+     * @brief Retrieve the other plugin's peer data
+     * @sa ora_get_peer_data_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_PEER_DATA             = 0x00000046,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -920,6 +927,24 @@ typedef enum {
      * @since firmware 0.7.3
      */
     ORA_LOG_CHANNEL_1       = 1,
+
+    /**
+     * @brief Channel 2 - No fixed purpose
+     *
+     * Exists only if channel_2_size is set in a plugin header.
+     *
+     * @since firmware 0.8.1
+     */
+    ORA_LOG_CHANNEL_2       = 2,
+
+    /**
+     * @brief Channel 3 - No fixed purpose
+     *
+     * Exists only if channel_3_size is set in a plugin header.
+     *
+     * @since firmware 0.8.1
+     */
+    ORA_LOG_CHANNEL_3       = 3,
 
     ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
 } ora_log_channel_t;
@@ -3619,6 +3644,16 @@ typedef ora_result_t (*ora_alloc_mem_fn_t)(const ora_alloc_request_t *req,
                                            uint32_t *addr_out);
 
 /**
+ * @brief Retrieve the other plugin's peer data
+ * @sa ORA_ID_GET_PEER_DATA
+ * @since firmware 0.8.1
+ *
+ * @return The other plugin's ora_plugin_header_t::peer_data in flash, or NULL
+ *         if there is no other plugin plugin
+ */
+typedef const uint32_t *(*ora_get_peer_data_fn_t)(void);
+
+/**
  * @brief Get a commissioning value
  * @sa ORA_ID_GET_COMMISSIONING_VALUE
  * @since firmware 0.8.1
@@ -3874,11 +3909,62 @@ typedef struct {
     uint32_t boot_slot_addr;
 
     /**
+     * @brief Size in bytes of log channel 2, or 0 for no channel 2
+     *
+     * Channel 2 is created before either plugin starts.  If both plugins set
+     * the size the larger size is used.
+     *
+     * A plugin isn't started if it requests more than
+     * @ref ORA_LOG_CHANNEL_2_MAX_SIZE, or if channel 2 can't be allocated.
+     *
+     * @sa ORA_LOG_CHANNEL_2
+     * @since firmware 0.8.1
+     */
+    // offset 36
+    uint16_t channel_2_size;
+
+    /**
+     * @brief Size in bytes of log channel 3, or 0 for no channel 3
+     *
+     * Channel 3 is created before either plugin starts.  If both plugins set
+     * the size the larger size is used.
+     *
+     * A plugin isn't started if it requests more than
+     * @ref ORA_LOG_CHANNEL_3_MAX_SIZE, or if channel 3 can't be allocated.
+     *
+     * @sa ORA_LOG_CHANNEL_3
+     * @since firmware 0.8.1
+     */
+    // offset 38
+    uint16_t channel_3_size;
+
+    /**
+     * @brief Data for the other plugin
+     * @sa ora_get_peer_data_fn_t
+     * @since firmware 0.8.1
+     *
+     * Used for two plugins to communicate build time configuration and
+     * related information using a data block transparent to the firmware.
+     * 
+     * firmware.
+     * The firmware ignores this field.
+     *
+     * Word 0 identifies the format of words 1 to 7.  Word 0 is 0 if this
+     * data is unused, including by plugins built before its introduction.
+     *
+     * A format is defined and published by a plugin, and the word 0 for that
+     * format is defined in its plugin-meta.json.
+     */
+    // offset 40
+    uint32_t peer_data[8];
+
+    /**
      * @brief Reserved for future use
      *
      * This field is reserved for future use and must be set to 0.
      */
-    uint8_t reserved[220];
+    // offset 72
+    uint8_t reserved[184];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
 #if UINTPTR_MAX == 0xFFFFFFFFu
@@ -3893,6 +3979,12 @@ _Static_assert(__builtin_offsetof(ora_plugin_header_t, boot_slot_addr) == ORA_PL
                "boot_slot_addr offset");
 _Static_assert(__builtin_offsetof(ora_plugin_header_t, usb_controller_dpram_size) == ORA_PLUGIN_HEADER_USB_CONTROLLER_DPRAM_SIZE_OFFSET,
                "usb_controller_dpram_size offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, channel_2_size) == ORA_PLUGIN_HEADER_CHANNEL_2_SIZE_OFFSET,
+               "channel_2_size offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, channel_3_size) == ORA_PLUGIN_HEADER_CHANNEL_3_SIZE_OFFSET,
+               "channel_3_size offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, peer_data) == ORA_PLUGIN_HEADER_PEER_DATA_OFFSET,
+               "peer_data offset");
 #endif
 
 /**

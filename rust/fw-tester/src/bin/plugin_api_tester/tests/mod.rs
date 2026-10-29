@@ -10,6 +10,7 @@ pub mod led;
 pub mod log;
 pub mod lookup;
 pub mod mapping;
+pub mod peer;
 pub mod platform;
 pub mod reboot;
 pub mod reprogram;

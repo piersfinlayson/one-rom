@@ -36,6 +36,7 @@ const ora_plugin_header_t ora_plugin_header = {
     .min_fw_minor_version = 8,
     .min_fw_patch_version = 1,
     .usb_controller_dpram_size = CFG_TUD_RP2040_DPRAM_SIZE,
+    .peer_data = { USB_PEER_FORMAT, USB_PEER_SERIAL_PORT_2 },
     .reserved = {0},
 };
 _Static_assert(CFG_TUD_RP2040_DPRAM_SIZE <= ORA_USB_CONTROLLER_DPRAM_MAX,
@@ -199,6 +200,7 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn, uint8_t entry_flags) {
     // none of it changes while the plugin runs.
     log_drain_init();
     log_input_init();
+    serial_port_2_init();
 
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.
@@ -237,6 +239,7 @@ void usb_main(
         usb_plugin_task();
         log_drain_task();
         log_input_task();
+        serial_port_2_task();
         yield(NULL);
 
         // Nothing in this loop waits on anything a host test can change, so

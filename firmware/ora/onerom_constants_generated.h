@@ -151,6 +151,26 @@
 // @since firmware 0.8.1
 #define ORA_PLUGIN_HEADER_USB_CONTROLLER_DPRAM_SIZE_OFFSET 0x1E
 
+// Offset of the little-endian 16-bit channel_2_size in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_CHANNEL_2_SIZE_OFFSET 0x24
+
+// Offset of the little-endian 16-bit channel_3_size in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_CHANNEL_3_SIZE_OFFSET 0x26
+
+// Offset of peer_data in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_PEER_DATA_OFFSET 0x28
+
+// Largest channel_2_size a plugin header may set, in bytes.
+// @since firmware 0.8.1
+#define ORA_LOG_CHANNEL_2_MAX_SIZE ((uint16_t)0x0100)
+
+// Largest channel_3_size a plugin header may set, in bytes.
+// @since firmware 0.8.1
+#define ORA_LOG_CHANNEL_3_MAX_SIZE ((uint16_t)0x0100)
+
 // Plugin header overrides1 bit. With it set, One ROM boots the ROM slot
 // numbered in the byte at boot_slot_addr, which must be in the plugin's own flash
 // region. ROM slot 0 is the first slot that isn't a plugin. A number past the

@@ -27,6 +27,10 @@ If both a debug probe and a terminal are reading the log simultaneously, they wi
 
 A plugin can claim exclusive use of the serial port.  In this case, One ROM's log is moved to a different RAM location by the firmware when the plugins are started up, and the logs can be retrieved using RTT channel 1.  `onerom monitor log` automatically reads it from whatever location it's at.
 
+### Serial Port 2
+
+A user plugin can request a second serial port from the USB plugin in its header's `peer_data`.  Serial port 2 sends log channel 2 to the host and writes data from the host to log channel 3.  Channel 2 is RTT up buffer 2 and channel 3 is RTT down buffer 1, so a debug probe can also read and write them.  See the [USB plugin](/plugins/system/usb/README.md#serial-port-2).
+
 ### Connecting
 
 Upon terminal connect a banner like the following is output:

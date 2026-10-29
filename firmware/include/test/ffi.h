@@ -24,6 +24,7 @@ void ffi_set_plugins_started(void);
 uint8_t ffi_firmware_flags(void);
 void ffi_set_firmware_flags(uint8_t flags);
 uint16_t ffi_usb_dpram_pool_offset(void);
+uint16_t ffi_log_channel_claims(void);
 
 // The generation recorded in the metadata header, and a way to change it.
 //
@@ -88,6 +89,9 @@ void ffi_set_plugin_header(
 // Set a field of the header ffi_set_plugin_header() wrote.
 void ffi_set_plugin_boot_slot_addr(uint8_t index, uint32_t addr);
 void ffi_set_plugin_usb_controller_dpram_size(uint8_t index, uint16_t size);
+void ffi_set_plugin_channel_sizes(uint8_t index, uint16_t channel_2,
+                                  uint16_t channel_3);
+void ffi_set_plugin_peer_data(uint8_t index, const uint32_t *words);
 void ffi_set_plugin_magic(uint8_t index, uint32_t magic);
 void ffi_set_plugin_api_version(uint8_t index, uint32_t api_version);
 void ffi_set_plugin_min_fw_version(

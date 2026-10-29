@@ -22,6 +22,7 @@
 
 mod board_socket;
 mod commission;
+mod console;
 mod control_erase;
 mod control_pin;
 mod control_poke;

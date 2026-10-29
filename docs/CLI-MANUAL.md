@@ -1518,6 +1518,7 @@ echo 'LOAD "*",8' | onerom console
 | `--line-ending <ENDING>` | What Enter sends: `cr`, `lf` or `crlf`.  Default `cr`, which retro systems expect. |
 | `--raw` | Send each key as you press it, not a line at a time.  No line editing.  Enter sends the line ending.  Ctrl-C exits. |
 | `--no-echo` | Don't display what you type.  Use when the retro system echoes what it receives back.  Only applies with `--raw`.  In line mode the terminal displays the line as you edit it. |
+| `--serial-port <PORT>` | Serial port to open: `1` or `2`.  Default `1`.  Port 1 is the USB plugin's default serial port.  Port 2 requires the USB plugin and a user plugin that supports it. |
 
 If stdin is not a terminal, its contents are sent unchanged, and the command
 then keeps displaying output until One ROM disconnects or you press Ctrl-C.
@@ -1536,6 +1537,7 @@ Requirements:
 
 - Firmware v0.7.3 or later.
 - One ROM running, with both the USB and host-control plugins.
+- For `--serial-port 2`, a user plugin that supports serial port 2.
 - The notes under [`monitor log`](#monitor-log) about the port, the banner,
   debug probes and the silence timeout also apply.
 

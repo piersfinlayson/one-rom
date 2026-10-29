@@ -334,6 +334,7 @@ fn run_slot(
         tests::platform::test_no_allocator(&emulator),
     );
     report.add("alloc_mem", tests::platform::test_alloc_mem(&emulator));
+    report.add("peer_data", tests::peer::test_peer_data(&emulator));
     report.add(
         "peripheral_and_irq_calls",
         tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
@@ -396,6 +397,14 @@ fn run_slot(
     report.add(
         "log_absent_channel",
         tests::log::test_absent_channel_is_rejected(&emulator),
+    );
+    report.add(
+        "log_claims_in_runtime_info",
+        tests::log::test_claims_are_in_runtime_info(&emulator),
+    );
+    report.add(
+        "log_ring_set_buffer_refusals",
+        tests::log::test_ring_set_buffer_refusals(&emulator),
     );
     report.add(
         "log_channel_1_independent",

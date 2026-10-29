@@ -37,7 +37,7 @@ pub async fn follow(device: &Device, capture: Option<PathBuf>, verbose: bool) ->
     let source = if ram_log::read_log_from_ram(device) {
         Source::Ram
     } else {
-        Source::Serial(find_port(device)?)
+        Source::Serial(find_port(device, 1)?)
     };
     if verbose {
         eprintln!("{}", source_line(&source));

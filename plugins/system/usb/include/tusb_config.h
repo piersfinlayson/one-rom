@@ -42,16 +42,18 @@
 #define __not_in_flash(x)
 #define CFG_TUD_TASK_QUEUE_SZ     4
 
-// Endpoint numbers 0 to 3 and interfaces 0 to 3.  tinyusb spells the first
+// Endpoint numbers 0 to 5 and interfaces 0 to 5.  tinyusb spells the first
 // ENDPPOINT.
-#define CFG_TUD_ENDPPOINT_MAX     4
-#define CFG_TUD_INTERFACE_MAX     4
+#define CFG_TUD_ENDPPOINT_MAX     6
+#define CFG_TUD_INTERFACE_MAX     6
 #define USB_MAX_ENDPOINTS         CFG_TUD_ENDPPOINT_MAX
 
 // tinyusb's USB DPRAM.  The controller's registers and EP0 buffers end at
 // 0x180.  Each endpoint then has a 64-byte buffer and a bulk IN endpoint has
-// two.  The endpoints are vendor OUT and IN, then CDC notify, OUT and IN.
-#define CFG_TUD_RP2040_DPRAM_SIZE (0x180 + (64 * (1 + 2 + 1 + 1 + 2)))
+// two.  The endpoints are vendor OUT and IN, then CDC notify, OUT and IN for
+// each serial port.  Serial port 2's are reserved even when it is absent.
+#define CFG_TUD_RP2040_DPRAM_SIZE \
+    (0x180 + (64 * (1 + 2 + 1 + 1 + 2 + 1 + 1 + 2)))
 
 //--------------------------------------------------------------------+
 // Board Specific Configuration
@@ -115,7 +117,7 @@
 #endif
 
 //------------- CLASS -------------//
-#define CFG_TUD_CDC               1
+#define CFG_TUD_CDC               2
 #define CFG_TUD_MSC               0
 #define CFG_TUD_HID               0
 #define CFG_TUD_MIDI              0

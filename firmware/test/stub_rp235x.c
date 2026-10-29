@@ -302,7 +302,7 @@ uint32_t otp_read_raw(uint16_t row) {
 // See test/stub.h.
 // ---------------------------------------------------------------------------
 
-#define STUB_FLASH_BYTES 16u
+#define STUB_FLASH_BYTES 64u
 
 static struct {
     uint32_t addr;

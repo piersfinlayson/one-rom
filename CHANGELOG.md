@@ -19,6 +19,7 @@ In detail:
   - `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
   - `onerom monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
   - `onerom inspect peek memory` can also read USB DPRAM.
+  - `onerom console --serial-port 2` opens optional serial port 2.
   - `firmware inspect` displays each slot's firmware overrides.
   - Breaking: `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
   - `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
@@ -51,6 +52,7 @@ In detail:
     - Reserves its USB DPRAM in the plugin header and reduces its usage by 128 bytes.
     - Fix: a host request to halt an unused endpoint no longer reads past the end of tinyusb's endpoint table.
     - With firmware 0.8.1, supports a plugin with exclusive use of the serial port.
+    - Adds serial port 2 for a user plugin that requests it.
     - USB DPRAM can be read over picobootx.
     - REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
     - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
@@ -65,6 +67,8 @@ In detail:
   - New: a plugin can choose the ROM slot One ROM boots with `ORA_OVERRIDE1_BOOT_SLOT` and ignore the image select jumpers with `ORA_OVERRIDE1_IGNORE_IMAGE_SELECT`.
   - New: a plugin can reserve USB DPRAM for a USB controller by using `usb_controller_dpram_size` in its header.
   - New: `ora_alloc_mem()` allocates memory from a pool shared by both plugins.
+  - New: log channels 2 and 3 when using plugin header fields `channel_2_size` and `channel_3_size`.
+  - New: `ora_get_peer_data()` retrieves the other plugin's `peer_data`.
   - Deprecated: `ORA_ID_ALLOC` and `ORA_ID_GET_FREE_MEM`, which never allocated memory.  Use `ORA_ID_ALLOC_MEM`.
 - Other:
   - Added manufacturer contact details to commissioning signing key tables.

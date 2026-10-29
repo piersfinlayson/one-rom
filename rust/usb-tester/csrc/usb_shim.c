@@ -49,6 +49,10 @@ void ora_log_reset_claims(void);
 // same reason.
 char *stub_usb_dpram(void);
 
+// firmware/test — the flash bytes a test sets.  Declared here for the same
+// reason.
+uint8_t stub_flash_read8(uint32_t addr);
+
 // ---------------------------------------------------------------------------
 // The plugin under test
 // ---------------------------------------------------------------------------
@@ -549,6 +553,11 @@ uint8_t usb_host_test_custom_handlers(void) {
 
 const volatile uint8_t *usb_host_test_dpram(void) {
     return (const volatile uint8_t *)stub_usb_dpram();
+}
+
+// Flash the plugin reads serial port 2's name from.  See stub_flash_read8().
+uint8_t usb_host_test_flash_read8(uint32_t addr) {
+    return stub_flash_read8(addr);
 }
 
 // Route a read through the ops table the plugin registered, as picoboot would:

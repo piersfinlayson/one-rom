@@ -70,31 +70,59 @@ enum
   ITF_NUM_VENDOR,
   ITF_NUM_CDC,
   ITF_NUM_CDC_DATA,
+  ITF_NUM_CDC2,
+  ITF_NUM_CDC2_DATA,
   ITF_NUM_TOTAL
 };
 
 #define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN + 9)
+#define CONFIG_SERIAL_PORT_2_TOTAL_LEN  (CONFIG_TOTAL_LEN + TUD_CDC_DESC_LEN)
+
+// String index of serial port 2's name.
+#define STRID_SERIAL_PORT_2 7
+
+// Hand rolled interface descriptor for the dummy interface.  This ensures
+// picoboot gets interface 1, as required by picotool (if there's more than one
+// interface).  This MUST have bInterfaceClass of 0xFF (vendor specific),
+// bInterfaceSubClass of 0x00, and bInterfaceProtocol of 0x00, or picotool will
+// not recognise the device, even though picotool does not use this interface.
+#define DUMMY_INTERFACE_DESCRIPTOR \
+  0x09, 0x04, ITF_NUM_DUMMY, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x04
+
+// The vendor interface: interface number, string index, EP Out & IN address,
+// EP size.
+#define VENDOR_INTERFACE_DESCRIPTOR \
+  TUD_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, 5, EPNUM_VENDOR_OUT, 0x80 | EPNUM_VENDOR_IN, TUD_OPT_HIGH_SPEED ? 512 : 64)
+
+// A serial port: interface number, string index, EP notification address and
+// size, EP data address (out, in) and size.
+#define SERIAL_PORT_1_DESCRIPTOR \
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 6, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, 0x80 | EPNUM_CDC_IN, TUD_OPT_HIGH_SPEED ? 512 : 64)
+#define SERIAL_PORT_2_DESCRIPTOR \
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC2, STRID_SERIAL_PORT_2, EPNUM_CDC2_NOTIF, 8, EPNUM_CDC2_OUT, 0x80 | EPNUM_CDC2_IN, TUD_OPT_HIGH_SPEED ? 512 : 64)
 
 uint8_t const desc_configuration[] =
 {
   // Config number, interface count, string index, total length, attribute, power in mA
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x80, 250),
-
-  // Hand rolled interface descriptor for the dummy interface.  This ensures
-  // picoboot gets interface 1, as required by picotool (if there's more than
-  // one interface).  This MUST have bInterfaceClass of 0xFF (vendor
-  // specific), bInterfaceSubClass of 0x00, and bInterfaceProtocol of 0x00,
-  // or picotool will not recognise the device, even though picotool does not
-  // use this interface.
-  0x09, 0x04, ITF_NUM_DUMMY, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x04,
-
-  // Interface number, string index, EP Out & IN address, EP size
-  TUD_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, 5, EPNUM_VENDOR_OUT, 0x80 | EPNUM_VENDOR_IN, TUD_OPT_HIGH_SPEED ? 512 : 64),
-
-  // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
-  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 6, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, 0x80 | EPNUM_CDC_IN, TUD_OPT_HIGH_SPEED ? 512 : 64),
-
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC2, 0, CONFIG_TOTAL_LEN, 0x80, 250),
+  DUMMY_INTERFACE_DESCRIPTOR,
+  VENDOR_INTERFACE_DESCRIPTOR,
+  SERIAL_PORT_1_DESCRIPTOR,
 };
+
+uint8_t const desc_configuration_serial_port_2[] =
+{
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_SERIAL_PORT_2_TOTAL_LEN, 0x80, 250),
+  DUMMY_INTERFACE_DESCRIPTOR,
+  VENDOR_INTERFACE_DESCRIPTOR,
+  SERIAL_PORT_1_DESCRIPTOR,
+  SERIAL_PORT_2_DESCRIPTOR,
+};
+
+static uint8_t const *configuration_desc(void) {
+  return (context.serial_port_2 & SERIAL_PORT_2_PRESENT)
+    ? desc_configuration_serial_port_2 : desc_configuration;
+}
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
 // Application return pointer to descriptor
@@ -102,7 +130,7 @@ uint8_t const desc_configuration[] =
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 {
   (void) index; // for multiple configurations
-  return desc_configuration;
+  return configuration_desc();
 }
 
 //--------------------------------------------------------------------+
@@ -149,7 +177,9 @@ uint8_t const * tud_descriptor_bos_cb(void)
 // the declared length instead would be comparing a field against itself, and a
 // wrong one would still read past the end of the array.
 uint32_t onerom_usb_test_configuration_desc_size(void) {
-  return (uint32_t)sizeof(desc_configuration);
+  return (configuration_desc() == desc_configuration_serial_port_2)
+    ? (uint32_t)sizeof(desc_configuration_serial_port_2)
+    : (uint32_t)sizeof(desc_configuration);
 }
 
 uint32_t onerom_usb_test_bos_desc_size(void) {
@@ -225,6 +255,45 @@ static char const *string_desc_arr[] =
   "One ROM Serial",              // 6: CDC Interface
 };
 
+#if defined(ORA_HOST_TEST)
+uint8_t usb_host_test_flash_read8(uint32_t addr);
+#define FLASH_READ8(addr) usb_host_test_flash_read8(addr)
+#else
+#define FLASH_READ8(addr) (*(const volatile uint8_t *)(uintptr_t)(addr))
+#endif
+
+// Writes serial port 2's name to out as UTF-16 and returns the number of
+// characters.  The default name is used if the user plugin's isn't valid.  The
+// name is read from the user plugin's flash to save RAM.  See usb_peer.h.
+static size_t serial_port_2_name(uint16_t *out) {
+  ora_get_peer_data_fn_t get_peer_data =
+    context.ora_lookup_fn(ORA_ID_GET_PEER_DATA);
+  const uint32_t *peer = (get_peer_data != NULL) ? get_peer_data() : NULL;
+  uint32_t addr = (peer != NULL) ? peer[USB_PEER_WORD_SERIAL_PORT_2_NAME] : 0;
+
+  const uint32_t start = ORA_FLASH_CS0_BASE_ADDR + ORA_USER_PLUGIN_OFFSET;
+  const uint32_t end = start + ORA_USER_PLUGIN_SIZE;
+  if ((addr >= start) && (addr < end)) {
+    for (size_t len = 0; (len <= USB_PEER_SERIAL_PORT_2_NAME_MAX) && ((addr + len) < end); len++) {
+      uint8_t c = FLASH_READ8(addr + len);
+      if ((c == '\0') && (len != 0)) {
+        return len;
+      }
+      if ((c < 0x20) || (c > 0x7E)) {
+        break;
+      }
+      out[len] = c;
+    }
+  }
+
+  const char *fallback = USB_PEER_SERIAL_PORT_2_NAME;
+  size_t len = strlen(fallback);
+  for (size_t ii = 0; ii < len; ii++) {
+    out[ii] = (uint8_t)fallback[ii];
+  }
+  return len;
+}
+
 static uint16_t _desc_str[64 + 1];
 
 // Invoked when received GET STRING DESCRIPTOR request
@@ -250,6 +319,10 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
       }
       break;
     }
+
+    case STRID_SERIAL_PORT_2:
+      chr_count = serial_port_2_name(&_desc_str[1]);
+      break;
 
     default:
       // Note: the 0xEE index string is a Microsoft OS 1.0 Descriptors.

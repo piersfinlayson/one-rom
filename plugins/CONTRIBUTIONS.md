@@ -45,6 +45,7 @@ root directory.  Here is an example:
 | `source` | The repository the plugin is built from |
 | `license` | An [SPDX identifier](https://spdx.org/licenses/), for example `MIT`. Must permit One ROM to build, distribute and host the plugin |
 | `build_output` | Path to the binary `make` produces, relative to the plugin directory. |
+| `peer_formats` | Optional. The word 0 value(s) this plugin uses for `peer_data` is any.  As `0x` with eight hex digits. A value for another published plugin is rejected. |
 
 All of the above information is included in the plugin's manifest hosted
 publicly at https://images.onerom.org.

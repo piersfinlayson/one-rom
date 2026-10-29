@@ -12,6 +12,8 @@ With firmware 0.8.1, a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets
 
 USB DPRAM can be read over picobootx.
 
+Adds serial port 2 for a user plugin that sets `USB_PEER_SERIAL_PORT_2` in its `peer_data`.
+
 REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
 
 If the reboot fails, REBOOT2 now returns an error instead of success.

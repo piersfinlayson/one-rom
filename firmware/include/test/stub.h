@@ -132,9 +132,10 @@ void stub_otp_set_ecc(uint16_t row, const uint16_t *values, uint32_t count);
 void stub_otp_set_raw(uint16_t row, const uint32_t *values, uint32_t count);
 void stub_otp_clear(void);
 
-// Flash bytes where the firmware reads a plugin's boot slot.  A byte a test
-// hasn't set reads 0xFF.  The bytes a test sets outlive onerom_test_reset() so
-// the test clears them with stub_flash_clear().
+// Flash bytes where the firmware reads a plugin's boot slot and the USB plugin
+// reads serial port 2's name.  A byte a test hasn't set reads 0xFF.  The bytes
+// a test sets outlive onerom_test_reset() so the test clears them with
+// stub_flash_clear().
 uint8_t stub_flash_read8(uint32_t addr);
 void stub_flash_set8(uint32_t addr, uint8_t value);
 void stub_flash_clear(void);

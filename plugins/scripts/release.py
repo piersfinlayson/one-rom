@@ -12,6 +12,7 @@
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import struct
 import sys
@@ -56,8 +57,12 @@ TOP_MANIFEST_SCHEMA_VERSION = 1
 # field gains it in place rather than at the end
 MANIFEST_KEY_ORDER = (
     "version", "display_name", "description", "author", "source", "license",
-    "latest", "releases",
+    "peer_formats", "latest", "releases",
 )
+
+# A peer data format: word 0 of a plugin header's peer_data, as 0x and eight
+# hex digits.
+PEER_FORMAT_RE          = re.compile(r"^0x[0-9a-fA-F]{8}$")
 
 
 def error(msg):
@@ -136,6 +141,31 @@ def read_meta(meta_path):
     return meta
 
 
+def read_peer_formats(meta, meta_path):
+    """Return plugin-meta.json's peer_formats as lower-case strings."""
+    formats = meta.get("peer_formats", [])
+    if not isinstance(formats, list):
+        error(f"peer_formats in {meta_path} must be a list")
+    for value in formats:
+        if not isinstance(value, str) or not PEER_FORMAT_RE.match(value) \
+                or int(value, 16) == 0:
+            error(f"peer_formats value {value!r} in {meta_path} must be a "
+                  f"non-zero 0x followed by eight hex digits")
+    return [value.lower() for value in formats]
+
+
+def published_peer_formats(top_manifest):
+    """Map each published plugin's peer formats to that plugin's path."""
+    owners = {}
+    for plugin in top_manifest["plugins"]:
+        manifest = fetch_json(f"{IMAGES_BASE_URL}/{plugin['path']}/{PLUGIN_MANIFEST}")
+        if manifest is None:
+            continue
+        for value in manifest.get("peer_formats", []):
+            owners[value.lower()] = plugin["path"]
+    return owners
+
+
 def discover_plugins(input_dir):
     """Discover staged plugins by finding plugin-meta.json files in dist/."""
     plugins = []
@@ -204,6 +234,7 @@ def main():
     # Fetch top-level manifest once
     info(f"Fetching top-level manifest from {TOP_MANIFEST_URL}")
     top_manifest = load_or_create_top_manifest(TOP_MANIFEST_URL)
+    peer_format_owners = published_peer_formats(top_manifest)
 
     for plugin in plugins:
         meta_path  = plugin["meta_path"]
@@ -220,6 +251,15 @@ def main():
         meta = read_meta(meta_path)
         if meta["name"] != path_name:
             error(f"Plugin name '{meta['name']}' does not match directory '{path_name}'")
+
+        # A peer data format belongs to one plugin, so a value another plugin
+        # published is a collision.
+        peer_formats = read_peer_formats(meta, meta_path)
+        for value in peer_formats:
+            owner = peer_format_owners.get(value)
+            if owner is not None and owner != f"{path_type}/{path_name}":
+                error(f"peer_formats value {value} is already published by {owner}")
+            peer_format_owners[value] = f"{path_type}/{path_name}"
 
         # Parse and validate header
         header = parse_header(bin_path)
@@ -302,6 +342,10 @@ def main():
         plugin_manifest["author"]       = meta["author"]
         plugin_manifest["source"]       = meta["source"]
         plugin_manifest["license"]      = meta["license"]
+        if peer_formats:
+            plugin_manifest["peer_formats"] = peer_formats
+        else:
+            plugin_manifest.pop("peer_formats", None)
 
         # Write per-plugin manifest
         manifest_path = output_dir / "plugins" / path_type / path_name / PLUGIN_MANIFEST

@@ -233,6 +233,7 @@ pub fn test_lookup_coverage(emu: &Emulator, base_dir: &Path) -> Result<(), Strin
             "ORA_ID_GET_COMMISSIONING_INSTANCE",
         ),
         (ffi::api_id_t_ORA_ID_ALLOC_MEM, "ORA_ID_ALLOC_MEM"),
+        (ffi::api_id_t_ORA_ID_GET_PEER_DATA, "ORA_ID_GET_PEER_DATA"),
     ];
 
     // Deprecated/invalid IDs — must resolve to null.

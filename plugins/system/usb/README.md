@@ -78,6 +78,7 @@ The USB system plugin uses tinyusb to implement a USB device containing:
 - a dummy vendor interface (required to provide compatibility with Raspberry Pi's picotool)
 - the picobootx vendor interface used to manage One ROM live
 - a bi-directional CDC interface, carrying One ROM's logs out to and data in from a terminal and data what the terminal sends back in. See [Logging](/docs/LOGGING.md).
+- a second CDC interface, serial port 2, present when a user plugin's peer data contains request for it. It sends log channel 2 to the host and writes data from the host to log channel 3. See [Serial port 2](#serial-port-2).
 
 The majority of the picoboot protocol is supported, and there are also extensions to provide additional functionality:
 - Live ROM image reading/writing (using a virtual address located at 0x9000_0000)
@@ -89,3 +90,18 @@ Additional function is expected be added in the future.
 Currently, updating the firmware, ROM metadata and this USB plugin must be done with One ROM in BOOTSEL ("stopped") mode.  The picoboot REBOOT2 command can be used to reboot a running One ROM with this USB plugin into stopped mode.  ROM images stored on flash can be updated while One ROM is running.
 
 For more information about One ROM's plugin system, see the [plugin API documentation](/firmware/ora/plugin.h).
+
+## Serial port 2
+
+A user plugin requests serial port 2 with this format in its header's `peer_data`:
+
+| Word | Contents |
+| --- | --- |
+| 0 | `0x31425355`, "USB1" |
+| 1 | Bit 0 set to request serial port 2 |
+| 2 | Address of the port's name, or 0 for "One ROM Serial 2". The name is NUL-terminated printable ASCII of at most 31 characters in the user plugin's flash region. |
+| 3–7 | 0 |
+
+Log channels 2 and 3 exist only if their sizes are set in a plugin header.
+
+Bit 0 of word 1 is set in the USB plugin's own `peer_data` when serial port 2 is supported.

@@ -34,7 +34,7 @@ pub async fn cmd_console(options: &Options, args: &ConsoleArgs) -> Result<(), Er
     let device = options.device.as_ref().unwrap();
     let capture = args.output.as_ref().map(PathBuf::from);
 
-    let port_name = find_port(device)?;
+    let port_name = find_port(device, args.serial_port)?;
     if options.verbose {
         eprintln!("Using serial port {port_name}");
     }

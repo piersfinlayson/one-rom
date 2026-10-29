@@ -15,9 +15,13 @@
 //! fine and fails somewhere else entirely, so most scenarios below assert one
 //! file against another rather than a field against a constant.
 
-use crate::device::Device;
+use crate::device::{self, Device};
 use crate::{Ctx, Scenario};
-use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
+use onerom_fw_emulator::Emulator;
+use onerom_metadata::{
+    FLASH_CS0_BASE_ADDR, SYSTEM_PLUGIN_OFFSET, USB_PLUGIN_PID, USB_PLUGIN_VID, USER_PLUGIN_OFFSET,
+    USER_PLUGIN_SIZE,
+};
 use onerom_plugin_tester::run::Outcome;
 
 // Control transfer stages, from tinyusb's tusb_types.h.
@@ -50,6 +54,19 @@ const MS_OS_20_WINDEX: u16 = 7;
 /// The interface picoboot must be given, because picotool will not look
 /// anywhere else when a device has more than one.
 const PICOBOOT_INTERFACE: u8 = 1;
+
+/// `bInterfaceClass` of a serial port's communication interface.
+const CLASS_CDC: u8 = 0x02;
+
+/// String indexes of the serial ports' names, from `usb_descriptors.c`.
+const STRING_SERIAL_PORT_1: u8 = 6;
+const STRING_SERIAL_PORT_2: u8 = 7;
+
+/// The USB plugin's peer data format, from `usb_peer.h`.
+const USB_PEER_FORMAT: u32 = 0x3142_5355;
+const USB_PEER_SERIAL_PORT_2: u32 = 1 << 0;
+const USB_PEER_SERIAL_PORT_2_NAME: &str = "One ROM Serial 2";
+const USB_PEER_SERIAL_PORT_2_NAME_MAX: usize = 31;
 
 /// The chip ID the shim reports, which is what the serial is derived from.
 const CHIP_ID: &str = "0123456789ABCDEF";
@@ -355,6 +372,195 @@ fn the_device_asks_for_usb_2_1(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, 
     }
 
     Ok(Outcome::Pass)
+}
+
+// ---------------------------------------------------------------------------
+// Serial port 2
+// ---------------------------------------------------------------------------
+
+/// Peer data setting `USB_PEER_SERIAL_PORT_2`, with `name` as word 2.
+fn serial_port_2_peer_data(name: u32) -> [u32; 8] {
+    [USB_PEER_FORMAT, USB_PEER_SERIAL_PORT_2, name, 0, 0, 0, 0, 0]
+}
+
+/// Set `USB_PEER_SERIAL_PORT_2` in the user plugin's peer data, with `name` as
+/// word 2 and `channel_3_size` as the user plugin's channel 3 size.
+pub(crate) fn request_serial_port_2(emu: &Emulator, name: u32, channel_3_size: u16) {
+    if device::install_plugin_slots(emu, 0) {
+        for index in [0, 1] {
+            Emulator::set_plugin_min_fw_version(index, 0, 8, 1);
+        }
+        Emulator::set_plugin_channel_sizes(1, 0x100, channel_3_size);
+        Emulator::set_plugin_peer_data(1, serial_port_2_peer_data(name));
+    }
+    emu.launch_usb_dpram(0);
+}
+
+fn arrange_serial_port_2(emu: &Emulator) {
+    request_serial_port_2(emu, 0, 0x40);
+}
+
+/// The name is in the system plugin's region, not the user plugin's.
+fn arrange_serial_port_2_misnamed(emu: &Emulator) {
+    request_serial_port_2(emu, FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET, 0x40);
+}
+
+/// A skip if the config has fewer than two ROM slots for the plugin headers.
+pub(crate) fn serial_port_2_requested() -> Result<Option<Outcome>, String> {
+    if !device::plugin_slots_installed() {
+        return Ok(Some(Outcome::Skip(
+            "the config has fewer than two ROM slots for the plugin headers".to_string(),
+        )));
+    }
+    if !Emulator::user_plugin_to_start() {
+        return Err("the firmware doesn't start the installed user plugin".to_string());
+    }
+    Ok(None)
+}
+
+/// The configuration's interface count and its serial ports' communication
+/// interfaces as (interface number, string index).
+fn serial_ports(dev: &Device) -> Result<(u8, Vec<(u8, u8)>), String> {
+    let cfg = dev.configuration_descriptor(0)?;
+    let items = split(&cfg)?;
+    let ports = items
+        .iter()
+        .filter(|i| i.kind == DESC_INTERFACE && i.bytes[5] == CLASS_CDC)
+        .map(|i| (i.bytes[2], i.bytes[8]))
+        .collect();
+    Ok((cfg[4], ports))
+}
+
+fn serial_port_2_absent_without_a_request(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    let (interfaces, ports) = serial_ports(dev)?;
+    if interfaces != 4 || ports != [(2, STRING_SERIAL_PORT_1)] {
+        return Err(format!(
+            "{interfaces} interfaces with serial ports {ports:?}, not 4 with serial port 1 alone"
+        ));
+    }
+    Ok(Outcome::Pass)
+}
+
+/// Host tools identify the two serial ports by interface order.
+fn serial_port_2_follows_serial_port_1(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    let (interfaces, ports) = serial_ports(dev)?;
+    let ordered = matches!(
+        ports.as_slice(),
+        [(first, STRING_SERIAL_PORT_1), (second, STRING_SERIAL_PORT_2)] if second > first
+    );
+    if interfaces != 6 || !ordered {
+        return Err(format!(
+            "{interfaces} interfaces with serial ports {ports:?}, not 6 with serial port 2 \
+             after serial port 1"
+        ));
+    }
+    Ok(Outcome::Pass)
+}
+
+fn serial_port_2_name(dev: &Device) -> Result<String, String> {
+    let units = dev
+        .string_descriptor(STRING_SERIAL_PORT_2)?
+        .ok_or("the device refuses serial port 2's name")?;
+    String::from_utf16(&units[1..]).map_err(|e| e.to_string())
+}
+
+fn check_default_name(dev: &Device) -> Result<Outcome, String> {
+    let name = serial_port_2_name(dev)?;
+    if name != USB_PEER_SERIAL_PORT_2_NAME {
+        return Err(format!(
+            "serial port 2 is named {name:?}, not {USB_PEER_SERIAL_PORT_2_NAME:?}"
+        ));
+    }
+    Ok(Outcome::Pass)
+}
+
+fn serial_port_2_has_the_default_name(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    check_default_name(dev)
+}
+
+/// Without serial port 2 the string is still available and is the default name.
+fn serial_port_2_name_without_a_user_plugin(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    check_default_name(dev)
+}
+
+/// The name is read from the user plugin's flash on each request, so the peer
+/// data and the flash can be changed between requests.
+fn serial_port_2_names(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+
+    let region = FLASH_CS0_BASE_ADDR + USER_PLUGIN_OFFSET;
+    let end = region + USER_PLUGIN_SIZE as u32;
+    let at = region + 0x100;
+    let longest = "x".repeat(USB_PEER_SERIAL_PORT_2_NAME_MAX);
+    let too_long = "x".repeat(USB_PEER_SERIAL_PORT_2_NAME_MAX + 1);
+    let cases: [(&str, u32, Vec<u8>, &str); 6] = [
+        ("a name", at, b"Bus Monitor\0".to_vec(), "Bus Monitor"),
+        (
+            "the longest name",
+            at,
+            [longest.as_bytes(), b"\0"].concat(),
+            &longest,
+        ),
+        (
+            "a name too long",
+            at,
+            [too_long.as_bytes(), b"\0"].concat(),
+            USB_PEER_SERIAL_PORT_2_NAME,
+        ),
+        (
+            "an empty name",
+            at,
+            b"\0".to_vec(),
+            USB_PEER_SERIAL_PORT_2_NAME,
+        ),
+        (
+            "a control character",
+            at,
+            b"Bus\tMonitor\0".to_vec(),
+            USB_PEER_SERIAL_PORT_2_NAME,
+        ),
+        (
+            "a name running past the region",
+            end - 4,
+            b"abcd".to_vec(),
+            USB_PEER_SERIAL_PORT_2_NAME,
+        ),
+    ];
+
+    let mut result = Ok(Outcome::Pass);
+    for (label, addr, bytes, want) in cases {
+        Emulator::clear_flash();
+        for (offset, byte) in (0..).zip(bytes) {
+            Emulator::set_flash_byte(addr + offset, byte);
+        }
+        Emulator::set_plugin_peer_data(1, serial_port_2_peer_data(addr));
+        match serial_port_2_name(dev) {
+            Ok(name) if name == want => {}
+            Ok(name) => {
+                result = Err(format!(
+                    "{label}: serial port 2 is named {name:?}, not {want:?}"
+                ));
+                break;
+            }
+            Err(e) => {
+                result = Err(format!("{label}: {e}"));
+                break;
+            }
+        }
+    }
+    Emulator::clear_flash();
+    result
 }
 
 /// The configuration descriptor is as long as it says it is.
@@ -937,5 +1143,59 @@ pub static SCENARIOS: &[Scenario] = &[
         about: "the plugin answers only what picoboot has declined",
         run: picoboot_sees_a_control_request_first,
         before_start: None,
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_absent_without_a_request",
+        about: "without USB_PEER_SERIAL_PORT_2 in the user plugin's peer data there is no serial port 2",
+        run: serial_port_2_absent_without_a_request,
+        before_start: None,
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_follows_serial_port_1",
+        about: "serial port 2's interfaces come after serial port 1's",
+        run: serial_port_2_follows_serial_port_1,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_configuration_declares_its_length",
+        about: "with serial port 2 the configuration's wTotalLength is the bytes it sends",
+        run: the_configuration_declares_the_length_it_sends,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_interfaces_name_strings_that_exist",
+        about: "with serial port 2 every interface's string can be read",
+        run: every_interface_names_a_string_that_exists,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_uses_no_endpoint_twice",
+        about: "serial port 2's endpoints are its own",
+        run: no_endpoint_is_used_twice,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_has_the_default_name",
+        about: "without a name in the peer data serial port 2 has the default name",
+        run: serial_port_2_has_the_default_name,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_name_without_a_user_plugin",
+        about: "without a user plugin serial port 2's string is the default name",
+        run: serial_port_2_name_without_a_user_plugin,
+        before_start: None,
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_names",
+        about: "a name in the user plugin's flash is used, and the default replaces a bad one",
+        run: serial_port_2_names,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_name_outside_the_user_plugin_is_replaced",
+        about: "a name outside the user plugin's flash region is replaced by the default",
+        run: serial_port_2_has_the_default_name,
+        before_start: Some(arrange_serial_port_2_misnamed),
     },
 ];

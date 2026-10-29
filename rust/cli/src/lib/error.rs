@@ -209,6 +209,12 @@ pub enum Error {
     )]
     SerialPortNotFound(String),
 
+    /// The selected One ROM doesn't present serial port 2.
+    #[error(
+        "This One ROM doesn't have serial port 2.\n  {0}\n  Serial port 2 requires the USB plugin and a user plugin that supports it."
+    )]
+    SerialPort2NotFound(String),
+
     #[error(
         "Could not open this One ROM's serial port {0}:\n  {1}\n  Another program may already have it open."
     )]

@@ -689,6 +689,12 @@ impl Emulator {
         unsafe { ffi::ffi_usb_dpram_pool_offset() }
     }
 
+    /// Runtime info's `log_channel_claims`, as `onerom_log_channel_claim_t`
+    /// bits.
+    pub fn log_channel_claims(&self) -> u16 {
+        unsafe { ffi::ffi_log_channel_claims() }
+    }
+
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
     /// device. Plugin launch is compiled out of a test build.
     ///
@@ -815,6 +821,14 @@ impl Emulator {
 
     pub fn set_plugin_usb_controller_dpram_size(index: u8, size: u16) {
         unsafe { ffi::ffi_set_plugin_usb_controller_dpram_size(index, size) };
+    }
+
+    pub fn set_plugin_channel_sizes(index: u8, channel_2: u16, channel_3: u16) {
+        unsafe { ffi::ffi_set_plugin_channel_sizes(index, channel_2, channel_3) };
+    }
+
+    pub fn set_plugin_peer_data(index: u8, words: [u32; 8]) {
+        unsafe { ffi::ffi_set_plugin_peer_data(index, words.as_ptr()) };
     }
 
     pub fn set_plugin_magic(index: u8, magic: u32) {
@@ -1926,6 +1940,17 @@ impl Emulator {
     ///
     /// The request's size field is passed unchanged, so a test can pass a size
     /// below the minimum.
+    /// `ORA_ID_GET_PEER_DATA`, as the plugin [`Self::set_calling_plugin`]
+    /// last set.
+    pub fn get_peer_data(&self) -> Option<[u32; 8]> {
+        let ptr = plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PEER_DATA,
+            ffi::ora_get_peer_data_fn_t
+        );
+        // SAFETY: a non-NULL result points at a header's eight peer data words.
+        (!ptr.is_null()).then(|| unsafe { *ptr.cast::<[u32; 8]>() })
+    }
+
     pub fn alloc_mem(&self, req: &ffi::ora_alloc_request_t) -> (OraResult, u32) {
         let mut addr = u32::MAX;
         let r = OraResult::from(plugin_call!(
