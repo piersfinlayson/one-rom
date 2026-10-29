@@ -5,7 +5,7 @@
 //! Serial port 2's data, which the USB plugin moves between the port and log
 //! channels 2 and 3.
 //!
-//! - Channel 2 goes to the host only while DTR is asserted.
+//! - Channel 2 is sent to the host once the host has enumerated One ROM.
 //! - Data from the host is written to channel 3 up to its free space and the
 //!   rest waits.
 //! - Without channel 3 data from the host is discarded.
@@ -58,6 +58,19 @@ fn arrange_without_channel_3(emu: &Emulator) {
     arrange(emu, 0);
 }
 
+fn arrange_before_enumeration(emu: &Emulator) {
+    arrange(emu, CHANNEL_3_SIZE);
+    // SAFETY: called before the plugin starts.
+    unsafe { crate::ffi::usb_host_test_set_connected(0) };
+}
+
+// A full endpoint applies back pressure to channel 2.
+fn arrange_with_a_full_endpoint(emu: &Emulator) {
+    arrange(emu, CHANNEL_3_SIZE);
+    // SAFETY: called before the plugin starts.
+    unsafe { crate::ffi::usb_host_test_set_tx_capacity(0) };
+}
+
 fn pending(emu: &Emulator, channel: u32) -> Result<u32, String> {
     let (r, _, _, pending) = emu.log_query(channel);
     if r != OraResult::Ok {
@@ -76,7 +89,7 @@ fn channel_3_contents(emu: &Emulator) -> Result<Vec<u8>, String> {
     Ok(got)
 }
 
-fn channel_2_waits_for_dtr(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+fn channel_2_waits_for_enumeration(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
     if let Some(skip) = serial_port_2_requested()? {
         return Ok(skip);
     }
@@ -85,8 +98,9 @@ fn channel_2_waits_for_dtr(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, Stri
     let held = pending(dev.emulator(), TO_HOST)?;
     if !out.is_empty() || held != DATA.len() as u32 {
         return Err(format!(
-            "without DTR the port received {out:?} and channel 2 holds {held} bytes, \
-             want nothing sent and {} held",
+            "before enumeration the host received {} bytes and channel 2 contained \
+             {held}. Expected 0 and {}.",
+            out.len(),
             DATA.len()
         ));
     }
@@ -98,9 +112,6 @@ fn channel_2_reaches_the_host(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, S
         return Ok(skip);
     }
 
-    // No room on the endpoint holds channel 2 back.
-    dev.set_tx_capacity(0);
-    dev.set_dtr(true);
     dev.step_n(PASSES)?;
     let held = pending(dev.emulator(), TO_HOST)?;
     if held != DATA.len() as u32 {
@@ -185,16 +196,16 @@ fn host_data_is_discarded_without_channel_3(
 
 pub static SCENARIOS: &[Scenario] = &[
     Scenario {
-        name: "serial_port_2.channel_2_waits_for_dtr",
-        about: "channel 2 isn't sent until DTR is asserted",
-        run: channel_2_waits_for_dtr,
-        before_start: Some(arrange_with_channel_3),
+        name: "serial_port_2.channel_2_waits_for_enumeration",
+        about: "channel 2 isn't sent before the host enumerates One ROM",
+        run: channel_2_waits_for_enumeration,
+        before_start: Some(arrange_before_enumeration),
     },
     Scenario {
         name: "serial_port_2.channel_2_reaches_the_host",
-        about: "channel 2 is sent once DTR is asserted and the endpoint has room",
+        about: "channel 2 is sent to the host when tinyusb's transmit FIFO is no longer full",
         run: channel_2_reaches_the_host,
-        before_start: Some(arrange_with_channel_3),
+        before_start: Some(arrange_with_a_full_endpoint),
     },
     Scenario {
         name: "serial_port_2.host_data_reaches_channel_3",

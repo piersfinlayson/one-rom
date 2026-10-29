@@ -48,9 +48,9 @@ void log_input_task(void);
 // before USB starts.
 void serial_port_2_init(void);
 
-// Copy channel 2 to the host while a terminal has serial port 2 open and copy
-// data from the host into channel 3.  Data from the host is dropped if this
-// plugin can't write to channel 3.  Call once per main loop pass.
+// Copy channel 2 to the host once the host has enumerated One ROM and copy data
+// from the host into channel 3.  Data from the host is dropped if this plugin
+// can't write to channel 3.  Call once per main loop pass.
 void serial_port_2_task(void);
 
 #endif // USB_LOG_H

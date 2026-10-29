@@ -645,8 +645,7 @@ static void serial_port_2_to_host(void) {
     uint8_t buf[LOG_DRAIN_CHUNK];
     uint32_t copied = 0;
 
-    if (!(context.serial_port_2 & SERIAL_PORT_2_TO_HOST)
-        || !tud_cdc_n_connected(SERIAL_PORT_2_CDC_ITF)) {
+    if (!(context.serial_port_2 & SERIAL_PORT_2_TO_HOST) || !tud_ready()) {
         return;
     }
 
