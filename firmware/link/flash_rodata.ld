@@ -3,15 +3,18 @@
 {
     . = ALIGN(4);
     _rodata_start = .;
-    KEEP(*(.rodata));
+    *(.rodata);
 
         . = ALIGN(4);
     __yield_wait_for_resume_start = .;
+    /* plugin.c copies this section from __yield_wait_for_resume_start to */
+    /* __yield_wait_for_resume_end. Nothing else references it, so without */
+    /* KEEP --gc-sections removes it. */
     KEEP(*(.yield_wait_for_resume));
     . = ALIGN(4);
     __yield_wait_for_resume_end = .;
 
-    KEEP(*(.rodata*));
+    *(.rodata*);
     . = ALIGN(4);
     _rodata_end = .;
 } >FLASH
