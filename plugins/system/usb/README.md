@@ -14,8 +14,6 @@ The primary tool used to manage live One ROMs is the [One ROM Cli](/rust/cli).
 
 A One ROM [build environment](/INSTALL.md).
 
-One ROM firmware 0.6.7 or later for your One ROM.
-
 ## Building
 
 From this directory:

@@ -47,6 +47,9 @@ In detail:
     - Supports RBCP's `REBOOT` command.
     - Adds Device Info extensions which expose One ROM's commissioning values, commissioning instance and metadata.
   - USB 0.3.3
+    - Requires firmware 0.8.1.
+    - Reserves its USB DPRAM in the plugin header and reduces its usage by 128 bytes.
+    - Fix: a host request to halt an unused endpoint no longer reads past the end of tinyusb's endpoint table.
     - With firmware 0.8.1, supports a plugin with exclusive use of the serial port.
     - USB DPRAM can be read over picobootx.
     - REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
@@ -60,6 +63,9 @@ In detail:
   - New: `ora_get_flash_slot_addr()` returns a flash slot's flash address and size.
   - New: a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the USB serial port.  One ROM's log moves to USB DPRAM in this case.
   - New: a plugin can choose the ROM slot One ROM boots with `ORA_OVERRIDE1_BOOT_SLOT` and ignore the image select jumpers with `ORA_OVERRIDE1_IGNORE_IMAGE_SELECT`.
+  - New: a plugin can reserve USB DPRAM for a USB controller by using `usb_controller_dpram_size` in its header.
+  - New: `ora_alloc_mem()` allocates memory from a pool shared by both plugins.
+  - Deprecated: `ORA_ID_ALLOC` and `ORA_ID_GET_FREE_MEM`, which never allocated memory.  Use `ORA_ID_ALLOC_MEM`.
 - Other:
   - Added manufacturer contact details to commissioning signing key tables.
   - The signing server accepts a size, revision and batch.

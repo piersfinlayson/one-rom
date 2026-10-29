@@ -234,7 +234,7 @@ const ora_plugin_header_t *user_plugin_to_start(void);
 uint8_t plugin_entry_flags(void);
 
 uint8_t plugin_boot_slot(uint8_t num_plugins, uint8_t *slot_out);
-uint8_t launch_log_move(uint8_t entry_flags);
+uint8_t launch_usb_dpram(uint8_t entry_flags);
 const ora_entry_args_t *plugin_entry_args(
     ora_plugin_type_t plugin_type,
     uint8_t entry_flags

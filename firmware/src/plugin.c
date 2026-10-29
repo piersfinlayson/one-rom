@@ -65,6 +65,12 @@ static uint8_t plugin_valid(
         return 0;
     }
 
+    if (header->usb_controller_dpram_size > USB_CONTROLLER_DPRAM_MAX) {
+        PLUGIN_ERR("ORA USB controller DPRAM 0x%x above 0x%x",
+            header->usb_controller_dpram_size, USB_CONTROLLER_DPRAM_MAX);
+        return 0;
+    }
+
     return 1;
 }
 
@@ -99,11 +105,26 @@ const ora_plugin_header_t *system_plugin_to_start(void) {
     return plugin_header(0);
 }
 
+// Only one plugin can reserve USB controller DPRAM, and the system plugin's
+// reservation is prioritised.
+static uint8_t usb_controller_dpram_clash(
+    const ora_plugin_header_t *system,
+    const ora_plugin_header_t *user
+) {
+    return (system->usb_controller_dpram_size != 0u)
+        && (user->usb_controller_dpram_size != 0u);
+}
+
 const ora_plugin_header_t *user_plugin_to_start(void) {
-    if (system_plugin_to_start() == NULL) {
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    if (system == NULL) {
         return NULL;
     }
-    return plugin_header(1);
+    const ora_plugin_header_t *user = plugin_header(1);
+    if ((user != NULL) && usb_controller_dpram_clash(system, user)) {
+        return NULL;
+    }
+    return user;
 }
 
 // Returns the flags to pass to the plugins in ora_entry_args_t.
@@ -304,6 +325,113 @@ void ora_reboot_bootsel(void) {
 void *ora_alloc(size_t size) {
     (void)size;
     return NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Memory pool
+// ---------------------------------------------------------------------------
+
+// The pool is the USB DPRAM above the USB controller's reservation and below
+// One ROM's log when the log is in USB DPRAM.  RUNTIME->usb_dpram_pool_offset is
+// the offset of its next free byte.
+
+// Both plugins allocate from the pool, so a spinlock guards it across cores.
+// See ora_log_lock() for why interrupts are masked while it is held.
+#if defined(TEST_BUILD)
+static uint32_t mem_pool_lock(void) { return 0u; }
+static void mem_pool_unlock(uint32_t primask) { (void)primask; }
+#else
+static uint32_t mem_pool_lock(void) {
+    uint32_t primask;
+
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+
+    while (SIO_SPINLOCK(SPINLOCK_MEM_POOL) == 0u)
+        ;
+    __asm volatile ("dmb" ::: "memory");
+
+    return primask;
+}
+
+static void mem_pool_unlock(uint32_t primask) {
+    __asm volatile ("dmb" ::: "memory");
+    SIO_SPINLOCK(SPINLOCK_MEM_POOL) = 0u;
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+}
+#endif // TEST_BUILD
+
+// A plugin requiring firmware before 0.8.1 can't reserve USB controller DPRAM
+// but may use it.  The 0.8.0 USB plugin zeroes all of USB DPRAM at start.
+// A firmware version as one number, so versions compare in order.
+static inline uint64_t fw_version(uint16_t major, uint16_t minor, uint16_t patch) {
+    return ((uint64_t)major << 32) | ((uint64_t)minor << 16) | patch;
+}
+
+static uint8_t plugin_predates_usb_controller_dpram(const ora_plugin_header_t *header) {
+    uint64_t required = fw_version(header->min_fw_major_version,
+        header->min_fw_minor_version, header->min_fw_patch_version);
+    return required < fw_version(0, 8, 1);
+}
+
+static void usb_dpram_pool_init(void) {
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    const ora_plugin_header_t *user = user_plugin_to_start();
+
+    if ((system != NULL) && plugin_predates_usb_controller_dpram(system)) {
+        RUNTIME->usb_dpram_pool_offset = USB_DPRAM_SIZE;
+        return;
+    }
+
+    // usb_controller_dpram_clash() leaves at most one reservation.
+    uint32_t reserved = 0u;
+    if (system != NULL) {
+        reserved = system->usb_controller_dpram_size;
+    }
+    if ((user != NULL) && (user->usb_controller_dpram_size != 0u)) {
+        reserved = user->usb_controller_dpram_size;
+    }
+    RUNTIME->usb_dpram_pool_offset = (uint16_t)((reserved + 3u) & ~3u);
+}
+
+static uint32_t usb_dpram_pool_end(void) {
+    if (RUNTIME->firmware_flags & FIRMWARE_FLAG_LOG_IN_UP1) {
+        return USB_DPRAM_LOG_ADDR - USB_DPRAM_BASE_ADDR;
+    }
+    return USB_DPRAM_SIZE;
+}
+
+ora_result_t ora_alloc_mem(const ora_alloc_request_t *req, uint32_t *addr_out) {
+    if ((req == NULL) || (addr_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (req->size < ALLOC_REQUEST_MIN_SIZE) {
+        return ORA_RESULT_INVALID_SIZE;
+    }
+    if (req->bytes == 0u) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    const uint32_t limitations = ORA_MEM_ACCEPT_ALIGNED_ONLY
+        | ORA_MEM_ACCEPT_NO_EXEC | ORA_MEM_ACCEPT_SLOWER;
+    if (((req->accept & limitations) != limitations)
+        || (req->max_access_cycles < USB_DPRAM_ACCESS_CYCLES)) {
+        return ORA_RESULT_INSUFFICIENT_FREE_MEM;
+    }
+
+    uint32_t primask = mem_pool_lock();
+    uint32_t start = RUNTIME->usb_dpram_pool_offset;
+    uint32_t end = usb_dpram_pool_end();
+    if ((start > end) || (req->bytes > (end - start))) {
+        mem_pool_unlock(primask);
+        return ORA_RESULT_INSUFFICIENT_FREE_MEM;
+    }
+    RUNTIME->usb_dpram_pool_offset = (uint16_t)((start + req->bytes + 3u) & ~3u);
+    mem_pool_unlock(primask);
+
+    *addr_out = USB_DPRAM_BASE_ADDR + start;
+    return ORA_RESULT_OK;
 }
 
 void ora_log(const char* msg, ...) {
@@ -2130,6 +2258,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_get_flash_slot_addr;
         case ORA_ID_GET_COMMISSIONING_INSTANCE:
             return ora_get_commissioning_instance;
+        case ORA_ID_ALLOC_MEM:
+            return ora_alloc_mem;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -2149,19 +2279,27 @@ static char *usb_dpram_log(void) {
 }
 #endif // REAL_HARDWARE
 
-uint8_t launch_log_move(uint8_t entry_flags) {
+static uint8_t launch_log_move(uint8_t entry_flags) {
     if (!(entry_flags & ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN)) {
         return 0;
     }
 
-    // Nothing else resets the USB controller in this mode, and after a warm
-    // reboot it can hold old state.
-    usb_controller_reset_and_release();
     if (!onerom_rtt_move_log(usb_dpram_log(), USB_DPRAM_LOG_SIZE)) {
         return 0;
     }
     RUNTIME->firmware_flags |= FIRMWARE_FLAG_LOG_IN_UP1;
     return 1;
+}
+
+uint8_t launch_usb_dpram(uint8_t entry_flags) {
+    // After a warm reboot the USB controller can hold old state.  It is reset
+    // before the log and the pool use USB DPRAM because a reset interrupts
+    // access to USB DPRAM.
+    usb_controller_reset_and_release();
+
+    uint8_t moved = launch_log_move(entry_flags);
+    usb_dpram_pool_init();
+    return moved;
 }
 
 // MUST be kept in sync with the values in plugin.ld and changing them forces
@@ -2243,13 +2381,20 @@ const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched) {
         return NULL;
     }
 
+    const ora_plugin_header_t *user = (const ora_plugin_header_t *)(uintptr_t)set1->data;
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    if ((system != NULL) && usb_controller_dpram_clash(system, user)) {
+        ERR("Both plugins reserve USB controller DPRAM - user plugin not started");
+        return NULL;
+    }
+
     const char *filename = set1->roms[0]->filename;
     if (filename != NULL) {
         LOG("Launching user plugin: %s", filename);
     } else {
         LOG("Launching user plugin");
     }
-    return (const ora_plugin_header_t *)(uintptr_t)set1->data;
+    return user;
 }
 
 #if !defined(TEST_BUILD)
@@ -2429,7 +2574,7 @@ void ora_launch_plugins(void) {
 
     uint8_t launched_plugins = 0;
     uint8_t entry_flags = plugin_entry_flags();
-    launch_log_move(entry_flags);
+    launch_usb_dpram(entry_flags);
     ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins, entry_flags);
 
     // Set before the user plugin's entry, which doesn't return.

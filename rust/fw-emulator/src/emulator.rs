@@ -684,6 +684,11 @@ impl Emulator {
         unsafe { ffi::ffi_set_firmware_flags(flags) };
     }
 
+    /// Runtime info's `usb_dpram_pool_offset`.
+    pub fn usb_dpram_pool_offset(&self) -> u16 {
+        unsafe { ffi::ffi_usb_dpram_pool_offset() }
+    }
+
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
     /// device. Plugin launch is compiled out of a test build.
     ///
@@ -806,6 +811,10 @@ impl Emulator {
 
     pub fn set_plugin_boot_slot_addr(index: u8, addr: u32) {
         unsafe { ffi::ffi_set_plugin_boot_slot_addr(index, addr) };
+    }
+
+    pub fn set_plugin_usb_controller_dpram_size(index: u8, size: u16) {
+        unsafe { ffi::ffi_set_plugin_usb_controller_dpram_size(index, size) };
     }
 
     pub fn set_plugin_magic(index: u8, magic: u32) {
@@ -1649,8 +1658,8 @@ impl Emulator {
     }
 
     /// Returns whether the log moved.
-    pub fn launch_log_move(&self, entry_flags: u8) -> bool {
-        unsafe { ffi::launch_log_move(entry_flags) != 0 }
+    pub fn launch_usb_dpram(&self, entry_flags: u8) -> bool {
+        unsafe { ffi::launch_usb_dpram(entry_flags) != 0 }
     }
 
     /// The first `STUB_USB_RESETS_MAX` changes to the USB controller's reset
@@ -1897,9 +1906,8 @@ impl Emulator {
     /// `ORA_ID_ALLOC`, returning the allocation as an address rather than a
     /// pointer.
     ///
-    /// The firmware has no allocator, so the answer is always 0 (NULL) and
-    /// there is nothing for a caller to dereference.  An address keeps that
-    /// visible and keeps the wrapper safe.
+    /// The call always returns 0 (NULL), so there is nothing for a caller to
+    /// dereference.  An address keeps that visible and keeps the wrapper safe.
     pub fn alloc(&self, size: usize) -> usize {
         let p = plugin_call!(ffi::api_id_t_ORA_ID_ALLOC, ffi::ora_alloc_fn_t, size);
         p as usize
@@ -1911,6 +1919,48 @@ impl Emulator {
             ffi::api_id_t_ORA_ID_GET_FREE_MEM,
             ffi::ora_get_free_mem_fn_t
         )
+    }
+
+    /// `ORA_ID_ALLOC_MEM`, returning the result and the address.  An address
+    /// the call doesn't write reads `u32::MAX`.
+    ///
+    /// The request's size field is passed unchanged, so a test can pass a size
+    /// below the minimum.
+    pub fn alloc_mem(&self, req: &ffi::ora_alloc_request_t) -> (OraResult, u32) {
+        let mut addr = u32::MAX;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_ALLOC_MEM,
+            ffi::ora_alloc_mem_fn_t,
+            req as *const ffi::ora_alloc_request_t,
+            &mut addr as *mut u32
+        ));
+        (r, addr)
+    }
+
+    /// `ORA_ID_ALLOC_MEM` with a NULL request or a NULL address output.
+    pub fn alloc_mem_null(
+        &self,
+        req: &ffi::ora_alloc_request_t,
+        null_req: bool,
+        null_addr: bool,
+    ) -> OraResult {
+        let mut addr = u32::MAX;
+        let req_ptr = if null_req {
+            std::ptr::null()
+        } else {
+            req as *const ffi::ora_alloc_request_t
+        };
+        let addr_out = if null_addr {
+            std::ptr::null_mut()
+        } else {
+            &mut addr as *mut u32
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_ALLOC_MEM,
+            ffi::ora_alloc_mem_fn_t,
+            req_ptr,
+            addr_out
+        ))
     }
 
     /// `ORA_ID_ERR_LOG` with a message carrying no conversions.

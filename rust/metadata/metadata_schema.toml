@@ -244,6 +244,11 @@ struct_name = "onerom_runtime_info_t"
 version = 3
 first_release = "0.8.0"
 
+[[versions]]
+struct_name = "onerom_runtime_info_t"
+version = 4
+first_release = "0.8.1"
+
 # ===========================================================================
 # Constants
 # ===========================================================================
@@ -289,8 +294,8 @@ comment = "Current metadata structure version (v0.8.1+)"
 [[constants]]
 name = "RUNTIME_INFO_VERSION"
 type = "u32"
-value = 3
-comment = "Version of the onerom_runtime_info_t structure (v0.8.0+)"
+value = 4
+comment = "Version of the onerom_runtime_info_t structure (v0.8.1+)"
 
 [[constants]]
 name = "RUNTIME_INFO_MAGIC"
@@ -2482,6 +2487,20 @@ expected_offset = 64
 plugin_key = { name = "FIRMWARE_FLAGS", id = 25, first_release = "0.8.0" }
 comment = "The firmware's flags, as ORA_FIRMWARE_FLAG_* bits."
 
+[[structs.fields]]
+name = "reserved"
+kind = "padding"
+size = 1
+
+[[structs.fields]]
+name = "usb_dpram_pool_offset"
+kind = "scalar"
+type = "u16"
+since_runtime_version = 4
+default_if_absent = 0x1000
+expected_offset = 66
+comment = "Offset in USB DPRAM of the pool's next free byte."
+
 # ===========================================================================
 # Tagged FAM structs
 # ===========================================================================
@@ -3135,6 +3154,13 @@ value = 8
 comment = """Size of ora_reboot_request_t when introduced, and the smallest
 size field accepted. Frozen, for the reason LED_REQUEST_MIN_SIZE is."""
 
+[[constants]]
+name = "ALLOC_REQUEST_MIN_SIZE"
+type = "u8"
+value = 12
+comment = """Size of ora_alloc_request_t when introduced, and the smallest
+size field accepted. Frozen, for the reason LED_REQUEST_MIN_SIZE is."""
+
 # ---------------------------------------------------------------------------
 # Plugin header
 # ---------------------------------------------------------------------------
@@ -3176,6 +3202,14 @@ value = 32
 ora_api = true
 first_release = "0.8.1"
 comment = "Offset of the little-endian 32-bit boot_slot_addr in the plugin header."
+
+[[constants]]
+name = "PLUGIN_HEADER_USB_CONTROLLER_DPRAM_SIZE_OFFSET"
+type = "usize"
+value = 30
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the little-endian 16-bit usb_controller_dpram_size in the plugin header."
 
 [[constants]]
 name = "OVERRIDE1_BOOT_SLOT"
@@ -3226,3 +3260,17 @@ value = 0x1000
 ora_api = true
 first_release = "0.8.1"
 comment = "Size in bytes of the RP2350's USB DPRAM."
+
+[[constants]]
+name = "USB_CONTROLLER_DPRAM_MAX"
+type = "usize"
+value = 0x500
+ora_api = true
+first_release = "0.8.1"
+comment = "Maximum number of bytes of USB DPRAM a plugin can reserve for a USB controller."
+
+[[constants]]
+name = "USB_DPRAM_ACCESS_CYCLES"
+type = "u16"
+value = 2
+comment = "Minimum uncontended access time of USB DPRAM in system clock cycles."

@@ -21,17 +21,16 @@
 //! returning a wrong answer.  See `Emulator::clkref_mhz`.
 
 use onerom_fw_emulator::{Emulator, OraResult, ffi};
+use onerom_metadata::{
+    ALLOC_REQUEST_MIN_SIZE, USB_DPRAM_ACCESS_CYCLES, USB_DPRAM_BASE_ADDR, USB_DPRAM_SIZE,
+    onerom_firmware_flag_t,
+};
 
 /// A handler address to hand `ora_register_irq`.  The firmware stores the
 /// pointer and nothing in this process ever dispatches to it.
 unsafe extern "C" fn dummy_irq_handler() {}
 
-/// The firmware hands out no memory, and says so consistently.
-///
-/// `ora_alloc` and `plugin_get_free_mem` are two halves of one answer: a pool
-/// that is empty is a pool nothing can be taken from.  Both are asserted here
-/// so a change to either alone shows up as the pair disagreeing rather than as
-/// a plugin quietly getting a pointer into nothing.
+/// The deprecated `ora_alloc` and `plugin_get_free_mem` hand out no memory.
 pub fn test_no_allocator(emu: &Emulator) -> Result<(), String> {
     let free = emu.get_free_mem();
     let mut errors = Vec::new();
@@ -40,9 +39,6 @@ pub fn test_no_allocator(emu: &Emulator) -> Result<(), String> {
         errors.push(format!("get_free_mem reports {free} bytes free"));
     }
 
-    // Nothing larger than the free pool can be handed out, and the pool is
-    // empty, so every request must come back NULL — including a zero-byte one,
-    // which has no memory to point at either.
     for size in [0usize, 1, 4, 1024, 512 * 1024, usize::MAX] {
         let p = emu.alloc(size);
         if p != 0 {
@@ -53,11 +49,151 @@ pub fn test_no_allocator(emu: &Emulator) -> Result<(), String> {
     }
 
     if errors.is_empty() {
-        println!("  no pool: free_mem 0, alloc always NULL");
+        println!("  deprecated allocator: free_mem 0, alloc always NULL");
         Ok(())
     } else {
         Err(errors.join("; "))
     }
+}
+
+const ALL_LIMITATIONS: u32 =
+    ffi::ORA_MEM_ACCEPT_ALIGNED_ONLY | ffi::ORA_MEM_ACCEPT_NO_EXEC | ffi::ORA_MEM_ACCEPT_SLOWER;
+
+fn alloc_request(bytes: u32) -> ffi::ora_alloc_request_t {
+    ffi::ora_alloc_request_t {
+        size: ALLOC_REQUEST_MIN_SIZE,
+        reserved: [0],
+        max_access_cycles: USB_DPRAM_ACCESS_CYCLES,
+        accept: ALL_LIMITATIONS,
+        bytes,
+    }
+}
+
+/// Allocate with `req` and check the result and the address where it succeeded.
+fn check_alloc(
+    emu: &Emulator,
+    label: &str,
+    req: &ffi::ora_alloc_request_t,
+    expected: Result<u32, OraResult>,
+) -> Result<(), String> {
+    let (r, addr) = emu.alloc_mem(req);
+    let found = if r == OraResult::Ok { Ok(addr) } else { Err(r) };
+    if found != expected {
+        return Err(format!("{label}: {found:x?}, not {expected:x?}"));
+    }
+    Ok(())
+}
+
+/// `ORA_ID_ALLOC_MEM` with neither plugin reserving USB controller DPRAM, so
+/// the pool starts at offset 0.
+pub fn test_alloc_mem(emu: &Emulator) -> Result<(), String> {
+    const LOG_IN_DPRAM: u8 = onerom_firmware_flag_t::FIRMWARE_FLAG_LOG_IN_UP1;
+    let dpram_size = USB_DPRAM_SIZE as u32;
+    let full = OraResult::InsufficientFreeMem;
+    let flags = emu.firmware_flags() & !LOG_IN_DPRAM;
+    emu.set_firmware_flags(flags);
+
+    check_alloc(emu, "before the launch", &alloc_request(4), Err(full))?;
+    emu.launch_usb_dpram(0);
+
+    let req = alloc_request(4);
+    for (label, null_req, null_addr) in [
+        ("a NULL request", true, false),
+        ("a NULL address", false, true),
+    ] {
+        let r = emu.alloc_mem_null(&req, null_req, null_addr);
+        if r != OraResult::InvalidArg {
+            return Err(format!("{label}: {r:?}, not InvalidArg"));
+        }
+    }
+
+    let mut refused = Vec::new();
+    for size in [0u8, ALLOC_REQUEST_MIN_SIZE - 1] {
+        refused.push((
+            format!("size {size}"),
+            ffi::ora_alloc_request_t { size, ..req },
+            OraResult::InvalidSize,
+        ));
+    }
+    refused.push((
+        "0 bytes".to_string(),
+        alloc_request(0),
+        OraResult::InvalidArg,
+    ));
+    for bit in [
+        ffi::ORA_MEM_ACCEPT_ALIGNED_ONLY,
+        ffi::ORA_MEM_ACCEPT_NO_EXEC,
+        ffi::ORA_MEM_ACCEPT_SLOWER,
+    ] {
+        refused.push((
+            format!("accept without {bit:#x}"),
+            ffi::ora_alloc_request_t {
+                accept: ALL_LIMITATIONS & !bit,
+                ..req
+            },
+            full,
+        ));
+    }
+    refused.push((
+        "an access time below USB DPRAM's".to_string(),
+        ffi::ora_alloc_request_t {
+            max_access_cycles: USB_DPRAM_ACCESS_CYCLES - 1,
+            ..req
+        },
+        full,
+    ));
+    for (label, req, result) in &refused {
+        check_alloc(emu, label, req, Err(*result))?;
+    }
+
+    let base = USB_DPRAM_BASE_ADDR;
+    let larger = ffi::ora_alloc_request_t {
+        size: u8::MAX,
+        accept: ALL_LIMITATIONS | (1 << 31),
+        bytes: 1,
+        ..req
+    };
+    check_alloc(
+        emu,
+        "a larger request with an unknown bit",
+        &larger,
+        Ok(base),
+    )?;
+    check_alloc(emu, "after a 1-byte allocation", &req, Ok(base + 4))?;
+
+    let left = dpram_size - 8;
+    check_alloc(
+        emu,
+        "one byte too many",
+        &alloc_request(left + 1),
+        Err(full),
+    )?;
+    check_alloc(emu, "u32::MAX bytes", &alloc_request(u32::MAX), Err(full))?;
+    check_alloc(emu, "the rest", &alloc_request(left), Ok(base + 8))?;
+    let offset = emu.usb_dpram_pool_offset();
+    if u32::from(offset) != dpram_size {
+        return Err(format!(
+            "the pool offset is {offset:#x} after the last byte"
+        ));
+    }
+    check_alloc(emu, "an empty pool", &alloc_request(1), Err(full))?;
+
+    // One ROM's log at the top of USB DPRAM ends the pool.
+    emu.set_firmware_flags(flags | LOG_IN_DPRAM);
+    emu.launch_usb_dpram(0);
+    let below_log = dpram_size - ffi::USB_DPRAM_LOG_SIZE;
+    let result = check_alloc(
+        emu,
+        "past the log",
+        &alloc_request(below_log + 1),
+        Err(full),
+    )
+    .and_then(|_| check_alloc(emu, "up to the log", &alloc_request(below_log), Ok(base)));
+    emu.set_firmware_flags(flags);
+    result?;
+
+    println!("  alloc_mem: refusals, alignment, exhaustion and the log's limit");
+    Ok(())
 }
 
 /// The peripheral and interrupt calls take every argument a plugin passes them

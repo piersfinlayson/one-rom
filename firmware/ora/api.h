@@ -387,6 +387,7 @@ typedef enum {
     /**
      * @brief Allocate memory
      * @sa ora_alloc_fn_t
+     * @deprecated Has always returned NULL.  Use @ref ORA_ID_ALLOC_MEM.
      */
     ORA_ID_ALLOC = 0x00000001,
 
@@ -418,6 +419,7 @@ typedef enum {
     /**
      * @brief Get free memory size
      * @sa ora_get_free_mem_fn_t
+     * @deprecated Has always returned 0.
      */
     ORA_ID_GET_FREE_MEM = 0x00000006,
 
@@ -827,6 +829,13 @@ typedef enum {
      * @since firmware 0.8.1
      */
     ORA_ID_GET_COMMISSIONING_INSTANCE = 0x00000044,
+
+    /**
+     * @brief Allocate memory
+     * @sa ora_alloc_mem_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_ALLOC_MEM                 = 0x00000045,
 
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
@@ -1488,16 +1497,7 @@ typedef void (*ora_reboot_bootsel_fn_t)(void);
 /**
  * @brief Allocate memory
  * @sa ORA_ID_ALLOC
- *
- * This allocates memory on a 4 byte boundary from the start of One ROM's
- * spare pool of memory.  Allocations are for the lifetime of the firmware
- * and are not freed until the device is reset.  The firmware does not track
- * individual allocations, so it is the caller's responsibility to ensure that
- * they do not exceed the allocated memory.
- *
- * The amount of free memory will vary dramatically depending on the ROM image
- * currently being served.  A One ROM 24 will have around 450KB of free memory,
- * while a One ROM 32 or 40 will have 1-2KB.
+ * @deprecated Has always returned NULL.  Use @ref ora_alloc_mem_fn_t.
  *
  * @param size The number of bytes to allocate.
  * @return A pointer to the allocated memory, or NULL if allocation failed.
@@ -1595,6 +1595,7 @@ typedef void (*ora_debug_log_fn_t)(const char *msg, ...)
 /**
  * @brief Get the amount of free memory
  * @sa ORA_ID_GET_FREE_MEM
+ * @deprecated Has always returned 0.
  *
  * @return The number of bytes of free memory available.
  */
@@ -1627,6 +1628,10 @@ typedef void (*ora_set_status_led_fn_t)(uint8_t on);
  * 
  * This is used by plugins that want to use the USB functionality of the
  * RP2350, to set up the USB PLL.
+ *
+ * Firmware 0.8.1 and later resets the USB controller before starting the
+ * plugins.  A plugin must not reset it because the firmware stores data
+ * in USB DPRAM that a reset may corrupt.
  */
 typedef void (*ora_setup_usb_fn_t)(void);
 
@@ -3526,6 +3531,94 @@ _Static_assert(sizeof(ora_reboot_request_t) == 8, "ora_reboot_request_t must be 
 typedef ora_result_t (*ora_reboot_fn_t)(const ora_reboot_request_t *req);
 
 /**
+ * @brief Accept memory where unaligned access may fault
+ * @sa ora_alloc_request_t
+ * @since firmware 0.8.1
+ *
+ * An access is aligned when its address is a multiple of its size: 2 for a
+ * halfword, 4 for a word.  A byte access is always aligned.  A caller setting
+ * this flag must make only aligned halfword and word accesses to the
+ * allocation, including through library functions such as memcpy.
+ */
+#define ORA_MEM_ACCEPT_ALIGNED_ONLY  (1u << 0)
+
+/**
+ * @brief Accept memory code can't execute from
+ * @sa ora_alloc_request_t
+ * @since firmware 0.8.1
+ */
+#define ORA_MEM_ACCEPT_NO_EXEC       (1u << 1)
+
+/**
+ * @brief Accept memory slower than SRAM
+ * @sa ora_alloc_request_t::max_access_cycles
+ * @since firmware 0.8.1
+ */
+#define ORA_MEM_ACCEPT_SLOWER        (1u << 2)
+
+/**
+ * @brief Memory allocation request
+ * @sa ora_alloc_mem_fn_t
+ * @since firmware 0.8.1
+ */
+typedef struct {
+    /** @brief sizeof this structure, set by the caller.  Minimum 12. */
+    uint8_t  size;
+
+    /** @brief Reserved.  Set to zero. */
+    uint8_t  reserved[1];
+
+    /**
+     * @brief Slowest access time accepted in system clock cycles
+     *
+     * Without @ref ORA_MEM_ACCEPT_SLOWER the firmware allocates only memory
+     * as fast as SRAM, and this field must be zero.  It is valid only if
+     * @ref ORA_MEM_ACCEPT_SLOWER is set.
+     *
+     * Minimum uncontended, uncached access times:
+     * - SRAM: 1
+     * - USB DPRAM: 2
+     *
+     * Access may take longer than these minima due to contention from the
+     * other core and from peripherals.
+     */
+    uint16_t max_access_cycles;
+
+    /**
+     * @brief Limitations the caller accepts as ORA_MEM_ACCEPT_* bits
+     *
+     * The firmware ignores bits not defined by the plugin API version it
+     * supports.
+     */
+    uint32_t accept;
+
+    /** @brief Number of bytes to allocate */
+    uint32_t bytes;
+} ora_alloc_request_t;
+_Static_assert(sizeof(ora_alloc_request_t) == 12, "ora_alloc_request_t must be 12 bytes");
+
+/**
+ * @brief Allocate memory
+ * @sa ORA_ID_ALLOC_MEM
+ * @since firmware 0.8.1
+ *
+ * Allocates memory honouring all accepted limitations in @p req.  The
+ * allocation is 4-byte aligned and lasts until One ROM reboots.  Both plugins
+ * allocate from a shared pool.
+ *
+ * @param req      Allocation request
+ * @param addr_out Set to the allocation's address on success
+ * @retval ORA_RESULT_OK                    Allocated
+ * @retval ORA_RESULT_INVALID_ARG           @p req or @p addr_out is NULL, or
+ *                                          @p req->bytes is 0
+ * @retval ORA_RESULT_INVALID_SIZE          @p req->size is below 12
+ * @retval ORA_RESULT_INSUFFICIENT_FREE_MEM No memory meeting @p req has
+ *                                          @p req->bytes free
+ */
+typedef ora_result_t (*ora_alloc_mem_fn_t)(const ora_alloc_request_t *req,
+                                           uint32_t *addr_out);
+
+/**
  * @brief Get a commissioning value
  * @sa ORA_ID_GET_COMMISSIONING_VALUE
  * @since firmware 0.8.1
@@ -3751,10 +3844,24 @@ typedef struct {
     uint16_t min_fw_patch_version;
 
     /**
-     * @brief Reserved. Set to zero.
+     * @brief Number of bytes of USB DPRAM to reserve for a USB controller
+     *
+     * The firmware reserves this from offset 0 of USB DPRAM before either
+     * plugin starts.  Set to 0 if the plugin doesn't include a USB stack.
+     *
+     * If both plugins set this field, the firmware reserves USB DPRAM for the
+     * system plugin and doesn't start the user plugin.  The firmware doesn't
+     * start a plugin that sets a value above
+     * @ref ORA_USB_CONTROLLER_DPRAM_MAX.
+     *
+     * Firmware before 0.8.1 doesn't read this field, so a plugin setting it
+     * must set its minimum firmware version to 0.8.1 or later.
+     *
+     * @sa ora_setup_usb_fn_t
+     * @since firmware 0.8.1
      */
     // offset 30
-    uint8_t reserved0[2];
+    uint16_t usb_controller_dpram_size;
 
     /**
      * @brief Flash address of the byte containing the number of the ROM slot to boot
@@ -3784,6 +3891,8 @@ _Static_assert(__builtin_offsetof(ora_plugin_header_t, properties1) == ORA_PLUGI
                "properties1 offset");
 _Static_assert(__builtin_offsetof(ora_plugin_header_t, boot_slot_addr) == ORA_PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET,
                "boot_slot_addr offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, usb_controller_dpram_size) == ORA_PLUGIN_HEADER_USB_CONTROLLER_DPRAM_SIZE_OFFSET,
+               "usb_controller_dpram_size offset");
 #endif
 
 /**

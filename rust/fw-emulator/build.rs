@@ -309,6 +309,7 @@ fn main() {
         .allowlist_function("ffi_set_plugins_started")
         .allowlist_function("ffi_firmware_flags")
         .allowlist_function("ffi_set_firmware_flags")
+        .allowlist_function("ffi_usb_dpram_pool_offset")
         .allowlist_var("ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT")
         .allowlist_function("otp_commissioning_value")
         .allowlist_function("otp_commissioned_board")
@@ -340,6 +341,7 @@ fn main() {
         // Plugin launch, the plugins' boot slot and exclusive serial IN mode.
         .allowlist_function("ffi_overlay_plugin_slots")
         .allowlist_function("ffi_set_plugin_boot_slot_addr")
+        .allowlist_function("ffi_set_plugin_usb_controller_dpram_size")
         .allowlist_function("ffi_user_plugin_to_start")
         .allowlist_function("ffi_system_plugin_to_launch")
         .allowlist_function("ffi_user_plugin_to_launch")
@@ -356,8 +358,10 @@ fn main() {
         .allowlist_var("ORA_PLUGIN_VERSION_1")
         .allowlist_function("ffi_set_plugin_filename")
         .allowlist_function("ffi_set_rom_slot_count")
-        // The log's move to USB DPRAM.
-        .allowlist_function("launch_log_move")
+        // The USB controller's reset, the log's move to USB DPRAM and the
+        // memory pool.
+        .allowlist_function("launch_usb_dpram")
+        .allowlist_var("ORA_MEM_ACCEPT_.*")
         .allowlist_var("USB_DPRAM_LOG_SIZE")
         .allowlist_function("stub_usb_resets")
         .allowlist_var("STUB_USB_RESET.*")

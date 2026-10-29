@@ -34,9 +34,12 @@ const ora_plugin_header_t ora_plugin_header = {
     .properties1 = ORA_PROPERTY1_SUPPORTS_USB_RUNNING | ORA_PROPERTY1_SUPPORTS_YIELD,
     .min_fw_major_version = 0,
     .min_fw_minor_version = 8,
-    .min_fw_patch_version = 0,
+    .min_fw_patch_version = 1,
+    .usb_controller_dpram_size = CFG_TUD_RP2040_DPRAM_SIZE,
     .reserved = {0},
 };
+_Static_assert(CFG_TUD_RP2040_DPRAM_SIZE <= ORA_USB_CONTROLLER_DPRAM_MAX,
+    "tinyusb's USB DPRAM is more than a plugin can reserve");
 
 // Plugin context, stored in .bss
 usb_plugin_context_t context;
@@ -161,7 +164,6 @@ size_t usb_get_serial(char *out, size_t out_size) {
 // In exclusive serial IN mode:
 // - Only channel 0 goes to the serial port.  See usb_log.c.
 // - One ROM's log is in USB DPRAM above the endpoint buffers.
-// - The plugin doesn't reset the USB controller.  See rp2usb_app_reset_cb().
 // - The plugin doesn't clear the log.  See rp2usb_init() in tinyusb.
 void usb_init(ora_lookup_fn_t ora_lookup_fn, uint8_t entry_flags) {
     context.exclusive_serial_in =
@@ -247,10 +249,10 @@ void usb_main(
     return;
 }
 
-// In exclusive serial IN mode the firmware has already reset the USB
-// controller, and a reset would lose writes to One ROM's log in USB DPRAM.
+// The firmware resets the USB controller before starting the plugins.  A reset
+// here would lose the firmware's previous writes to USB DPRAM.
 bool rp2usb_app_reset_cb(void) {
-    return !context.exclusive_serial_in;
+    return false;
 }
 
 // Invoked when device is mounted

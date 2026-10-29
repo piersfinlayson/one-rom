@@ -35,6 +35,7 @@ mod flash_range;
 mod plugin_launch;
 mod report;
 mod runner;
+mod usb_dpram;
 
 use report::TestReport;
 

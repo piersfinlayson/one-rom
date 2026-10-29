@@ -65,7 +65,7 @@
  * 
  * - Once plugin_main() is called, you are likely to want to call @ref
  *   ora_lookup_fn to get pointers to the API functions you want to use.
- *   Store these on the stack, or in memory you allocate via @ref ora_alloc_fn_t.
+ *   Store these on the stack, or in memory you allocate via @ref ora_alloc_mem_fn_t.
  * 
  * - The plugin may be started before the full load of the ROM image to be
  *   served has loaded into SRAM from flash, as this is done asyncronously
@@ -79,9 +79,8 @@
  * 
  * - The arguments provided to the plugin's entry point indicates its static
  *   RAM address, size, stack start and stack size.  The plugin may use
- *   ora_alloc to allocated additional memory from the free pool, but this is
- *   not guaranteed to succeed, and will likely fail on larger pin count One
- *   ROMs (32 and 40 pin).  The static RAM address, size, and stack details
+ *   ora_alloc_mem to allocate additional memory, but this is not guaranteed
+ *   to succeed.  The static RAM address, size, and stack details
  *   are provided in the plugin's entry point arguments as well as supplied
  *   by the plugin.ld linker script.
  * 

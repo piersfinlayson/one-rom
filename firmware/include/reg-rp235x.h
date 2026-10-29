@@ -389,6 +389,7 @@
 // the SDK's allocator collides with them last.
 #define SPINLOCK_ORA_LOG    31
 #define SPINLOCK_LED        30
+#define SPINLOCK_MEM_POOL   29
 
 #define SIO_GPIO_READ(pin)  ((pin < 32) ? \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x004)) >> pin) & 1) : \

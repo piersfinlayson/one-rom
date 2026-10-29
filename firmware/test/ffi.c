@@ -73,6 +73,10 @@ void ffi_set_firmware_flags(uint8_t flags) {
     RUNTIME->firmware_flags = flags;
 }
 
+uint16_t ffi_usb_dpram_pool_offset(void) {
+    return RUNTIME->usb_dpram_pool_offset;
+}
+
 // See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
 // it writable so the harness can stand where the CLI does on a device.
 extern onerom_metadata_header_t _metadata_start;
@@ -245,6 +249,11 @@ void ffi_set_plugin_header(
 void ffi_set_plugin_boot_slot_addr(uint8_t index, uint32_t addr) {
     assert(index < 2);
     plugin_headers[index].boot_slot_addr = addr;
+}
+
+void ffi_set_plugin_usb_controller_dpram_size(uint8_t index, uint16_t size) {
+    assert(index < 2);
+    plugin_headers[index].usb_controller_dpram_size = size;
 }
 
 void ffi_set_plugin_magic(uint8_t index, uint32_t magic) {

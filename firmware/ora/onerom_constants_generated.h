@@ -147,6 +147,10 @@
 // @since firmware 0.8.1
 #define ORA_PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET 0x20
 
+// Offset of the little-endian 16-bit usb_controller_dpram_size in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_USB_CONTROLLER_DPRAM_SIZE_OFFSET 0x1E
+
 // Plugin header overrides1 bit. With it set, One ROM boots the ROM slot
 // numbered in the byte at boot_slot_addr, which must be in the plugin's own flash
 // region. ROM slot 0 is the first slot that isn't a plugin. A number past the
@@ -172,6 +176,10 @@
 // Size in bytes of the RP2350's USB DPRAM.
 // @since firmware 0.8.1
 #define ORA_USB_DPRAM_SIZE 0x1000
+
+// Maximum number of bytes of USB DPRAM a plugin can reserve for a USB controller.
+// @since firmware 0.8.1
+#define ORA_USB_CONTROLLER_DPRAM_MAX 0x500
 
 // RP235xB
 // @since firmware 0.8.0

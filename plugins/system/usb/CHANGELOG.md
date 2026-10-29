@@ -2,6 +2,12 @@
 
 ## [0.3.3] - unreleased
 
+Requires firmware 0.8.1.
+
+Reserves its USB DPRAM in the plugin header and reduces its usage by 128 bytes.
+
+Fix: a host request to halt an unused endpoint no longer reads past the end of tinyusb's endpoint table.
+
 With firmware 0.8.1, a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the serial port.  The USB plugin then sends only that plugin's output without any banner.  Logging can instead be retrieved using picoboot.
 
 USB DPRAM can be read over picobootx.

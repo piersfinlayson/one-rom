@@ -27,7 +27,7 @@ PICO_SDKLESS_VERSION ?= v0.1.1
 # Commit of the One ROM tinyusb fork to build against.  A commit rather than a
 # tag, because the fork tracks a project this one does not version.  Remove the
 # tinyusb/ directory after changing this, so it is re-cloned.
-TINYUSB_COMMIT ?= 1e658fb6c
+TINYUSB_COMMIT ?= ec528d6aa
 
 ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)

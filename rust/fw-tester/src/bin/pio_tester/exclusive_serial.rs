@@ -8,13 +8,13 @@
 //!   start without the system plugin.
 //! - Every started plugin has `ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN` if one of
 //!   them requests exclusive serial IN.
-//! - At plugin launch in exclusive serial IN mode the firmware resets the USB
-//!   controller, moves One ROM's log to USB DPRAM with as much of channel 0's
-//!   contents as fits, then sets `FIRMWARE_FLAG_LOG_IN_UP1`.
+//! - At plugin launch the firmware resets the USB controller. In exclusive
+//!   serial IN mode it then moves One ROM's log to USB DPRAM with as much of
+//!   channel 0's contents as fits, and sets `FIRMWARE_FLAG_LOG_IN_UP1`.
 //! - After the move One ROM's log reaches only USB DPRAM and channel 0 holds
 //!   only what its writer writes.
-//! - Without exclusive serial IN the launch leaves the log, the USB controller
-//!   and `FIRMWARE_FLAG_LOG_IN_UP1` alone.
+//! - Without exclusive serial IN the launch leaves the log and
+//!   `FIRMWARE_FLAG_LOG_IN_UP1` alone.
 //! - A plugin's claim doesn't move the log.
 
 use onerom_fw_emulator::{Emulator, OraResult, UsbReset, UsbResetStep, ffi};
@@ -181,7 +181,7 @@ fn check_log_move(emu: &Emulator) -> Result<(), String> {
         ));
     }
 
-    if !emu.launch_log_move(Emulator::plugin_entry_flags()) {
+    if !emu.launch_usb_dpram(Emulator::plugin_entry_flags()) {
         return Err("the launch didn't move the log".to_string());
     }
 
@@ -265,7 +265,7 @@ fn check_log_move(emu: &Emulator) -> Result<(), String> {
     }
 
     emu.fw_log_write(log_line);
-    if emu.launch_log_move(FLAG_IN) {
+    if emu.launch_usb_dpram(FLAG_IN) {
         return Err("a second move was made".to_string());
     }
     if emu.fw_log_read(LOG_SIZE) != log_line {
@@ -277,6 +277,10 @@ fn check_log_move(emu: &Emulator) -> Result<(), String> {
 }
 
 fn check_no_move(emu: &Emulator) -> Result<(), String> {
+    let unmoved = |step| UsbReset {
+        step,
+        log_moved: false,
+    };
     let no_bits = || place(0, 0);
     let user_outside_flash = || {
         place(0, IN);
@@ -298,13 +302,14 @@ fn check_no_move(emu: &Emulator) -> Result<(), String> {
         if flags != 0 {
             return Err(format!("{label}: entry flags {flags:#04x}, not 0x00"));
         }
-        if emu.launch_log_move(flags) {
+        if emu.launch_usb_dpram(flags) {
             return Err(format!("{label}: the launch moved the log"));
         }
-        if !emu.usb_resets().is_empty() {
+        let resets = emu.usb_resets();
+        if resets != [UsbResetStep::Assert, UsbResetStep::Release].map(unmoved) {
             return Err(format!(
-                "{label}: the launch changed the USB controller's reset: {:?}",
-                emu.usb_resets()
+                "{label}: the USB controller's reset at launch wasn't an assert then a \
+                 release: {resets:?}"
             ));
         }
         emu.set_calling_plugin(claimant);
@@ -337,7 +342,7 @@ fn check_truncation(emu: &Emulator) -> Result<(), String> {
     if emu.fw_log_write(&boot_log) != boot_log.len() as u32 {
         return Err("the boot log write was dropped".to_string());
     }
-    if !emu.launch_log_move(FLAG_IN) {
+    if !emu.launch_usb_dpram(FLAG_IN) {
         return Err("the launch didn't move the log".to_string());
     }
     emu.set_calling_plugin(SYSTEM);

@@ -44,7 +44,7 @@ fn arrange(emu: &Emulator, user: u8, flags: u8) {
     // The log's contents outlive a boot here.
     while !emu.fw_log_read(CHANNEL_0_SIZE).is_empty() {}
     emu.fw_log_write(BOOT_LOG);
-    emu.launch_log_move(flags);
+    emu.launch_usb_dpram(flags);
 }
 
 fn arrange_exclusive_in(emu: &Emulator) {
@@ -156,9 +156,11 @@ fn tinyusb_skips_its_reset(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, Stri
     check_tinyusb_resets(dev, 0)
 }
 
-/// The plugin starts with entry flags 0, as firmware before 0.8.1 starts it.
-fn tinyusb_resets_without_the_mode(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
-    check_tinyusb_resets(dev, 1)
+fn tinyusb_skips_its_reset_without_the_mode(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    check_tinyusb_resets(dev, 0)
 }
 
 fn check_tinyusb_resets(dev: &Device, resets: u32) -> Result<Outcome, String> {
@@ -361,9 +363,9 @@ pub static SCENARIOS: &[Scenario] = &[
         before_start: Some(arrange_exclusive_in),
     },
     Scenario {
-        name: "exclusive.tinyusb_resets_without_the_mode",
-        about: "without the mode tinyusb's initialisation resets the USB controller",
-        run: tinyusb_resets_without_the_mode,
+        name: "exclusive.tinyusb_skips_its_reset_without_the_mode",
+        about: "without the mode tinyusb's initialisation doesn't reset the USB controller",
+        run: tinyusb_skips_its_reset_without_the_mode,
         before_start: None,
     },
     Scenario {

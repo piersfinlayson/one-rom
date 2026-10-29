@@ -5,8 +5,10 @@
 //! The firmware's checks of the plugin slots before it starts the plugins.
 //!
 //! - A plugin header fails the plugin check with a wrong magic, plugin API
-//!   version or plugin type, or a minimum firmware version above the running
-//!   firmware's. A minimum equal to the running firmware's passes.
+//!   version or plugin type, a minimum firmware version above the running
+//!   firmware's, or a USB controller DPRAM reservation above
+//!   `USB_CONTROLLER_DPRAM_MAX`. A minimum equal to the running firmware's and
+//!   a reservation of `USB_CONTROLLER_DPRAM_MAX` pass.
 //! - The firmware starts a user plugin only if both plugin headers pass the
 //!   check.
 //! - Launch doesn't start a plugin from a slot that isn't a plugin slot or from
@@ -15,6 +17,7 @@
 
 use onerom_config::fw::FirmwareVersion;
 use onerom_fw_emulator::{Emulator, ffi};
+use onerom_metadata::USB_CONTROLLER_DPRAM_MAX;
 
 use crate::flash_range::PLUGINS;
 use crate::report::TestReport;
@@ -77,7 +80,8 @@ type HeaderCase<'a> = (&'a str, &'a dyn Fn(u8), bool);
 
 fn check_header_fields(version: FirmwareVersion) -> Result<(), String> {
     let (major, minor, patch) = (version.major(), version.minor(), version.patch());
-    let cases: [HeaderCase; 6] = [
+    let max_dpram = USB_CONTROLLER_DPRAM_MAX as u16;
+    let cases: [HeaderCase; 8] = [
         (
             "a wrong magic",
             &|i| Emulator::set_plugin_magic(i, ffi::ORA_PLUGIN_MAGIC ^ 1),
@@ -106,6 +110,16 @@ fn check_header_fields(version: FirmwareVersion) -> Result<(), String> {
         (
             "a minimum patch version above the running firmware's",
             &|i| Emulator::set_plugin_min_fw_version(i, major, minor, patch + 1),
+            false,
+        ),
+        (
+            "the maximum USB controller DPRAM",
+            &|i| Emulator::set_plugin_usb_controller_dpram_size(i, max_dpram),
+            true,
+        ),
+        (
+            "USB controller DPRAM above the maximum",
+            &|i| Emulator::set_plugin_usb_controller_dpram_size(i, max_dpram + 1),
             false,
         ),
     ];

@@ -333,6 +333,7 @@ fn run_slot(
         "no_allocator",
         tests::platform::test_no_allocator(&emulator),
     );
+    report.add("alloc_mem", tests::platform::test_alloc_mem(&emulator));
     report.add(
         "peripheral_and_irq_calls",
         tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
