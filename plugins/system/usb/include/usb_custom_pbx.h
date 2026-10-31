@@ -25,7 +25,7 @@
 // space gated by a ONEROM_FEAT_* bit) and the major only for one that breaks an
 // existing host - which should not happen.
 #define ONEROM_PBX_EXT_MAJOR  1u
-#define ONEROM_PBX_EXT_MINOR  1u
+#define ONEROM_PBX_EXT_MINOR  2u
 
 // All One ROM custom commands carry all 16 argument bytes.
 #define ONEROM_CMD_ARGS_LEN  16u
@@ -212,7 +212,8 @@ _Static_assert(sizeof(onerom_caps_t) == ONEROM_CAPS_LEN, "onerom_caps_t size mis
 #define ONEROM_FEAT_LED_ARGS    (1u << 3)   // SET_LED's colour/brightness/
                                             // period/hold are honoured
 #define ONEROM_FEAT_STANDBY     (1u << 4)   // ONEROM_CMD_SET_STANDBY is available
-// Bits 5 upwards are reserved.
+#define ONEROM_FEAT_GPIO_USES   (1u << 5)   // onerom_gpio_entry_t's uses is filled in
+// Bits 6 upwards are reserved.
 
 // The longest hold SET_LED accepts is ORA_LED_MAX_HOLD_MS, from the ORA API.
 // A longer request is refused rather than clamped.
@@ -274,6 +275,12 @@ _Static_assert(sizeof(onerom_set_standby_args_t) == 16, "onerom_set_standby_args
 // future growth of onerom_gpio_entry_t: at 5 bytes per entry the multiple-of-4
 // rule breaks, and at 6 the RP2350B no longer fits.  Grow the entry and a host
 // must start splitting the sweep.
+//
+// Where ONEROM_FEAT_GPIO_USES is set, uses holds bits 0 to 7 of
+// ora_gpio_info_t::uses, so it covers ora_gpio_use_t values up to 7.  A use
+// above 7 requires a longer entry, which an older host can't decode, so it also
+// requires a new ONEROM_FEAT_* caps bit.  The plugin API tester fails on an
+// ora_gpio_use_t value above 7.
 // ---------------------------------------------------------------------------
 
 typedef struct __attribute__((packed)) {
@@ -287,7 +294,7 @@ typedef struct __attribute__((packed)) {
     uint8_t use;        // ora_gpio_use_t
     uint8_t level;      // Level currently on the pad, 0 or 1
     uint8_t is_output;  // 1 if the output driver is enabled, 0 if not
-    uint8_t reserved;
+    uint8_t uses;       // ora_gpio_info_t::uses bits 0 to 7
 } onerom_gpio_entry_t;
 _Static_assert(sizeof(onerom_gpio_entry_t) == 4, "onerom_gpio_entry_t size mismatch");
 

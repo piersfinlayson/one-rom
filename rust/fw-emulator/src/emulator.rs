@@ -172,6 +172,8 @@ pub struct GpioInfo {
     pub gpio_use: u8,
     pub level: u8,
     pub is_output: u8,
+    /// Every use that applies, bit N for `ora_gpio_use_t` value N.
+    pub uses: u32,
 }
 
 /// One LED's state as reported by `ORA_ID_LED_GET`.
@@ -713,6 +715,15 @@ impl Emulator {
 
     pub fn set_hw_claims(&self, claims: u8) {
         unsafe { ffi::ffi_set_hw_claims(claims) };
+    }
+
+    /// Runtime info's `gpio_claims`, bit N for GPIO N.
+    pub fn gpio_claims(&self) -> u64 {
+        unsafe { ffi::ffi_gpio_claims() }
+    }
+
+    pub fn set_gpio_claims(&self, claims: u64) {
+        unsafe { ffi::ffi_set_gpio_claims(claims) };
     }
 
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
@@ -1464,6 +1475,7 @@ impl Emulator {
             use_: 0xFF,
             level: 0xFF,
             is_output: 0xFF,
+            uses: 0xFFFF_FFFF,
         };
         let r = plugin_call!(
             ffi::api_id_t_ORA_ID_GPIO_QUERY,
@@ -1478,6 +1490,7 @@ impl Emulator {
                 gpio_use: info.use_,
                 level: info.level,
                 is_output: info.is_output,
+                uses: info.uses,
             },
         )
     }
@@ -2037,6 +2050,16 @@ impl Emulator {
             ffi::api_id_t_ORA_ID_CLAIM_UART,
             ffi::ora_claim_uart_fn_t,
             uart,
+            flags
+        ))
+    }
+
+    /// `ORA_ID_CLAIM_GPIO`.
+    pub fn claim_gpio(&self, gpio: u32, flags: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_GPIO,
+            ffi::ora_claim_gpio_fn_t,
+            gpio,
             flags
         ))
     }

@@ -31,11 +31,10 @@ void vbus_connect_handler(void) {
 // test/stub.h for what is deliberately not modelled.
 // ---------------------------------------------------------------------------
 
-// Pins the model covers.  The B variant has the most, at 48 - see max_gpios[]
-// in constants.c.  Sizing to the larger variant means the model covers whatever
-// stub_set_rp_variant() selected, and the firmware's own MAX_GPIOS is what
-// bounds the pin numbers that reach here.
-#define STUB_MAX_GPIOS 48u
+// Pins the model covers.  The B variant has the most.  Sizing to the larger
+// variant means the model covers whatever stub_set_rp_variant() selected, and
+// the firmware's own MAX_GPIOS is what bounds the pin numbers that reach here.
+#define STUB_MAX_GPIOS RP2350B_GPIO_COUNT
 
 static uint8_t stub_gpio_oe[STUB_MAX_GPIOS];
 static uint8_t stub_gpio_out[STUB_MAX_GPIOS];

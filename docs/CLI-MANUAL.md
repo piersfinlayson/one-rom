@@ -1147,7 +1147,7 @@ Columns:
 | `Dir` | `out` if the pin's output driver is enabled, `in` if not. |
 | `Level` | The GPIO's level, `0` or `1`: what an `out` pin is driving, what an `in` pin reads. |
 | `Max V` | `5V` if the GPIO is 5V-tolerant, `3V3` if it is an RP2350 ADC pin and therefore 3.3V-only, `?` if the board is not characterised. |
-| `Current use` | What One ROM itself is using the GPIO for: `free`, `serving (read)`, `serving (driven)`, `standby`, `input forced`, `system` or `reserved`. |
+| `Current use` | What One ROM is using the GPIO for: `free`, `serving (read)`, `serving (driven)`, `standby`, `input forced`, `system`, `plugin` or `reserved`. |
 
 `Function` lists everything that applies rather than stopping at the first
 match, so a GPIO that is genuinely two things says so: on a `fire-24-f` the
@@ -1163,7 +1163,7 @@ GPIO of their own, so they do not appear here. Run
 [`inspect header`](#inspect-header) for the pin-by-pin view, which shows every
 role each pin carries.
 
-`Current use` is One ROM's use of the GPIO:
+`Current use` displays what a GPIO is being used for:
 
 - `free`: not used.
 - `reserved`: [reserved](#reserve-a-pin-for-another-use) for another use, and not used.
@@ -1172,8 +1172,9 @@ role each pin carries.
 - `serving (driven)`: a data pin. Driving it stops serving until One ROM reboots.
 - `standby`: a data pin while One ROM is in [standby](#control-standby). Driving it breaks serving until One ROM reboots.
 - `system`: a board peripheral, for example the status LED.
+- `plugin`: used by a plugin.
 
-A `serving`, `standby` or `system` pin can only be driven with `--force`. See [`control pin`](#control-pin).
+A `serving`, `standby`, `system` or `plugin` pin can only be driven with `--force`. See [`control pin`](#control-pin).
 
 In standby the title ends `(standby)`, for example `serving 2364 (standby)`.
 
@@ -1884,19 +1885,11 @@ onerom control pin --pin sel_a --state z
 | `--state <STATE>` | `high`, `low`, or `z` (high-impedance). `1` and `0` are accepted for `high` and `low`. Required. |
 | `--hold <MS>` | Hold `--state` for this many milliseconds, then apply `--then`. Decimal or `0x` hex. Omit to latch indefinitely. The device's own limit is <!--[const:GPIO_MAX_HOLD_MS:seconds]-->60 seconds<!--[/]-->. |
 | `--then <STATE>` | State to apply when `--hold` expires: `high`, `low` or `z` (or `1`/`0`). Default `z`. Requires `--hold`. |
-| `--force` | Drive the GPIO even though One ROM is using it for serving. |
+| `--force` | Drive the GPIO even though One ROM or a plugin is using it. |
 
-**Refusals and warnings.** If One ROM is itself using the GPIO, the command is
-refused and names what it is doing. `--force` overrides, and prints what that
-costs:
-
-- a pin serving **reads** (address, chip-select, `/BYTE`) is reversible — serving
-  keeps reading it, and `--state z` puts it back.
-- a pin serving **drives** (a data pin) is not — forcing it takes the pin away
-  from the PIO that drives it, and serving stays broken until the device is
-  rebooted.
-- a data pin in [standby](#control-standby) is the same, and is reported as a
-  standby pin.
+**Refusals and warnings.** If One ROM or a plugin is using the GPIO, the
+command fails and displays what the GPIO is used for. `--force` can be used to
+override it.
 
 If the GPIO is not 5V-tolerant — an RP2350 ADC pin, per the board metadata, not
 a measurement — the command warns and asks for confirmation, which `--yes` or

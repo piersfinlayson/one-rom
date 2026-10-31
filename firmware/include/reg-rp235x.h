@@ -269,6 +269,10 @@
 // UARTs
 #define UART_COUNT          2
 
+// GPIOs
+#define RP2350A_GPIO_COUNT  30
+#define RP2350B_GPIO_COUNT  48
+
 // TIMER0 Registers
 #define TIMER0_TIMELR       (*((volatile uint32_t *)(TIMER0_BASE + 0x0C)))
 #define TIMER0_ALARM0       (*((volatile uint32_t *)(TIMER0_BASE + 0x10)))

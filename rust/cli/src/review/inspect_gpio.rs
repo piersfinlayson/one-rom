@@ -31,6 +31,7 @@ fn entries(board: &Board) -> Vec<GpioEntry> {
                 gpio_use_raw: gpio_use as u8,
                 level: 0,
                 is_output: u8::from(gpio_use == GpioUse::ServingDriven),
+                uses: None,
             }
         })
         .collect()
@@ -129,6 +130,7 @@ pub(super) fn served_entries(image: &ParsedDevice, board: &Board) -> Vec<GpioEnt
                 gpio_use_raw: gpio_use as u8,
                 level: 0,
                 is_output: u8::from(gpio_use == GpioUse::ServingDriven),
+                uses: None,
             }
         })
         .collect()
@@ -203,6 +205,66 @@ async fn reserved_pins() {
             false,
             true,
             reserved,
+            false,
+        )
+    );
+}
+
+/// GPIO 8 is X2 on a fire-24-f, claimed by a plugin.
+#[tokio::test]
+async fn a_pin_a_plugin_has_claimed() {
+    let board = Board::Fire24F;
+    let image = parse_firmware(&image_2364(1, &[]).await).await;
+    let mut entries = served_entries(&image, &board);
+    entries[8].gpio_use_raw = GpioUse::Plugin as u8;
+    entries[8].uses = Some(1 << GpioUse::Plugin as u8);
+    println!("$ onerom inspect gpio");
+    println!("~ One ROM Fire 24 F - Firmware: v0.8.1 State: Running Serial: DE3F9C232F655B6B");
+    println!("~");
+    println!("{}", gpio_title(Some(&board), 30, Some("2364"), false));
+    println!("~");
+    print!(
+        "{}",
+        render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries,
+            false,
+            false,
+            onerom_cli::pin::reserved_gpios(&image),
+            false,
+        )
+    );
+}
+
+/// A fire-24-a's input forced X pin, claimed by a plugin.
+#[tokio::test]
+async fn a_claimed_input_forced_pin() {
+    let board = Board::Fire24A;
+    let image = parse_firmware(&image_2364_for(board, 1, &[]).await).await;
+    let mut entries = served_entries(&image, &board);
+    let forced = entries
+        .iter()
+        .position(|e| e.gpio_use_raw == GpioUse::InputForced as u8)
+        .expect("a fire-24-a serving a 2364 forces an X pin's input");
+    entries[forced].gpio_use_raw = GpioUse::Plugin as u8;
+    entries[forced].uses = Some((1 << GpioUse::InputForced as u8) | (1 << GpioUse::Plugin as u8));
+    println!("$ onerom inspect gpio");
+    println!("~ One ROM Fire 24 A - Firmware: v0.8.1 State: Running Serial: DE3F9C232F655B6B");
+    println!("~");
+    println!("{}", gpio_title(Some(&board), 30, Some("2364"), false));
+    println!("~");
+    print!(
+        "{}",
+        render_gpio_table(
+            Some(&board),
+            Some(ChipType::Chip2364),
+            0,
+            &entries,
+            false,
+            false,
+            onerom_cli::pin::reserved_gpios(&image),
             false,
         )
     );

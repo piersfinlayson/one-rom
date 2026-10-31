@@ -2226,7 +2226,7 @@ static void aux_pin_info(const aux_pin_t *pin, uint8_t *out) {
     uint8_t level    = 0u;
     uint8_t driven   = 0u;
     for (uint8_t i = 0u; i < pin->count; i++) {
-        ora_gpio_info_t info = { (uint8_t)sizeof(ora_gpio_info_t), 0u, 0u, 0u };
+        ora_gpio_info_t info = { (uint8_t)sizeof(ora_gpio_info_t), 0u, 0u, 0u, 0u };
         if (s_gpio_query(pin->gpio[i], &info) != ORA_RESULT_OK) {
             return;
         }

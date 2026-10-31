@@ -46,8 +46,8 @@ const uint32_t version_str_len = sizeof(ONEROM_VERSION_STRING);
 
 // Indexed by rp235x_variant_t, gives the maximum GPIO number for that variant.
 const uint8_t max_gpios[2] = {
-    48,
-    30
+    RP2350B_GPIO_COUNT,
+    RP2350A_GPIO_COUNT
 };
 
 // Algorithm length arrays

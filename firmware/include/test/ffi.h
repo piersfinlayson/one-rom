@@ -30,6 +30,10 @@ void ffi_set_dma_channel_claims(uint16_t claims);
 uint8_t ffi_hw_claims(void);
 void ffi_set_hw_claims(uint8_t claims);
 
+// The GPIO claims in runtime info, bit N for GPIO N.
+uint64_t ffi_gpio_claims(void);
+void ffi_set_gpio_claims(uint64_t claims);
+
 // The generation recorded in the metadata header, and a way to change it.
 //
 // On a device the two differ routinely - see firmware/src/utils.c.  A host

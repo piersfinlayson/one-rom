@@ -774,7 +774,7 @@ pub struct ControlPinArgs {
     #[arg(long, value_name = "STATE", requires = "hold")]
     pub then: Option<GpioState>,
 
-    /// Drive the GPIO even though One ROM is using it for serving.
+    /// Drive the GPIO even though One ROM or a plugin is using it.
     #[arg(long, short)]
     pub force: bool,
 }

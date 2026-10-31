@@ -36,8 +36,8 @@ use crate::picobootx::{
     GpioQueryArgs, ONEROM_CAPS_LEN, ONEROM_CMD_ARGS_LEN, ONEROM_CMD_GET_CAPS,
     ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_LED_QUERY, ONEROM_CMD_SET_LED,
     ONEROM_CMD_SET_STANDBY, ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET,
-    ONEROM_FEAT_LED_ARGS, ONEROM_FEAT_STANDBY, ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
-    SetStandbyArgs,
+    ONEROM_FEAT_GPIO_USES, ONEROM_FEAT_LED_ARGS, ONEROM_FEAT_STANDBY, ONEROM_LED_STATE_LEN,
+    ONEROM_MAGIC, PICOBOOT_DIR_IN, SetStandbyArgs,
 };
 use crate::{Device, DeviceState, Firmware, LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET, Options};
 
@@ -1563,7 +1563,7 @@ pub async fn gpio_query(
         failure => cmd_error("GPIO_QUERY", failure),
     })?;
 
-    let entries = GpioEntry::decode_all(&data)?;
+    let entries = GpioEntry::decode_all(&data, caps.has_feature(ONEROM_FEAT_GPIO_USES))?;
     if entries.len() != count as usize {
         return Err(Error::PicobootxDecode(format!(
             "GPIO_QUERY returned {} entries for GPIO{first_gpio}, expected {count}",

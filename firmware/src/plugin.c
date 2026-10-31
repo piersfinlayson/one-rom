@@ -1579,11 +1579,15 @@ static uint8_t ora_gpio_serving_use(uint8_t gpio) {
     return use;
 }
 
-// Returns what serving uses another GPIO wired to gpio's X pin for, as an
-// ora_gpio_use_t.  ORA_GPIO_USE_FREE where gpio isn't wired to an X pin, or
-// serving doesn't use the other GPIO.
-static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
+// The maximum number of GPIOs ora_gpio_x_pin_others() returns.
+#define MAX_X_PIN_OTHERS  (2 * (MAX_X_PIN_GPIOS - 1))
+
+// Fills others with the other GPIOs wired to gpio's X pin and returns how many
+// there are.  0 where gpio isn't wired to an X pin.
+static unsigned ora_gpio_x_pin_others(uint8_t gpio,
+                                      uint8_t others[MAX_X_PIN_OTHERS]) {
     const uint8_t *x_pins[] = { HW->gpio_x1, HW->gpio_x2 };
+    unsigned count = 0;
 
     for (unsigned ii = 0; ii < (sizeof(x_pins) / sizeof(x_pins[0])); ii++) {
         const uint8_t *x_pin = x_pins[ii];
@@ -1602,15 +1606,35 @@ static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
         for (unsigned jj = 0; jj < MAX_X_PIN_GPIOS; jj++) {
             uint8_t other = x_pin[jj];
             if ((other != gpio) && (other < MAX_GPIOS)) {
-                uint8_t use = ora_gpio_serving_use(other);
-                if (ora_gpio_use_is_busy(use)) {
-                    return use;
-                }
+                others[count++] = other;
             }
         }
     }
 
-    return ORA_GPIO_USE_FREE;
+    return count;
+}
+
+static uint8_t ora_gpio_claimed(uint8_t gpio) {
+    return (RUNTIME->gpio_claims[gpio / 8] >> (gpio % 8)) & 1u;
+}
+
+// Whether gpio, or another GPIO wired to its X pin, is claimed.
+static uint8_t ora_gpio_pin_claimed(uint8_t gpio,
+                                    const uint8_t *others,
+                                    unsigned num_others) {
+    uint8_t claimed = ora_gpio_claimed(gpio);
+    for (unsigned ii = 0; ii < num_others; ii++) {
+        claimed |= ora_gpio_claimed(others[ii]);
+    }
+    return claimed;
+}
+
+// A pin the board doesn't have is set to GPIO_NONE, which is never a valid GPIO.
+static uint8_t ora_gpio_is_system_pin(uint8_t gpio) {
+    return (gpio == HW->gpio_status) ||
+           (gpio == HW->gpio_neopixel) ||
+           (gpio == HW->gpio_vbus) ||
+           (gpio == HW->gpio_ext_flash_cs);
 }
 
 // Returns what One ROM is using gpio for, as an ora_gpio_use_t.  gpio must
@@ -1627,28 +1651,62 @@ static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
 // An X pin can be wired to two GPIOs, and serving reads it through one of
 // them.  Driving the other GPIO drives the same pin, so a GPIO One ROM doesn't
 // use is reported as what serving uses the other GPIO for.
+//
+// A GPIO One ROM doesn't otherwise use is reported as claimed if it, or the
+// other GPIO on its X pin, is claimed.  A GPIO whose input is forced is counted
+// as unused.
 static uint8_t ora_gpio_get_use(uint8_t gpio) {
     uint8_t use = ora_gpio_serving_use(gpio);
     if (ora_gpio_use_is_busy(use)) {
         return use;
     }
 
-    // System pins.  Each is GPIO_NONE when the board does not have it, and gpio
-    // is known to be less than MAX_GPIOS, so a direct comparison cannot match a
-    // missing pin.
-    if (gpio == HW->gpio_status ||
-        gpio == HW->gpio_neopixel ||
-        gpio == HW->gpio_vbus ||
-        gpio == HW->gpio_ext_flash_cs) {
+    if (ora_gpio_is_system_pin(gpio)) {
         return ORA_GPIO_USE_SYSTEM;
     }
 
-    uint8_t x_pin_use = ora_gpio_x_pin_use(gpio);
-    if (ora_gpio_use_is_busy(x_pin_use)) {
-        return x_pin_use;
+    uint8_t others[MAX_X_PIN_OTHERS];
+    unsigned num_others = ora_gpio_x_pin_others(gpio, others);
+    for (unsigned ii = 0; ii < num_others; ii++) {
+        uint8_t other_use = ora_gpio_serving_use(others[ii]);
+        if (ora_gpio_use_is_busy(other_use)) {
+            return other_use;
+        }
+    }
+
+    if (ora_gpio_pin_claimed(gpio, others, num_others)) {
+        return ORA_GPIO_USE_PLUGIN;
     }
 
     return use;
+}
+
+// Returns every ora_gpio_use_t that applies to gpio using bit N for use N.
+// gpio must already have been range checked before calling this function.
+static uint32_t ora_gpio_get_uses(uint8_t gpio) {
+    uint32_t uses = 0;
+
+    uint8_t use = ora_gpio_serving_use(gpio);
+    if (use != ORA_GPIO_USE_FREE) {
+        uses |= 1u << use;
+    }
+    if (ora_gpio_is_system_pin(gpio)) {
+        uses |= 1u << ORA_GPIO_USE_SYSTEM;
+    }
+
+    uint8_t others[MAX_X_PIN_OTHERS];
+    unsigned num_others = ora_gpio_x_pin_others(gpio, others);
+    for (unsigned ii = 0; ii < num_others; ii++) {
+        uint8_t other_use = ora_gpio_serving_use(others[ii]);
+        if (ora_gpio_use_is_busy(other_use)) {
+            uses |= 1u << other_use;
+        }
+    }
+    if (ora_gpio_pin_claimed(gpio, others, num_others)) {
+        uses |= 1u << ORA_GPIO_USE_PLUGIN;
+    }
+
+    return uses;
 }
 
 ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
@@ -1723,6 +1781,7 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
     ora_gpio_info_t info;
     info.size = caller_size;
     info.use = ora_gpio_get_use(gpio);
+    info.uses = ora_gpio_get_uses(gpio);
 #if !defined(TEST_BUILD)
     // One read of GPIOx_STATUS rather than one per field.  The other core's
     // plugin can call ora_gpio_set at any point, so two reads can report a
@@ -2324,6 +2383,29 @@ ora_result_t ora_claim_uart(uint32_t uart, uint32_t flags) {
     return result;
 }
 
+STATIC_ASSERT(sizeof(RUNTIME->gpio_claims) * 8 == RP2350B_GPIO_COUNT,
+              "One claim bit per GPIO");
+
+ora_result_t ora_claim_gpio(uint32_t gpio, uint32_t flags) {
+    ora_result_t result;
+
+    if ((gpio >= MAX_GPIOS) || (flags != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // A claimed GPIO is ORA_GPIO_USE_PLUGIN, which counts as busy.
+    uint32_t primask = hw_claim_lock();
+    if (ora_gpio_use_is_busy(ora_gpio_get_use((uint8_t)gpio))) {
+        result = ORA_RESULT_IN_USE;
+    } else {
+        RUNTIME->gpio_claims[gpio / 8] |= (uint8_t)(1u << (gpio % 8));
+        result = ORA_RESULT_OK;
+    }
+    hw_claim_unlock(primask);
+
+    return result;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -2474,6 +2556,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_claim_dma_channel;
         case ORA_ID_CLAIM_UART:
             return ora_claim_uart;
+        case ORA_ID_CLAIM_GPIO:
+            return ora_claim_gpio;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:

@@ -343,6 +343,10 @@ fn describe_use(gpio_use: GpioUse, standby: bool) -> (&'static str, &'static str
             "Driving it will disturb whatever the board uses it for.",
         ),
         GpioUse::InputForced => ("ROM serving ignores it", ""),
+        GpioUse::Plugin => (
+            "a plugin has claimed it",
+            "Driving it will disturb whatever the plugin uses it for.",
+        ),
     }
 }
 
@@ -478,7 +482,7 @@ async fn vet_gpio(options: &Options, req: &DriveRequest<'_>) -> Result<Option<Ca
             return Err(gpio_in_use(&name, gpio_use, standby, req.force_hint));
         }
         let (doing, consequence) = describe_use(gpio_use, standby);
-        println!("Warning: {name} is in use by One ROM: {doing}.");
+        println!("Warning: {name} is in use: {doing}.");
         println!("  {consequence}");
     }
 
@@ -1336,5 +1340,6 @@ mod tests {
         assert!(needs_force(GpioUse::ServingRead));
         assert!(needs_force(GpioUse::ServingDriven));
         assert!(needs_force(GpioUse::SystemPin));
+        assert!(needs_force(GpioUse::Plugin));
     }
 }

@@ -195,6 +195,21 @@ fn add_gpio_set_x_pin(report: &mut ApiReport, emulator: &Emulator, board: Board)
     }
 }
 
+/// Run `test_gpio_claims_x_pin` where the board has a dual-wired X pin.
+fn add_gpio_claims_x_pin(report: &mut ApiReport, emulator: &Emulator, board: Board) {
+    if tests::claim::dual_wired_x_pins(board).is_empty() {
+        report.skip(
+            "gpio_claims_x_pin",
+            "the board has no X pin wired to two GPIOs",
+        );
+    } else {
+        report.add(
+            "gpio_claims_x_pin",
+            tests::claim::test_gpio_claims_x_pin(emulator, board),
+        );
+    }
+}
+
 /// Boot the firmware with chip set `set_idx` selected and run only the GPIO
 /// classification test against it.
 ///
@@ -220,6 +235,7 @@ fn run_slot_gpio_only(
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
     add_gpio_set_x_pin(report, &emulator, board);
+    add_gpio_claims_x_pin(report, &emulator, board);
     report.skip(
         "serving and slot tests",
         "serving of a Multi/Banked slot is covered by the pio-tester",
@@ -375,6 +391,10 @@ fn run_slot(
         "lookup_coverage",
         tests::lookup::test_lookup_coverage(&emulator, base_dir),
     );
+    report.add(
+        "gpio_uses_fit_usb_entry",
+        tests::gpio::test_gpio_uses_fit_usb_entry(base_dir),
+    );
 
     // Plugin context
     report.add(
@@ -458,6 +478,11 @@ fn run_slot(
         "is_pin_output",
         tests::gpio::test_is_pin_output(&emulator, board),
     );
+    report.add(
+        "gpio_claims",
+        tests::claim::test_gpio_claims(&emulator, board),
+    );
+    add_gpio_claims_x_pin(report, &emulator, board);
 
     // Mapping
     report.add(

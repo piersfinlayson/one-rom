@@ -858,6 +858,13 @@ typedef enum {
      */
     ORA_ID_CLAIM_UART                = 0x00000048,
 
+    /**
+     * @brief Claim a GPIO
+     * @sa ora_claim_gpio_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_CLAIM_GPIO                = 0x00000049,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1483,6 +1490,7 @@ typedef enum {
      * @brief The hardware is already claimed
      * @sa ora_claim_dma_channel_fn_t
      * @sa ora_claim_uart_fn_t
+     * @sa ora_claim_gpio_fn_t
      * @since firmware 0.8.1
      */
     ORA_RESULT_IN_USE = 16,
@@ -2756,18 +2764,19 @@ typedef enum {
 } ora_gpio_state_t;
 
 /**
- * @brief What One ROM itself is using a GPIO for
+ * @brief What One ROM is using a GPIO for
  * @since firmware 0.7.1
  *
- * Reports only what the firmware has claimed the GPIO for: the serving set of
- * the currently active ROM slot, plus the board's own system pins. It says
- * nothing about what is attached to the pin electrically - whether a jumper is
- * fitted, what the far end of a wire is connected to, or whether something else
- * is driving the net. That remains the user's responsibility.
+ * Reports what the GPIO is currently being used for.
+ *
+ * It doesn't report what is attached to the pin electrically - whether a jumper
+ * is fitted, what the far end of a wire is connected to, or whether something
+ * else is driving the net.
  *
  * An X pin can be wired to two GPIOs, and driving either drives the pin. From
- * firmware 0.8.0 a GPIO One ROM doesn't use reports what serving uses the
- * other GPIO on its X pin for. Earlier firmware reports each GPIO's own use.
+ * firmware 0.8.0 a GPIO One ROM doesn't use reports the same usage as the
+ * other GPIO connected to the same X pin. Earlier firmware reports only the
+ * GPIO's own use.
  *
  * Serving reads its address, chip select and /BYTE pins as SIO inputs with the
  * output driver disabled, so they are indistinguishable from unused pins by
@@ -2828,6 +2837,20 @@ typedef enum {
      * @since firmware 0.8.0
      */
     ORA_GPIO_USE_INPUT_FORCED   = 4,
+
+    /**
+     * @brief Claimed by a plugin
+     *
+     * The GPIO (or the other GPIO on an X pin connected to two GPIOs) has
+     * been claimed with @ref ora_claim_gpio_fn_t.  An input forced GPIO can
+     * be claimed.  @ref ora_gpio_info_t::use is then ORA_GPIO_USE_PLUGIN and
+     * @ref ora_gpio_info_t::uses has both ORA_GPIO_USE_INPUT_FORCED and
+     * ORA_GPIO_USE_PLUGIN set.
+     *
+     * @sa ora_gpio_set_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_GPIO_USE_PLUGIN         = 5,
 } ora_gpio_use_t;
 
 /**
@@ -2868,8 +2891,19 @@ typedef struct {
 
     /** @brief 1 if the pin's output driver is currently enabled, 0 if not */
     uint8_t is_output;
+
+    /**
+     * @brief Every use that applies to this GPIO
+     *
+     * Bit N is set when @ref ora_gpio_use_t value N applies, so a free GPIO
+     * is reported as 0.  Whether @ref ora_gpio_set_fn_t requires
+     * @ref ORA_GPIO_FLAG_FORCE depends on @ref use.
+     *
+     * @since firmware 0.8.1
+     */
+    uint32_t uses;
 } ora_gpio_info_t;
-_Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
+_Static_assert(sizeof(ora_gpio_info_t) == 8, "ora_gpio_info_t must be 8 bytes");
 
 /**
  * @brief Drive a GPIO high or low, or release it to high impedance
@@ -2880,9 +2914,10 @@ _Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
  * is instantaneous: it starts no timer and schedules nothing. A caller wanting
  * a bounded assertion must time the release itself.
  *
- * For a GPIO in use by One ROM - ORA_GPIO_USE_SERVING_READ,
- * ORA_GPIO_USE_SERVING_DRIVEN or ORA_GPIO_USE_SYSTEM - the call returns
- * ORA_RESULT_GPIO_IN_USE unless @ref ORA_GPIO_FLAG_FORCE is set.
+ * For a GPIO in use by One ROM (ORA_GPIO_USE_SERVING_READ,
+ * ORA_GPIO_USE_SERVING_DRIVEN or ORA_GPIO_USE_SYSTEM) or claimed by a plugin
+ * (ORA_GPIO_USE_PLUGIN), the call returns ORA_RESULT_GPIO_IN_USE unless
+ * @ref ORA_GPIO_FLAG_FORCE is set.
  *
  * How recoverable a forced pin is is exactly what @ref ora_gpio_use_t reports:
  *
@@ -2904,10 +2939,10 @@ _Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
  * @param state  The state to place the GPIO in. @sa ora_gpio_state_t
  * @param flags  Behavioural flags. Pass 0 for default behaviour.
  *               @sa ORA_GPIO_FLAG_FORCE
- * @return ORA_RESULT_OK on success; ORA_RESULT_GPIO_IN_USE if the GPIO is in
- *         use by One ROM and ORA_GPIO_FLAG_FORCE was not set;
- *         ORA_RESULT_INVALID_ARG if @p gpio is out of range or @p state is not
- *         a valid @ref ora_gpio_state_t
+ * @return ORA_RESULT_OK on success.  ORA_RESULT_GPIO_IN_USE if the GPIO is in
+ *         use by One ROM or claimed by a plugin and ORA_GPIO_FLAG_FORCE was not
+ *         set.  ORA_RESULT_INVALID_ARG if @p gpio is out of range or @p state
+ *         is not a valid @ref ora_gpio_state_t.
  */
 typedef ora_result_t (*ora_gpio_set_fn_t)(
     uint8_t  gpio,
@@ -2923,6 +2958,10 @@ typedef ora_result_t (*ora_gpio_set_fn_t)(
  * Reports the GPIO's use, its level and whether its output driver is enabled.
  * All three describe the same instant. There is deliberately no bulk form - a
  * caller wanting the whole device loops over this call.
+ *
+ * From firmware 0.8.1 a GPIO a plugin has claimed with @ref ora_claim_gpio_fn_t
+ * is reported as ORA_GPIO_USE_PLUGIN unless serving or a system pin uses it.
+ * @ref ora_gpio_info_t::uses lists every use that applies.
  *
  * The caller must set @p info_out->size to its own sizeof(ora_gpio_info_t)
  * before calling; see @ref ora_gpio_info_t.
@@ -3717,6 +3756,29 @@ typedef ora_result_t (*ora_claim_dma_channel_fn_t)(uint32_t *channel,
  * @retval ORA_RESULT_INVALID_ARG @p uart isn't 0 or 1, or @p flags isn't 0
  */
 typedef ora_result_t (*ora_claim_uart_fn_t)(uint32_t uart, uint32_t flags);
+
+/**
+ * @brief Claim a GPIO
+ * @sa ORA_ID_CLAIM_GPIO
+ * @since firmware 0.8.1
+ *
+ * A GPIO claim lasts until One ROM reboots. A claimed GPIO is reported as
+ * ORA_GPIO_USE_PLUGIN by @ref ora_gpio_query_fn_t, and @ref ora_gpio_set_fn_t
+ * will only allow it to be driven with @ref ORA_GPIO_FLAG_FORCE.  This includes
+ * the plugin that claimed it.
+ *
+ * An X pin can be wired to two GPIOs and claiming either GPIO also claims the
+ * other.
+ *
+ * @param gpio   The GPIO to claim, less than the running variant's GPIO count
+ * @param flags  Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK          Claimed successfully
+ * @retval ORA_RESULT_IN_USE      The GPIO, or the other GPIO on its X pin, is
+ *                                already claimed, or serving or a system pin
+ *                                uses it
+ * @retval ORA_RESULT_INVALID_ARG @p gpio is out of range, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_claim_gpio_fn_t)(uint32_t gpio, uint32_t flags);
 
 /**
  * @brief Get a commissioning value

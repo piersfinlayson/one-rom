@@ -57,6 +57,7 @@ In detail:
     - USB DPRAM can be read over picobootx.
     - REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
     - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
+    - The GPIO query reply includes every use of each GPIO.
 - Plugin APIs:
   - New: `ora_reboot()` can be used to reboot One ROM.
   - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
@@ -71,6 +72,8 @@ In detail:
   - New: log channels 2 and 3 when using plugin header fields `channel_2_size` and `channel_3_size`.
   - New: `ora_get_peer_data()` retrieves the other plugin's `peer_data`.
   - New: a plugin can claim a DMA channel with `ora_claim_dma_channel()` and a UART with `ora_claim_uart()`.
+  - New: a plugin can claim a GPIO with `ora_claim_gpio()`, reported as `ORA_GPIO_USE_PLUGIN`.
+  - New: `ora_gpio_info_t::uses`, a bitfield of every `ora_gpio_use_t` that applies to a GPIO.
   - New: the firmware starts clk_peri for the UARTs and SPIs before starting the plugins, and a plugin can read its frequency with `ORA_METADATA_KEY_CLK_PERI_HZ`.
   - Deprecated: `ORA_ID_ALLOC` and `ORA_ID_GET_FREE_MEM`, which never allocated memory.  Use `ORA_ID_ALLOC_MEM`.
 - Other:

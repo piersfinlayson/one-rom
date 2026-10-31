@@ -315,6 +315,8 @@ fn main() {
         .allowlist_function("ffi_set_dma_channel_claims")
         .allowlist_function("ffi_hw_claims")
         .allowlist_function("ffi_set_hw_claims")
+        .allowlist_function("ffi_gpio_claims")
+        .allowlist_function("ffi_set_gpio_claims")
         .allowlist_var("ORA_DMA_CHANNEL_ANY")
         .allowlist_var("ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT")
         .allowlist_function("otp_commissioning_value")

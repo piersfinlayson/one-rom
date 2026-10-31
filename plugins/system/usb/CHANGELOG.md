@@ -18,6 +18,8 @@ REBOOT2's delay now starts when the command is received instead of after the hos
 
 If the reboot fails, REBOOT2 now returns an error instead of success.
 
+The GPIO query reply includes all uses of every GPIO.  This feature has its own capability bit, and the extension version is now 1.2.
+
 Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
 
 ## [0.3.2] - 2026-10-06

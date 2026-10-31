@@ -808,18 +808,27 @@ pub async fn cmd_peek_memory(options: &Options, args: &InspectPeekMemoryArgs) ->
 /// recognise is shown raw rather than guessed at.
 ///
 /// The device reports a reserved pin as `free` or `input forced`, and a data
-/// pin in standby as serving driven.
+/// pin in standby as serving driven. Every use of a GPIO with more than one is
+/// listed.
 fn gpio_use_label(entry: &GpioEntry, reserved: bool, standby: bool) -> String {
-    match entry.gpio_use() {
-        Some(GpioUse::Free | GpioUse::InputForced) if reserved => "reserved".to_string(),
-        Some(GpioUse::Free) => "free".to_string(),
-        Some(GpioUse::ServingRead) => "serving (read)".to_string(),
-        Some(GpioUse::ServingDriven) if standby => "standby".to_string(),
-        Some(GpioUse::ServingDriven) => "serving (driven)".to_string(),
-        Some(GpioUse::SystemPin) => "system".to_string(),
-        Some(GpioUse::InputForced) => "input forced".to_string(),
-        None => format!("unknown ({})", entry.gpio_use_raw),
+    let mut labels: Vec<String> = Vec::new();
+    for gpio_use in entry.gpio_uses() {
+        let label = match gpio_use {
+            Ok(GpioUse::Free | GpioUse::InputForced) if reserved => "reserved".to_string(),
+            Ok(GpioUse::Free) => "free".to_string(),
+            Ok(GpioUse::ServingRead) => "serving (read)".to_string(),
+            Ok(GpioUse::ServingDriven) if standby => "standby".to_string(),
+            Ok(GpioUse::ServingDriven) => "serving (driven)".to_string(),
+            Ok(GpioUse::SystemPin) => "system".to_string(),
+            Ok(GpioUse::InputForced) => "input forced".to_string(),
+            Ok(GpioUse::Plugin) => "plugin".to_string(),
+            Err(raw) => format!("unknown ({raw})"),
+        };
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
     }
+    labels.join(", ")
 }
 
 /// What the table shows when a column has nothing to say.
@@ -1395,14 +1404,15 @@ mod tests {
     }
 
     /// A device's worth of entries, using the same `use` category throughout so
-    /// a test can pick out the column it cares about. The wire's fourth byte is
-    /// reserved and is not represented here.
+    /// a test can pick out the column it cares about. They have no uses, like
+    /// entries from a device without `ONEROM_FEAT_GPIO_USES`.
     fn entries(count: u8, gpio_use: u8) -> Vec<GpioEntry> {
         (0..count)
             .map(|gpio| GpioEntry {
                 gpio_use_raw: gpio_use,
                 level: u8::from(gpio.is_multiple_of(2)),
                 is_output: u8::from(gpio.is_multiple_of(3)),
+                uses: None,
             })
             .collect()
     }
@@ -1799,6 +1809,7 @@ mod tests {
         assert_eq!(use_of(GpioUse::Free, true), "reserved");
         assert_eq!(use_of(GpioUse::InputForced, true), "reserved");
         assert_eq!(use_of(GpioUse::ServingRead, true), "serving (read)");
+        assert_eq!(use_of(GpioUse::Plugin, true), "plugin");
         assert_eq!(use_of(GpioUse::InputForced, false), "input forced");
     }
 
@@ -1887,6 +1898,7 @@ mod tests {
                         },
                         level: u8::from(gpio.is_multiple_of(2)),
                         is_output: u8::from(driven.contains(&gpio)),
+                        uses: None,
                     })
                     .collect()
             };

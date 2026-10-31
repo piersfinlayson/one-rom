@@ -51,12 +51,13 @@ pub const CMD_SET_STANDBY: u8 = 0x06;
 // The capabilities response.
 const CAPS_LEN: u32 = 32;
 const EXT_MAJOR: u8 = 1;
-const EXT_MINOR: u8 = 1;
+const EXT_MINOR: u8 = 2;
 const FEAT_GPIO_SET: u32 = 1 << 0;
 const FEAT_GPIO_QUERY: u32 = 1 << 1;
 const FEAT_GPIO_HOLD: u32 = 1 << 2;
 const FEAT_LED_ARGS: u32 = 1 << 3;
 pub const FEAT_STANDBY: u32 = 1 << 4;
+const FEAT_GPIO_USES: u32 = 1 << 5;
 const MAX_HOLD_MS: u32 = 60000;
 
 // A GPIO query entry, and the longest transfer a One ROM command may ask for.
@@ -693,6 +694,17 @@ fn a_query_produces_whole_entries(dev: &mut Device, ctx: &Ctx) -> Result<Outcome
                 entry[0], info.gpio_use
             ));
         }
+        // The entry holds bits 0 to 7 of the firmware's uses.
+        if u32::from(entry[3]) != info.uses & 0xFF {
+            return Err(format!(
+                "GPIO {index}'s entry has uses 0x{:02X}, not the firmware's 0x{:02X}",
+                entry[3], info.uses
+            ));
+        }
+    }
+    let caps = caps(dev)?;
+    if u32_at(&caps, 4) & FEAT_GPIO_USES == 0 {
+        return Err("the capabilities don't have FEAT_GPIO_USES".to_string());
     }
     let _ = ctx;
 

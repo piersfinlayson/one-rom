@@ -567,7 +567,7 @@ pub enum Error {
     GpioOutOfRange(u8, u8),
 
     #[error(
-        "GPIO{gpio} is in use by One ROM.\n  Use --force to drive it anyway - see '{inspect}' for what it is doing.",
+        "GPIO{gpio} is in use.\n  Use --force to drive it anyway - see '{inspect}' for its use.",
         gpio = .0,
         inspect = hint::INSPECT_GPIO
     )]
@@ -588,7 +588,7 @@ pub enum Error {
     )]
     DeviceNotRunning(String),
 
-    #[error("{0} is in use by One ROM: {1}.\n  {2}\n  {3}")]
+    #[error("{0} is in use: {1}.\n  {2}\n  {3}")]
     GpioInUseNamed(String, String, String, String),
 
     #[error(
