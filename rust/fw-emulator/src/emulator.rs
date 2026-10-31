@@ -81,6 +81,7 @@ pub enum OraResult {
     LogChannelInUse,
     LogFull,
     NotReady,
+    InUse,
     /// A code this binding does not know. Carries the C type's own width,
     /// which `-fshort-enums` makes one byte.
     Unknown(ffi::ora_result_t),
@@ -105,6 +106,7 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_LOG_CHANNEL_IN_USE => Self::LogChannelInUse,
             ffi::ora_result_t_ORA_RESULT_LOG_FULL => Self::LogFull,
             ffi::ora_result_t_ORA_RESULT_NOT_READY => Self::NotReady,
+            ffi::ora_result_t_ORA_RESULT_IN_USE => Self::InUse,
             other => Self::Unknown(other),
         }
     }
@@ -693,6 +695,24 @@ impl Emulator {
     /// bits.
     pub fn log_channel_claims(&self) -> u16 {
         unsafe { ffi::ffi_log_channel_claims() }
+    }
+
+    /// Runtime info's `dma_channel_claims`, bit N for channel N.
+    pub fn dma_channel_claims(&self) -> u16 {
+        unsafe { ffi::ffi_dma_channel_claims() }
+    }
+
+    pub fn set_dma_channel_claims(&self, claims: u16) {
+        unsafe { ffi::ffi_set_dma_channel_claims(claims) };
+    }
+
+    /// Runtime info's `hw_claims`, as `onerom_hw_claim_t` bits.
+    pub fn hw_claims(&self) -> u8 {
+        unsafe { ffi::ffi_hw_claims() }
+    }
+
+    pub fn set_hw_claims(&self, claims: u8) {
+        unsafe { ffi::ffi_set_hw_claims(claims) };
     }
 
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
@@ -1935,11 +1955,6 @@ impl Emulator {
         )
     }
 
-    /// `ORA_ID_ALLOC_MEM`, returning the result and the address.  An address
-    /// the call doesn't write reads `u32::MAX`.
-    ///
-    /// The request's size field is passed unchanged, so a test can pass a size
-    /// below the minimum.
     /// `ORA_ID_GET_PEER_DATA`, as the plugin [`Self::set_calling_plugin`]
     /// last set.
     pub fn get_peer_data(&self) -> Option<[u32; 8]> {
@@ -1951,6 +1966,11 @@ impl Emulator {
         (!ptr.is_null()).then(|| unsafe { *ptr.cast::<[u32; 8]>() })
     }
 
+    /// `ORA_ID_ALLOC_MEM`, returning the result and the address.  An address
+    /// the call doesn't write reads `u32::MAX`.
+    ///
+    /// The request's size field is passed unchanged, so a test can pass a size
+    /// below the minimum.
     pub fn alloc_mem(&self, req: &ffi::ora_alloc_request_t) -> (OraResult, u32) {
         let mut addr = u32::MAX;
         let r = OraResult::from(plugin_call!(
@@ -1985,6 +2005,39 @@ impl Emulator {
             ffi::ora_alloc_mem_fn_t,
             req_ptr,
             addr_out
+        ))
+    }
+
+    /// `ORA_ID_CLAIM_DMA_CHANNEL`, passing `channel` in and returning what the
+    /// call leaves in it.
+    pub fn claim_dma_channel(&self, channel: u32, flags: u32) -> (OraResult, u32) {
+        let mut channel = channel;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_DMA_CHANNEL,
+            ffi::ora_claim_dma_channel_fn_t,
+            &mut channel as *mut u32,
+            flags
+        ));
+        (r, channel)
+    }
+
+    /// `ORA_ID_CLAIM_DMA_CHANNEL` with a NULL channel.
+    pub fn claim_dma_channel_null(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_DMA_CHANNEL,
+            ffi::ora_claim_dma_channel_fn_t,
+            std::ptr::null_mut(),
+            0
+        ))
+    }
+
+    /// `ORA_ID_CLAIM_UART`.
+    pub fn claim_uart(&self, uart: u32, flags: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_UART,
+            ffi::ora_claim_uart_fn_t,
+            uart,
+            flags
         ))
     }
 

@@ -39,6 +39,7 @@ In detail:
   - `x` reads a chip continuously at MHz rates.
   - `d` drives a chip's data lines as a square wave, with the chip deselected.
   - `H` emulates a host's bus timing, including chip select glitches.
+  - `u` sends and receives serial traffic on a pair of header pins.
   - Fix: Lab no longer hangs reading a chip with fixed chip selects, for example the HM7641.
   - Fix: selecting an unsupported chip type no longer hangs Lab.
   - `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
@@ -69,6 +70,8 @@ In detail:
   - New: `ora_alloc_mem()` allocates memory from a pool shared by both plugins.
   - New: log channels 2 and 3 when using plugin header fields `channel_2_size` and `channel_3_size`.
   - New: `ora_get_peer_data()` retrieves the other plugin's `peer_data`.
+  - New: a plugin can claim a DMA channel with `ora_claim_dma_channel()` and a UART with `ora_claim_uart()`.
+  - New: the firmware starts clk_peri for the UARTs and SPIs before starting the plugins, and a plugin can read its frequency with `ORA_METADATA_KEY_CLK_PERI_HZ`.
   - Deprecated: `ORA_ID_ALLOC` and `ORA_ID_GET_FREE_MEM`, which never allocated memory.  Use `ORA_ID_ALLOC_MEM`.
 - Other:
   - Added manufacturer contact details to commissioning signing key tables.

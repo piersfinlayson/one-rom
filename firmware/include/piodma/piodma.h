@@ -39,4 +39,11 @@
 // Used for address monitor to send addresses to CPU, for RBCP
 #define DMA_CH_ADDR_MONITOR         2
 
+// Used for copying ROM images to RAM
+#define DMA_COPY_CHANNEL            15
+
+// The DMA channels the firmware uses.  Bit N is channel N.  SRAM emulation
+// (pioram.c) uses channels 0 to 3 (0xF).
+#define DMA_FIRMWARE_CHANNELS       (0x000Fu | (1u << DMA_COPY_CHANNEL))
+
 #endif // PIODMA_H

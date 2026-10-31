@@ -7,6 +7,7 @@
 #include "include.h"
 
 #include "plugin.h"
+#include "piodma/dmareg.h"
 #include <stdio.h>
 
 STATIC_ASSERT(ORA_PLUGIN_MAGIC == PLUGIN_MAGIC, "plugin magic");
@@ -1241,6 +1242,9 @@ ora_result_t ora_get_metadata_str(ora_metadata_key_t key, const char **out) {
     }
 }
 
+// clk_peri's frequency set up by setup_clk_peri() in rp235x.c.
+#define CLK_PERI_HZ  48000000u
+
 ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
     if (out == NULL) {
         return ORA_RESULT_INVALID_ARG;
@@ -1265,6 +1269,9 @@ ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
             *out = (key == ORA_METADATA_KEY_FLASH_CS0_SIZE) ? cs0 : cs1;
             return ORA_RESULT_OK;
         }
+        case ORA_METADATA_KEY_CLK_PERI_HZ:
+            *out = CLK_PERI_HZ;
+            return ORA_RESULT_OK;
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
@@ -2234,6 +2241,89 @@ ora_result_t ora_set_standby(uint8_t standby, uint32_t flags) {
     return ORA_RESULT_OK;
 }
 
+// ---------------------------------------------------------------------------
+// Hardware claims
+// ---------------------------------------------------------------------------
+
+STATIC_ASSERT(DMA_CHANNEL_COUNT == (sizeof(RUNTIME->dma_channel_claims) * 8),
+              "One claim bit per DMA channel");
+STATIC_ASSERT(HW_CLAIM_UART_1 == (HW_CLAIM_UART_0 << 1), "UART claim bit layout");
+STATIC_ASSERT(UART_COUNT == 2, "One claim bit per UART");
+
+// Both plugins can claim hardware so a spinlock is used to guard the claims
+// between cores.  See ora_log_lock() for why interrupts are masked while it is
+// held.
+#if defined(TEST_BUILD)
+static uint32_t hw_claim_lock(void) { return 0u; }
+static void hw_claim_unlock(uint32_t primask) { (void)primask; }
+#else
+static uint32_t hw_claim_lock(void) {
+    uint32_t primask;
+
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+
+    while (SIO_SPINLOCK(SPINLOCK_HW_CLAIM) == 0u)
+        ;
+    __asm volatile ("dmb" ::: "memory");
+
+    return primask;
+}
+
+static void hw_claim_unlock(uint32_t primask) {
+    __asm volatile ("dmb" ::: "memory");
+    SIO_SPINLOCK(SPINLOCK_HW_CLAIM) = 0u;
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+}
+#endif // TEST_BUILD
+
+ora_result_t ora_claim_dma_channel(uint32_t *channel, uint32_t flags) {
+    if ((channel == NULL) || (flags != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint32_t wanted = *channel;
+    if ((wanted != ORA_DMA_CHANNEL_ANY) && (wanted >= DMA_CHANNEL_COUNT)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t candidates = (wanted == ORA_DMA_CHANNEL_ANY)
+        ? ((1u << DMA_CHANNEL_COUNT) - 1u) : (1u << wanted);
+
+    uint32_t primask = hw_claim_lock();
+    uint32_t free = candidates & ~(uint32_t)RUNTIME->dma_channel_claims;
+    if (free != 0u) {
+        RUNTIME->dma_channel_claims |= (uint16_t)(free & -free);
+    }
+    hw_claim_unlock(primask);
+
+    if (free == 0u) {
+        return ORA_RESULT_IN_USE;
+    }
+    *channel = (uint32_t)__builtin_ctz(free);
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_claim_uart(uint32_t uart, uint32_t flags) {
+    ora_result_t result;
+
+    if ((uart >= UART_COUNT) || (flags != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint8_t bit = (uint8_t)(HW_CLAIM_UART_0 << uart);
+    uint32_t primask = hw_claim_lock();
+    if (RUNTIME->hw_claims & bit) {
+        result = ORA_RESULT_IN_USE;
+    } else {
+        RUNTIME->hw_claims |= bit;
+        result = ORA_RESULT_OK;
+    }
+    hw_claim_unlock(primask);
+
+    return result;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -2380,6 +2470,10 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_alloc_mem;
         case ORA_ID_GET_PEER_DATA:
             return ora_get_peer_data;
+        case ORA_ID_CLAIM_DMA_CHANNEL:
+            return ora_claim_dma_channel;
+        case ORA_ID_CLAIM_UART:
+            return ora_claim_uart;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -2691,11 +2785,13 @@ void ora_launch_plugins(void) {
     // Plugin-facing setup, in the window where core 0 is in firmware code and
     // core 1 is not yet running.  OTP becomes read-only, so no plugin can write
     // it.  The timer starts here so a plugin reading ora_get_plugin_uptime_ms()
-    // sees time measured from just before launch.
+    // sees time measured from just before launch.  clk_peri is started here
+    // rather than earlier so it doesn't delay serving.
     otp_lock();
     onerom_rtt_plugins_init();
     DEBUG("Init timer");
     setup_timer0();
+    setup_clk_peri();
 
     uint8_t launched_plugins = 0;
     uint8_t entry_flags = plugin_entry_flags();

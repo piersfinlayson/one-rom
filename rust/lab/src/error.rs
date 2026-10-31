@@ -63,6 +63,25 @@ pub enum Error {
     HostTimeout,
     /// A host bus machine ran out of words mid-burst
     HostStall,
+    /// A pin that didn't parse
+    Pin(onerom_config::pin::PinError),
+    /// A pin the board doesn't have
+    PinResolve(onerom_config::pin::ResolveError),
+    /// A pin that isn't a UART TX pin
+    UartTxPin(onerom_config::pin::ResolvedPin),
+    /// A pin that isn't a UART RX pin
+    UartRxPin(onerom_config::pin::ResolvedPin),
+    /// TX and RX pins of different UARTs
+    UartPins(
+        onerom_config::pin::ResolvedPin,
+        crate::uart::UartId,
+        onerom_config::pin::ResolvedPin,
+        crate::uart::UartId,
+    ),
+    /// `u` is already running
+    UartRunning,
+    /// `U` with `u` not running
+    UartNotRunning,
 }
 
 impl From<crate::usb::Error> for Error {
@@ -118,6 +137,16 @@ impl fmt::Display for Error {
             }
             Self::HostTimeout => write!(f, "host bus read timed out"),
             Self::HostStall => write!(f, "host bus stalled"),
+            Self::Pin(e) => write!(f, "{e}"),
+            Self::PinResolve(e) => write!(f, "{e}"),
+            Self::UartTxPin(pin) => write!(f, "{pin} isn't a UART TX pin"),
+            Self::UartRxPin(pin) => write!(f, "{pin} isn't a UART RX pin"),
+            Self::UartPins(tx, tx_id, rx, rx_id) => write!(
+                f,
+                "TX {tx} is on {tx_id} and RX {rx} is on {rx_id} - both must be on one UART"
+            ),
+            Self::UartRunning => write!(f, "u is already running - use U to stop it"),
+            Self::UartNotRunning => write!(f, "u isn't running"),
         }
     }
 }

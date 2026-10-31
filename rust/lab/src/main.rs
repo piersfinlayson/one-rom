@@ -37,6 +37,7 @@ mod output;
 mod picoboot;
 mod rbcp;
 mod rom;
+mod uart;
 mod usb;
 
 use rom::CsPolarities;
@@ -105,6 +106,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let usb_device = usb::Usb::new(p.USB);
     usb::run(spawner, usb_device);
+    spawner.spawn(uart::check_task().unwrap());
 
     // Build the physical-pin → MCU GPIO map for this board
     let board = metadata::BAKED_BOARD;

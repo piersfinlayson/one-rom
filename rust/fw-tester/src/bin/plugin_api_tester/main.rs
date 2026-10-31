@@ -290,6 +290,10 @@ fn run_slot(
         tests::info::test_metadata_chip_id(&emulator),
     );
     report.add(
+        "metadata_clk_peri_hz",
+        tests::info::test_metadata_clk_peri_hz(&emulator),
+    );
+    report.add(
         "commissioning_value",
         tests::commissioning::test_commissioning_value(&emulator),
     );
@@ -335,6 +339,11 @@ fn run_slot(
     );
     report.add("alloc_mem", tests::platform::test_alloc_mem(&emulator));
     report.add("peer_data", tests::peer::test_peer_data(&emulator));
+    report.add(
+        "dma_channel_claims",
+        tests::claim::test_dma_channel_claims(&emulator),
+    );
+    report.add("uart_claims", tests::claim::test_uart_claims(&emulator));
     report.add(
         "peripheral_and_irq_calls",
         tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),

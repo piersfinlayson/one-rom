@@ -36,11 +36,12 @@ use crate::fast_read::{self, FastReader};
 use crate::host;
 use crate::rbcp::Commissioning;
 use crate::rom::RomReader;
+use crate::uart;
 use crate::usb;
 
 use super::super::serial_id;
 use super::parser::{self, Args, HostChoice};
-use super::{CsPolaritySetting, CsSettings, OutputFormat, ReadRange, SessionState};
+use super::{CsPolaritySetting, CsSettings, OutputFormat, ReadRange, SessionState, UartSettings};
 use super::{board_chip_names, default_chip_for_board, send_line};
 
 const CS_KEY: &str = "(0=active-low 1=active-high ?=auto)";
@@ -75,6 +76,8 @@ pub async fn dispatch(line: &str, state: &mut SessionState) -> Result<(), Error>
         'a' => cmd_batch(&mut args, state, true).await,
         'x' => cmd_fast_read(&mut args, state).await,
         'd' => cmd_drive(&mut args, state).await,
+        'u' => cmd_uart(&mut args, state).await,
+        'U' => cmd_uart_stop().await,
         'i' => cmd_chip_info(&mut args, state).await,
         'c' => cmd_set_chip_type(&mut args, state).await,
         'f' => cmd_set_format(&mut args, state).await,
@@ -375,6 +378,81 @@ fn drive_status(driver: &Driver, elapsed: Duration) -> String {
         driver.toggles % 1_000_000 / 100_000,
         centi_mhz / 100,
         centi_mhz % 100,
+    )
+}
+
+/// Send and receive on a UART until a key is pressed.
+async fn cmd_uart(args: &mut Args<'_>, state: &mut SessionState) -> Result<(), Error> {
+    let board = state.board.ok_or(Error::BoardNotSet)?;
+
+    let tx = parser::get_pin(
+        args.next_token(),
+        state.uart.tx,
+        "TX pin",
+        board,
+        &mut state.editor,
+    )
+    .await?;
+    let rx = parser::get_pin(
+        args.next_token(),
+        state.uart.rx,
+        "RX pin",
+        board,
+        &mut state.editor,
+    )
+    .await?;
+    let baud = parser::get_number(
+        args.next_token(),
+        state.uart.baud,
+        "Baud rate",
+        uart::baud_range(),
+        &mut state.editor,
+    )
+    .await?;
+    let mode = parser::get_uart_mode(args.next_token(), state.uart.mode, &mut state.editor).await?;
+
+    state.uart = UartSettings {
+        tx: tx.pin(),
+        rx: rx.pin(),
+        baud,
+        mode,
+    };
+    let id = uart::uart_for(tx, rx)?;
+
+    uart::start(id, tx.gpio(), rx.gpio(), baud, mode)?;
+
+    let action = match mode {
+        uart::Mode::Pattern => "Sending the pattern",
+        uart::Mode::Echo => "Echoing",
+    };
+    send_line(&format!(
+        "{action} on {id}, TX {tx}, RX {rx}, {baud} baud 8N1, in the background. Use U to stop."
+    ))
+    .await
+}
+
+/// Stop the traffic `u` started and display its counts.
+async fn cmd_uart_stop() -> Result<(), Error> {
+    let (counts, elapsed) = uart::stop().await?;
+    send_line("Stopped.").await?;
+    send_line(&uart_status(&counts, elapsed)).await?;
+    send_line("").await
+}
+
+fn uart_status(counts: &uart::Counts, elapsed: Duration) -> String {
+    let ms = elapsed.as_millis();
+    format!(
+        "  {}.{}s  sent {}  received {}  gaps {}  framing {}  parity {}  break {}  overrun {}  lost {}",
+        ms / 1000,
+        ms % 1000 / 100,
+        counts.sent,
+        counts.received,
+        counts.gaps,
+        counts.framing,
+        counts.parity,
+        counts.breaks,
+        counts.overruns,
+        counts.lost,
     )
 }
 

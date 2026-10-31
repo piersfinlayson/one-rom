@@ -81,6 +81,22 @@ uint16_t ffi_log_channel_claims(void) {
     return RUNTIME->log_channel_claims;
 }
 
+uint16_t ffi_dma_channel_claims(void) {
+    return RUNTIME->dma_channel_claims;
+}
+
+void ffi_set_dma_channel_claims(uint16_t claims) {
+    RUNTIME->dma_channel_claims = claims;
+}
+
+uint8_t ffi_hw_claims(void) {
+    return RUNTIME->hw_claims;
+}
+
+void ffi_set_hw_claims(uint8_t claims) {
+    RUNTIME->hw_claims = claims;
+}
+
 // See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
 // it writable so the harness can stand where the CLI does on a device.
 extern onerom_metadata_header_t _metadata_start;

@@ -72,6 +72,7 @@ void setup_usb_controller(void);
 void usb_controller_out_of_reset(void);
 void usb_controller_reset_and_release(void);
 void setup_usb_pll(void);
+void setup_clk_peri(void);
 void setup_timer0(void);
 void setup_adc(void);
 void setup_status_led(void);

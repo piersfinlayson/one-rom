@@ -68,6 +68,8 @@
 #define CLOCK_REF_SELECTED      (*((volatile uint32_t *)(CLOCKS_BASE + 0x38)))
 #define CLOCK_SYS_CTRL          (*((volatile uint32_t *)(CLOCKS_BASE + 0x3C)))
 #define CLOCK_SYS_SELECTED      (*((volatile uint32_t *)(CLOCKS_BASE + 0x44)))
+#define CLOCK_PERI_CTRL         (*((volatile uint32_t *)(CLOCKS_BASE + 0x48)))
+#define CLOCK_PERI_DIV          (*((volatile uint32_t *)(CLOCKS_BASE + 0x4C)))
 #define CLOCK_ADC_CTRL          (*((volatile uint32_t *)(CLOCKS_BASE + 0x6C)))
 #define CLOCK_CLK_USB_CTRL      (*((volatile uint32_t *)(CLOCKS_BASE + 0x60)))
 
@@ -83,6 +85,11 @@
 
 #define CLOCK_USB_CTRL_ENABLE     (1 << 11)
 #define CLOCK_USB_CTRL_AUXSRC_PLL_USB (0x0 << 5)
+
+#define CLOCK_PERI_CTRL_ENABLE          (1 << 11)
+#define CLOCK_PERI_CTRL_ENABLED         (1 << 28)
+#define CLOCK_PERI_CTRL_AUXSRC_PLL_USB  (0x2 << 5)
+#define CLOCK_PERI_DIV_1                (1 << 16)
 
 // PSM Registers
 #define PSM_FRCE_OFF        (*((volatile uint32_t *)(PSM_BASE + 0x004)))
@@ -259,6 +266,9 @@
 #define ADC_CS_TS_EN        (1 << 1)
 #define ADC_CS_EN           (1 << 0)
 
+// UARTs
+#define UART_COUNT          2
+
 // TIMER0 Registers
 #define TIMER0_TIMELR       (*((volatile uint32_t *)(TIMER0_BASE + 0x0C)))
 #define TIMER0_ALARM0       (*((volatile uint32_t *)(TIMER0_BASE + 0x10)))
@@ -390,6 +400,7 @@
 #define SPINLOCK_ORA_LOG    31
 #define SPINLOCK_LED        30
 #define SPINLOCK_MEM_POOL   29
+#define SPINLOCK_HW_CLAIM   28
 
 #define SIO_GPIO_READ(pin)  ((pin < 32) ? \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x004)) >> pin) & 1) : \

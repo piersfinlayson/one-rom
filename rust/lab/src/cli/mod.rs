@@ -22,10 +22,12 @@ use embassy_time::Timer;
 
 use onerom_config::chip::{ChipType, chip_type_names_for_pins};
 use onerom_config::hw::Board;
+use onerom_config::pin::Pin;
 use onerom_lab_bus::HostProfile;
 
 use crate::CsPolarities;
 use crate::error::Error;
+use crate::uart;
 use crate::usb;
 
 use editor::LineEditor;
@@ -167,6 +169,16 @@ pub struct SessionState {
     pub tri_state: bool,
     /// Host bus timing for reads and RBCP, or `None` for Lab's own.
     pub host: Option<HostProfile>,
+    /// Serial traffic settings.
+    pub uart: UartSettings,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct UartSettings {
+    pub tx: Pin,
+    pub rx: Pin,
+    pub baud: u32,
+    pub mode: uart::Mode,
 }
 
 impl SessionState {
@@ -185,6 +197,12 @@ impl SessionState {
             cs: CsSettings::unset(),
             tri_state: true,
             host: None,
+            uart: UartSettings {
+                tx: uart::DEFAULT_TX,
+                rx: uart::DEFAULT_RX,
+                baud: uart::DEFAULT_BAUD,
+                mode: uart::Mode::default(),
+            },
         }
     }
 }
@@ -420,6 +438,9 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("        x[:<chip>[:<cycles>[:<cs1>[:<cs2>[:<cs3>]]]]]").await?;
     send_line("  d   Drive data lines as a square wave, chip deselected").await?;
     send_line("        d[:<chip>[:<lines|all>[:<cycles>]]]").await?;
+    send_line("  u   Send and receive serial traffic on a UART, in the background").await?;
+    send_line("        u[:<tx>[:<rx>[:<baud>[:<mode>]]]]").await?;
+    send_line("  U   Stop u and display its counts").await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
     send_line("  c   Set or change chip type").await?;
@@ -457,6 +478,11 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
         .await?;
     send_line("           <pos> ns after the cycle starts. Chip select is active for the").await?;
     send_line("           last <cs> ns of the read.").await?;
+    send_line("").await?;
+    send_line("UART:      <tx> and <rx> are header pins, for example sel_a, or gpio<N>.").await?;
+    send_line("           pattern sends bytes 0x00 to 0xFF repeating. echo sends back each")
+        .await?;
+    send_line("           byte received. 8N1.").await?;
     send_line("").await?;
     Ok(())
 }

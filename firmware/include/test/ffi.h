@@ -25,6 +25,10 @@ uint8_t ffi_firmware_flags(void);
 void ffi_set_firmware_flags(uint8_t flags);
 uint16_t ffi_usb_dpram_pool_offset(void);
 uint16_t ffi_log_channel_claims(void);
+uint16_t ffi_dma_channel_claims(void);
+void ffi_set_dma_channel_claims(uint16_t claims);
+uint8_t ffi_hw_claims(void);
+void ffi_set_hw_claims(uint8_t claims);
 
 // The generation recorded in the metadata header, and a way to change it.
 //

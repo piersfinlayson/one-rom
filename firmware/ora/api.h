@@ -844,6 +844,20 @@ typedef enum {
      */
     ORA_ID_GET_PEER_DATA             = 0x00000046,
 
+    /**
+     * @brief Claim a DMA channel
+     * @sa ora_claim_dma_channel_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_CLAIM_DMA_CHANNEL         = 0x00000047,
+
+    /**
+     * @brief Claim a UART
+     * @sa ora_claim_uart_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_CLAIM_UART                = 0x00000048,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1465,6 +1479,13 @@ typedef enum {
      * @since firmware 0.8.0
      */
     ORA_RESULT_NOT_READY = 15,
+    /**
+     * @brief The hardware is already claimed
+     * @sa ora_claim_dma_channel_fn_t
+     * @sa ora_claim_uart_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_RESULT_IN_USE = 16,
 } ora_result_t;
 
 /**
@@ -1651,12 +1672,11 @@ typedef void (*ora_set_status_led_fn_t)(uint8_t on);
  * @brief Setup the USB controller including clocking it
  * @sa ORA_ID_SETUP_USB
  * 
- * This is used by plugins that want to use the USB functionality of the
- * RP2350, to set up the USB PLL.
+ * Sets up the USB PLL and the USB controller's clock.
  *
- * Firmware 0.8.1 and later resets the USB controller before starting the
- * plugins.  A plugin must not reset it because the firmware stores data
- * in USB DPRAM that a reset may corrupt.
+ * Firmware 0.8.1 and later starts the USB PLL and resets the USB controller
+ * before starting the plugins.  A plugin must not reset it because the
+ * firmware stores data in USB DPRAM that a reset may corrupt.
  */
 typedef void (*ora_setup_usb_fn_t)(void);
 
@@ -1664,9 +1684,9 @@ typedef void (*ora_setup_usb_fn_t)(void);
  * @brief Setup the ADC
  * @sa ORA_ID_SETUP_ADC
  *
- * This is used by plugins that want to use the ADC functionality of the
- * RP2350, to set up the ADC.  This function setups up the USB PLL as well, if
- * it has not already been set up.
+ * Sets up the ADC.  The ADC is clocked from the USB PLL.  Firmware 0.8.1 and
+ * later starts the USB PLL before starting the plugins.  This function in
+ * earlier firmware starts the USB PLL if it isn't already running.
  */
 typedef void (*ora_setup_adc_fn_t)(void);
 
@@ -3649,9 +3669,54 @@ typedef ora_result_t (*ora_alloc_mem_fn_t)(const ora_alloc_request_t *req,
  * @since firmware 0.8.1
  *
  * @return The other plugin's ora_plugin_header_t::peer_data in flash, or NULL
- *         if there is no other plugin plugin
+ *         if there is no other plugin
  */
 typedef const uint32_t *(*ora_get_peer_data_fn_t)(void);
+
+/**
+ * @brief Any free DMA channel
+ * @sa ora_claim_dma_channel_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_DMA_CHANNEL_ANY  0xFFFFFFFFu
+
+/**
+ * @brief Claim a DMA channel
+ * @sa ORA_ID_CLAIM_DMA_CHANNEL
+ * @since firmware 0.8.1
+ *
+ * A DMA claim lasts until One ROM reboots.  The channels the firmware uses are
+ * claimed before the plugins are started.
+ *
+ * @param channel  In: the channel to claim, or @ref ORA_DMA_CHANNEL_ANY for any
+ *                 free channel.  Out: the channel claimed.  Unchanged unless
+ *                 the result is ORA_RESULT_OK.
+ * @param flags    Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK          Claimed successfully
+ * @retval ORA_RESULT_IN_USE      The channel is already claimed.  For
+ *                                @ref ORA_DMA_CHANNEL_ANY this means there are
+ *                                no free channels.
+ * @retval ORA_RESULT_INVALID_ARG @p channel is NULL, @p *channel isn't a DMA
+ *                                channel or @ref ORA_DMA_CHANNEL_ANY, or
+ *                                @p flags isn't 0
+ */
+typedef ora_result_t (*ora_claim_dma_channel_fn_t)(uint32_t *channel,
+                                                   uint32_t flags);
+
+/**
+ * @brief Claim a UART
+ * @sa ORA_ID_CLAIM_UART
+ * @since firmware 0.8.1
+ *
+ * A UART claim lasts until One ROM reboots.
+ *
+ * @param uart   The number of the UART to claim: 0 or 1
+ * @param flags  Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK          Claimed successfully
+ * @retval ORA_RESULT_IN_USE      The UART is already claimed
+ * @retval ORA_RESULT_INVALID_ARG @p uart isn't 0 or 1, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_claim_uart_fn_t)(uint32_t uart, uint32_t flags);
 
 /**
  * @brief Get a commissioning value

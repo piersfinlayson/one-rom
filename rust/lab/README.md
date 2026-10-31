@@ -105,6 +105,8 @@ Commands are case sensitive.
 | `b` | `b:<chip>:<start>:<len>:<fmt>:<secs>:<cs1>:<cs2>:<cs3>` | Read the chip every `<secs>` seconds |
 | `x` | `x:<chip>:<cycles>:<cs1>:<cs2>:<cs3>` | Read the chip repeatedly and compare the passes |
 | `d` | `d:<chip>:<lines>:<cycles>` | Drive the data lines as a square wave, with the chip deselected |
+| `u` | `u:<tx>:<rx>:<baud>:<mode>` | Send and receive serial traffic on a UART, in the background |
+| `U` | | Stop `u` and display its counts |
 | `R` | | Query a One ROM over RBCP |
 | `a` | `a:<chip>:<start>:<len>:<fmt>:<secs>:<cs1>:<cs2>:<cs3>` | Read the chip and query the One ROM every `<secs>` seconds |
 | `H` | `H:<cycle>:<extra>:<glitch>:<cs>:<pos>:<every>` | Set the host bus timing |
@@ -235,6 +237,52 @@ Where a One ROM's size differs from the size it was commissioned as,
   - `<cs>` is how long chip select is active for a read.
 
 Tri-state isn't tested while `H` is set.
+
+### Serial traffic
+
+`u` sends and receives on one of the RP2350's UARTs at 8N1, in the background,
+so other commands can run while it does. `U` stops it and displays its counts.
+`<tx>` and `<rx>` must be the TX and RX pins of one UART. Each is a header pin,
+for example `sel_a` or `x1`, or `gpio<N>`. The defaults are `sel_a`, `sel_b`,
+38400 baud and `pattern`. On boards where `sel_a` and `sel_b` aren't a UART's
+TX and RX, `u` fails with an error that identifies the pin. On fire-24-e, for
+example, use `u:sel_c:sel_d`.
+
+```text
+> u:sel_a:sel_b:38400:pattern
+Sending the pattern on UART1, TX sel_a (gpio26), RX sel_b (gpio27), 38400 baud 8N1, in the background. Use U to stop.
+> U
+Stopped.
+  32.8s  sent 126050  received 115140  gaps 0  framing 0  parity 0  break 0  overrun 0  lost 0
+```
+
+The modes are:
+
+- `pattern` - Lab sends bytes 0x00, 0x01 and so on to 0xFF, then 0x00 again,
+  without gaps. Each run starts at 0x00. Lab checks that what it receives
+  follows the same sequence, and `gaps` counts the bytes that don't.
+- `echo` - Lab sends back each byte it receives. Echo doesn't count framing,
+  parity, break or overrun errors.
+
+A byte with a framing, parity or break error isn't counted as received.
+`overrun` counts the times Lab's UART lost bytes. `lost` counts received bytes
+overwritten before Lab checked them, which happens only if another command
+keeps Lab's CPU busy for about a second.
+
+`u` fails if it's already running. The pins return to their previous state
+when `U` stops it.
+
+#### Testing a One ROM's datalog
+
+Lab acts as the ECU. Connect:
+
+| Lab | One ROM |
+|---|---|
+| `sel_a` | The pin that receives from the ECU |
+| `sel_b` | The pin that transmits to the ECU |
+| GND | GND |
+
+Both boards are 3.3V, so no level shifter is needed.
 
 ## Releasing
 

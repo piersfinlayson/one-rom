@@ -120,6 +120,9 @@ typedef enum {
     // as the chip ID is usually written in hex most significant byte first.
     // @since firmware 0.8.1
     ORA_METADATA_KEY_CHIP_ID           = 0x0000001A,
+    // clk_peri's frequency in Hz. The firmware starts clk_peri before starting the plugins.
+    // @since firmware 0.8.1
+    ORA_METADATA_KEY_CLK_PERI_HZ       = 0x0000001B,
     ORA_METADATA_KEY_INVALID           = 0xFFFFFFFF,  // Invalid metadata key
 } ora_metadata_key_t;
 _Static_assert(sizeof(ora_metadata_key_t) == 4, "ora_metadata_key_t must be 4 bytes");

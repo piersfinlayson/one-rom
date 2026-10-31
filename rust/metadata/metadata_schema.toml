@@ -1599,6 +1599,23 @@ bit = 15
 comment = "The user plugin holds log channel 3's read claim."
 
 [[bitfields]]
+name = "onerom_hw_claim_t"
+size = 1
+comment = "Hardware claimed by a plugin. An unused bit is 0."
+strip_prefix = "HW_CLAIM_"
+first_release = "0.8.1"
+
+[[bitfields.members]]
+name = "HW_CLAIM_UART_0"
+bit = 0
+comment = "UART0 is claimed."
+
+[[bitfields.members]]
+name = "HW_CLAIM_UART_1"
+bit = 1
+comment = "UART1 is claimed."
+
+[[bitfields]]
 name = "onerom_override_states_t"
 size = 1
 comment = "Per-slot overrides, each an override_state_t. A value of 0 sets none of them."
@@ -2555,6 +2572,13 @@ element = "u8"
 comment = """The RP2350's 64-bit chip ID as 8 bytes. The most significant byte is first
 as the chip ID is usually written in hex most significant byte first."""
 
+[[plugin_keys]]
+name = "CLK_PERI_HZ"
+id = 27
+first_release = "0.8.1"
+type = "u32"
+comment = """clk_peri's frequency in Hz. The firmware starts clk_peri before starting the plugins."""
+
 [[structs.fields]]
 name = "firmware_states"
 kind = "bitfield"
@@ -2575,9 +2599,13 @@ plugin_key = { name = "FIRMWARE_FLAGS", id = 25, first_release = "0.8.0" }
 comment = "The firmware's flags, as ORA_FIRMWARE_FLAG_* bits."
 
 [[structs.fields]]
-name = "reserved"
-kind = "padding"
-size = 1
+name = "hw_claims"
+kind = "bitfield"
+type = "onerom_hw_claim_t"
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 65
+comment = "Hardware claimed by a plugin."
 
 [[structs.fields]]
 name = "usb_dpram_pool_offset"
@@ -2598,9 +2626,13 @@ expected_offset = 68
 comment = "Log channel claims held by each plugin."
 
 [[structs.fields]]
-name = "reserved2"
-kind = "padding"
-size = 2
+name = "dma_channel_claims"
+kind = "scalar"
+type = "u16"
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 70
+comment = "DMA channels the firmware uses or a plugin has claimed. Bit N is channel N."
 
 # ===========================================================================
 # Tagged FAM structs

@@ -449,6 +449,34 @@ fn check_flash_sizes(emu: &Emulator, board: Board) -> Result<(), String> {
     Ok(())
 }
 
+/// Verify `CLK_PERI_HZ` reports clk_peri at the USB PLL's 48MHz, and is
+/// TypeMismatch through the string and indexed getters.
+pub fn test_metadata_clk_peri_hz(emu: &Emulator) -> Result<(), String> {
+    const KEY: ffi::ora_metadata_key_t = ffi::ora_metadata_key_t_ORA_METADATA_KEY_CLK_PERI_HZ;
+    const USB_PLL_HZ: u32 = 48_000_000;
+
+    let (status, value) = emu.get_metadata_uint(KEY);
+    if (status != OraResult::Ok) || (value != Some(USB_PLL_HZ)) {
+        return Err(format!(
+            "CLK_PERI_HZ: got {status:?}/{value:?}, expected {USB_PLL_HZ}"
+        ));
+    }
+    let (status, _) = emu.get_metadata_str(KEY);
+    if status != OraResult::TypeMismatch {
+        return Err(format!(
+            "CLK_PERI_HZ via str: expected TypeMismatch, got {status:?}"
+        ));
+    }
+    let (status, _) = emu.get_metadata_uint_at(KEY, 0);
+    if status != OraResult::TypeMismatch {
+        return Err(format!(
+            "CLK_PERI_HZ via uint_at: expected TypeMismatch, got {status:?}"
+        ));
+    }
+    println!("  CLK_PERI_HZ: {USB_PLL_HZ}");
+    Ok(())
+}
+
 /// Verify `CHIP_ID` against the chip ID string the host tools write for the
 /// same OTP rows.
 pub fn test_metadata_chip_id(emu: &Emulator) -> Result<(), String> {

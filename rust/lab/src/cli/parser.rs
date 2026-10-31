@@ -21,12 +21,14 @@ use core::ops::RangeInclusive;
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Family;
+use onerom_config::pin::{Pin, ResolvedPin, parse_pin};
 
 use super::CsPolaritySetting;
 use super::OutputFormat;
 use super::editor::LineEditor;
 use crate::error::Error;
 use crate::fast_read::MAX_DELAY_CYCLES;
+use crate::uart::Mode;
 
 // ---------------------------------------------------------------------------
 // Colon-syntax splitting
@@ -530,6 +532,74 @@ pub async fn get_number(
             Err(_) => {
                 super::send_line(&format!("Invalid number '{}'.", s)).await?;
             }
+        }
+    }
+}
+
+/// Resolve a header pin, or `gpio<N>`, on `board` from an inline token or an
+/// interactive prompt.  Blank input returns `default` and Ctrl-C returns
+/// [`Error::Cancelled`].
+pub async fn get_pin(
+    token: Option<&str>,
+    default: Pin,
+    label: &str,
+    board: Board,
+    editor: &mut LineEditor,
+) -> Result<ResolvedPin, Error> {
+    let resolve = |s: &str| {
+        parse_pin(s)
+            .map_err(Error::Pin)?
+            .resolve(Some(&board))
+            .map_err(Error::PinResolve)
+    };
+    if let Some(t) = token {
+        return resolve(t);
+    }
+
+    loop {
+        let input = prompt(editor, &format!("{label} [{default}]: ")).await?;
+
+        let result = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => default.resolve(Some(&board)).map_err(Error::PinResolve),
+            Some(s) => resolve(&s),
+        };
+
+        match result {
+            Ok(pin) => return Ok(pin),
+            Err(e) => super::send_line(&format!("{e}.")).await?,
+        }
+    }
+}
+
+/// Resolve a serial traffic mode from an inline token or an interactive
+/// prompt.  Blank input returns `default` and Ctrl-C returns
+/// [`Error::Cancelled`].
+pub async fn get_uart_mode(
+    token: Option<&str>,
+    default: Mode,
+    editor: &mut LineEditor,
+) -> Result<Mode, Error> {
+    if let Some(t) = token {
+        return Mode::from_str(t).ok_or(Error::Syntax);
+    }
+
+    loop {
+        let input = prompt(
+            editor,
+            &format!("Mode (pattern/echo) [{}]: ", default.as_str()),
+        )
+        .await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match Mode::from_str(&s) {
+            Some(mode) => return Ok(mode),
+            None => super::send_line("Enter pattern or echo.").await?,
         }
     }
 }

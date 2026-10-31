@@ -537,6 +537,19 @@ void setup_usb_pll(void) {
     RUNTIME->peri_en |= 1;
 }
 
+// clk_peri is used to clock the UARTs and SPIs.
+// clk_peri's source can only be changed with the clock stopped.
+void setup_clk_peri(void) {
+    setup_usb_pll();
+
+    CLOCK_PERI_CTRL = 0;
+    while (CLOCK_PERI_CTRL & CLOCK_PERI_CTRL_ENABLED);
+    CLOCK_PERI_DIV = CLOCK_PERI_DIV_1;
+    CLOCK_PERI_CTRL = CLOCK_PERI_CTRL_AUXSRC_PLL_USB;
+    CLOCK_PERI_CTRL = CLOCK_PERI_CTRL_AUXSRC_PLL_USB | CLOCK_PERI_CTRL_ENABLE;
+    while (!(CLOCK_PERI_CTRL & CLOCK_PERI_CTRL_ENABLED));
+}
+
 void setup_adc(void) {
     if (RUNTIME->peri_en & (1 << 1)) {
         DEBUG("ADC already enabled");
