@@ -184,19 +184,30 @@ pub const NULL_DEFAULT: &str = "null";
 /// a list states them one by one.  Both generators write this out rather than
 /// each re-reading the TOML.  `check_array_default` has already refused
 /// anything it cannot expand.
-pub fn array_default_elements(field: &Field) -> Vec<u8> {
+pub fn array_default_elements(field: &Field) -> Vec<u32> {
     let value = field
         .default_if_absent
         .as_ref()
         .expect("a gated field has a default");
     let total = array_element_count(field);
     match value.as_integer() {
-        Some(fill) => vec![fill as u8; total],
+        Some(fill) => vec![fill as u32; total],
         None => flatten_array_default(value)
             .expect("validate_defaults has already refused a default of another shape")
             .into_iter()
-            .map(|n| n as u8)
+            .map(|n| n as u32)
             .collect(),
+    }
+}
+
+/// The largest value a primitive type holds, or `None` for a type without an
+/// integer range.
+fn primitive_max(type_: &str) -> Option<i64> {
+    match type_ {
+        "u8" | "char" => Some(u8::MAX as i64),
+        "u16" => Some(u16::MAX as i64),
+        "u32" => Some(u32::MAX as i64),
+        _ => None,
     }
 }
 
@@ -288,10 +299,17 @@ fn check_array_default(
         }
     };
 
+    let element = field.element.as_deref().unwrap_or("u8");
+    let Some(limit) = primitive_max(element) else {
+        return Err(format!(
+            "{container}.{name}: default_if_absent isn't supported for {element} arrays"
+        )
+        .into());
+    };
     for n in elements {
-        if !(0..=u8::MAX as i64).contains(&n) {
+        if !(0..=limit).contains(&n) {
             return Err(format!(
-                "{container}.{name} has {n} in its default_if_absent, which a u8 cannot hold"
+                "{container}.{name}: default_if_absent {n} is too large for a {element}"
             )
             .into());
         }
@@ -1820,12 +1838,11 @@ impl Schema {
                 )
                 .into());
             }
-            if ARRAY_KINDS.contains(&f.kind.as_str())
-                && f.element.as_deref().unwrap_or("u8") != "u8"
-            {
+            // The parser reads a two-dimensional array as bytes.
+            if f.kind == "inline_array2d" && f.element.as_deref().unwrap_or("u8") != "u8" {
                 return Err(format!(
-                    "{container}.{} carries a generation marker on an array of {}, and a default \
-                     is written down for a u8 array only",
+                    "{container}.{}: a two-dimensional array with a generation marker must be u8 \
+                     not {}",
                     f.name,
                     f.element.as_deref().unwrap_or(""),
                 )
@@ -1979,17 +1996,12 @@ impl Schema {
             _ => return Ok(()),
         };
 
-        let limit: i64 = match primitive {
-            "u8" => u8::MAX as i64,
-            "u16" => u16::MAX as i64,
-            "u32" => u32::MAX as i64,
-            other => {
-                return Err(format!(
-                    "{container}.{} is a {other}, which carries no default_if_absent",
-                    f.name
-                )
-                .into());
-            }
+        let Some(limit) = primitive_max(primitive) else {
+            return Err(format!(
+                "{container}.{}: default_if_absent isn't supported for a {primitive}",
+                f.name
+            )
+            .into());
         };
         if number < 0 || number > limit {
             return Err(format!(

@@ -7,7 +7,7 @@
 #include "include.h"
 
 #include "plugin.h"
-#include "piodma/dmareg.h"
+#include "piodma/piodma.h"
 #include <stdio.h>
 
 STATIC_ASSERT(ORA_PLUGIN_MAGIC == PLUGIN_MAGIC, "plugin magic");
@@ -2406,6 +2406,167 @@ ora_result_t ora_claim_gpio(uint32_t gpio, uint32_t flags) {
     return result;
 }
 
+STATIC_ASSERT(PIO_CLAIM_BLOCK_0_SMS == ((1u << APIO_MAX_SMS_PER_BLOCK) - 1u),
+              "One claim bit per PIO state machine");
+STATIC_ASSERT((PIO_CLAIM_BLOCK_1_SMS == (PIO_CLAIM_BLOCK_0_SMS << PIO_CLAIM_SMS_SHIFT(1))) &&
+              (PIO_CLAIM_BLOCK_2_SMS == (PIO_CLAIM_BLOCK_0_SMS << PIO_CLAIM_SMS_SHIFT(2))),
+              "PIO state machine claim bit layout");
+STATIC_ASSERT((PIO_CLAIM_BLOCK_1_GPIOBASE_16 == PIO_CLAIM_GPIOBASE_16(1)) &&
+              (PIO_CLAIM_BLOCK_2_GPIOBASE_16 == PIO_CLAIM_GPIOBASE_16(2)),
+              "PIO GPIOBASE bit layout");
+STATIC_ASSERT(APIO_MAX_PIO_BLOCKS == (sizeof(RUNTIME->pio_instr_claims) /
+                                      sizeof(RUNTIME->pio_instr_claims[0])),
+              "One instruction claim word per PIO block");
+STATIC_ASSERT(APIO_MAX_PIO_INSTRS == (sizeof(RUNTIME->pio_instr_claims[0]) * 8),
+              "One claim bit per PIO instruction");
+
+// pio_find_free_instrs() found no free instructions.
+#define PIO_NO_FREE_INSTRS  0xFFFFFFFFu
+
+// Finds num_instrs consecutive free instructions in a block, where claimed is
+// the block's already claimed instructions, using bit N for instruction N.
+// Returns the first of those instructions, or PIO_NO_FREE_INSTRS.
+//
+// - If wanted is an instruction number the free instructions must start at
+//   wanted.
+// - If wanted is ORA_PIO_INSTR_ANY the lowest-numbered free instructions are
+//   found.
+static uint32_t pio_find_free_instrs(uint32_t claimed, uint32_t wanted, uint32_t num_instrs) {
+    if (wanted != ORA_PIO_INSTR_ANY) {
+        return (claimed & pio_instr_run(wanted, num_instrs)) ? PIO_NO_FREE_INSTRS : wanted;
+    }
+
+    // Bit N of starts is set if num_instrs free instructions start at
+    // instruction N.  Each shift fills the top bits with zeros, which count as
+    // claimed, so a run can't extend past instruction 31.
+    uint32_t free = ~claimed;
+    uint32_t starts = free;
+    for (uint32_t i = 1; i < num_instrs; i++) {
+        starts &= free >> i;
+    }
+    return (starts != 0u) ? (uint32_t)__builtin_ctz(starts) : PIO_NO_FREE_INSTRS;
+}
+
+// Claim a state machine and a run of instructions in one block.  Returns
+// ORA_RESULT_CONFLICT if the block's claims set the other GPIOBASE, and
+// ORA_RESULT_IN_USE if it has no free state machine or run.  Called with the
+// claim lock held.  Marked noinline because -O3 would otherwise make a copy
+// for each block ora_claim_pio() checks.
+__attribute__((noinline))
+static ora_result_t pio_claim_in_block(uint32_t block,
+                                       uint32_t sm_choices,
+                                       uint32_t wanted_instr,
+                                       uint32_t num_instrs,
+                                       ora_pio_gpiobase_t gpio_base,
+                                       uint32_t *sm,
+                                       uint32_t *first_instr) {
+    uint32_t block_claims = RUNTIME->pio_block_claims;
+    uint32_t sms = pio_block_claimed_sms(block);
+    uint32_t instrs = RUNTIME->pio_instr_claims[block];
+    uint8_t in_use = pio_block_in_use(block);
+    uint32_t want_16 = (gpio_base == ORA_PIO_GPIOBASE_16) ? 1u : 0u;
+
+    if (in_use && (pio_block_gpiobase(block) != gpio_base)) {
+        return ORA_RESULT_CONFLICT;
+    }
+    uint32_t free_sms = sm_choices & ~sms;
+    uint32_t first = pio_find_free_instrs(instrs, wanted_instr, num_instrs);
+    if ((free_sms == 0u) || (first == PIO_NO_FREE_INSTRS)) {
+        return ORA_RESULT_IN_USE;
+    }
+
+    *sm = (uint32_t)__builtin_ctz(free_sms);
+    *first_instr = first;
+    block_claims |= (1u << *sm) << PIO_CLAIM_SMS_SHIFT(block);
+    if (!in_use) {
+        if (want_16) {
+            block_claims |= PIO_CLAIM_GPIOBASE_16(block);
+        } else {
+            block_claims &= ~PIO_CLAIM_GPIOBASE_16(block);
+        }
+        pio_set_gpiobase((uint8_t)block, gpio_base);
+    }
+    RUNTIME->pio_block_claims = (uint16_t)block_claims;
+    RUNTIME->pio_instr_claims[block] = instrs | pio_instr_run(first, num_instrs);
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_claim_pio(uint32_t *block,
+                           uint32_t *sm,
+                           uint32_t *first_instr,
+                           uint32_t num_instrs,
+                           ora_pio_gpiobase_t gpio_base,
+                           uint32_t flags) {
+    if ((block == NULL) || (sm == NULL) || (first_instr == NULL) || (flags != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((num_instrs == 0u) || (num_instrs > APIO_MAX_PIO_INSTRS)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((gpio_base != ORA_PIO_GPIOBASE_0) && (gpio_base != ORA_PIO_GPIOBASE_16)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint32_t wanted_block = *block;
+    uint32_t wanted_sm = *sm;
+    uint32_t wanted_instr = *first_instr;
+    if (wanted_block == ORA_PIO_BLOCK_ANY) {
+        if ((wanted_sm != ORA_PIO_SM_ANY) || (wanted_instr != ORA_PIO_INSTR_ANY)) {
+            return ORA_RESULT_INVALID_ARG;
+        }
+    } else if (wanted_block >= APIO_MAX_PIO_BLOCKS) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((wanted_sm != ORA_PIO_SM_ANY) && (wanted_sm >= APIO_MAX_SMS_PER_BLOCK)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((wanted_instr != ORA_PIO_INSTR_ANY) &&
+        (wanted_instr > (APIO_MAX_PIO_INSTRS - num_instrs))) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t sm_choices = (wanted_sm == ORA_PIO_SM_ANY)
+        ? PIO_CLAIM_BLOCK_0_SMS : (1u << wanted_sm);
+    uint32_t claimed_sm = 0;
+    uint32_t claimed_instr = 0;
+    ora_result_t result;
+    uint32_t b;
+
+    uint32_t primask = hw_claim_lock();
+    if (wanted_block != ORA_PIO_BLOCK_ANY) {
+        b = wanted_block;
+        result = pio_claim_in_block(b, sm_choices, wanted_instr, num_instrs,
+                                    gpio_base, &claimed_sm, &claimed_instr);
+    } else {
+        // Skip any block the claim can't use, including one with the other
+        // GPIOBASE.
+        result = ORA_RESULT_IN_USE;
+        for (b = 0; (b < APIO_MAX_PIO_BLOCKS) && (result != ORA_RESULT_OK); b++) {
+            result = pio_claim_in_block(b, sm_choices, wanted_instr, num_instrs,
+                                        gpio_base, &claimed_sm, &claimed_instr);
+        }
+        b--;
+        if (result != ORA_RESULT_OK) {
+            result = ORA_RESULT_IN_USE;
+        }
+    }
+    hw_claim_unlock(primask);
+
+    if (result == ORA_RESULT_OK) {
+        *block = b;
+        *sm = claimed_sm;
+        *first_instr = claimed_instr;
+    }
+    return result;
+}
+
+// Plugin claims can't be released.
+void pio_release(uint8_t block, uint8_t sm, uint8_t first_instr, uint8_t num_instrs) {
+    uint32_t primask = hw_claim_lock();
+    RUNTIME->pio_block_claims &= (uint16_t)~((1u << sm) << PIO_CLAIM_SMS_SHIFT(block));
+    RUNTIME->pio_instr_claims[block] &= ~pio_instr_run(first_instr, num_instrs);
+    hw_claim_unlock(primask);
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -2558,6 +2719,8 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_claim_uart;
         case ORA_ID_CLAIM_GPIO:
             return ora_claim_gpio;
+        case ORA_ID_CLAIM_PIO:
+            return ora_claim_pio;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -2698,6 +2861,27 @@ const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched) {
         LOG("Launching user plugin");
     }
     return user;
+}
+
+// The part of plugin launch before the plugins run, while core 0 is in
+// firmware code and core 1 isn't running.  Separate from ora_launch_plugins()
+// for a test build to run.  Returns the plugins' entry flags.
+//
+// - OTP is made read-only before any plugin runs.
+// - The timer is started, and ora_get_plugin_uptime_ms() measures from here.
+// - clk_peri is started here, not before serving, to avoid delaying serving.
+// - The RGB LED's PIO state machine is claimed before any plugin can claim PIO.
+uint8_t launch_prepare(void) {
+    otp_lock();
+    onerom_rtt_plugins_init();
+    DEBUG("Init timer");
+    setup_timer0();
+    setup_clk_peri();
+    pio_led_launch();
+
+    uint8_t entry_flags = plugin_entry_flags();
+    launch_usb_dpram(entry_flags);
+    return entry_flags;
 }
 
 #if !defined(TEST_BUILD)
@@ -2866,20 +3050,8 @@ __attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(
 }
 
 void ora_launch_plugins(void) {
-    // Plugin-facing setup, in the window where core 0 is in firmware code and
-    // core 1 is not yet running.  OTP becomes read-only, so no plugin can write
-    // it.  The timer starts here so a plugin reading ora_get_plugin_uptime_ms()
-    // sees time measured from just before launch.  clk_peri is started here
-    // rather than earlier so it doesn't delay serving.
-    otp_lock();
-    onerom_rtt_plugins_init();
-    DEBUG("Init timer");
-    setup_timer0();
-    setup_clk_peri();
-
+    uint8_t entry_flags = launch_prepare();
     uint8_t launched_plugins = 0;
-    uint8_t entry_flags = plugin_entry_flags();
-    launch_usb_dpram(entry_flags);
     ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins, entry_flags);
 
     // Set before the user plugin's entry, which doesn't return.

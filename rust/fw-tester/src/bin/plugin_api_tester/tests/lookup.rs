@@ -240,6 +240,7 @@ pub fn test_lookup_coverage(emu: &Emulator, base_dir: &Path) -> Result<(), Strin
         ),
         (ffi::api_id_t_ORA_ID_CLAIM_UART, "ORA_ID_CLAIM_UART"),
         (ffi::api_id_t_ORA_ID_CLAIM_GPIO, "ORA_ID_CLAIM_GPIO"),
+        (ffi::api_id_t_ORA_ID_CLAIM_PIO, "ORA_ID_CLAIM_PIO"),
     ];
 
     // Deprecated/invalid IDs — must resolve to null.

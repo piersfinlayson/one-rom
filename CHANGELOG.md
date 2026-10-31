@@ -59,8 +59,9 @@ In detail:
     - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
     - The GPIO query reply includes every use of each GPIO.
 - Plugin APIs:
+  - Breaking: a second `ora_setup_address_monitor()` call now returns `ORA_RESULT_IN_USE`.
+  - Breaking: new result codes may be added in future and applied to existing API calls.  Plugins should handle unexpected failure codes gracefully.
   - New: `ora_reboot()` can be used to reboot One ROM.
-  - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
   - New: `ora_get_commissioning_value()` reads a commissioning value from OTP.
   - New: `ora_get_commissioning_instance()` reads the current commissioning instance from OTP.
   - New: `ORA_METADATA_KEY_CHIP_ID` reads the RP2350's chip ID with `ora_get_metadata_uint_at()`.
@@ -71,10 +72,14 @@ In detail:
   - New: `ora_alloc_mem()` allocates memory from a pool shared by both plugins.
   - New: log channels 2 and 3 when using plugin header fields `channel_2_size` and `channel_3_size`.
   - New: `ora_get_peer_data()` retrieves the other plugin's `peer_data`.
-  - New: a plugin can claim a DMA channel with `ora_claim_dma_channel()` and a UART with `ora_claim_uart()`.
-  - New: a plugin can claim a GPIO with `ora_claim_gpio()`, reported as `ORA_GPIO_USE_PLUGIN`.
+  - New: a plugin can claim hardware resources:
+    - DMA channel: `ora_claim_dma_channel()`
+    - UART: `ora_claim_uart()`
+    - GPIO: `ora_claim_gpio()`
+    - PIO state machine and instructions: `ora_claim_pio()`
   - New: `ora_gpio_info_t::uses`, a bitfield of every `ora_gpio_use_t` that applies to a GPIO.
   - New: the firmware starts clk_peri for the UARTs and SPIs before starting the plugins, and a plugin can read its frequency with `ORA_METADATA_KEY_CLK_PERI_HZ`.
+  - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
   - Deprecated: `ORA_ID_ALLOC` and `ORA_ID_GET_FREE_MEM`, which never allocated memory.  Use `ORA_ID_ALLOC_MEM`.
 - Other:
   - Added manufacturer contact details to commissioning signing key tables.

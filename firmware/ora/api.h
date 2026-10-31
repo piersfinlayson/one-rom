@@ -865,6 +865,13 @@ typedef enum {
      */
     ORA_ID_CLAIM_GPIO                = 0x00000049,
 
+    /**
+     * @brief Claim a PIO state machine and an instruction range
+     * @sa ora_claim_pio_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_CLAIM_PIO                 = 0x0000004A,
+
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
 } api_id_t;
@@ -1454,6 +1461,10 @@ _Static_assert(sizeof(ora_address_monitor_options_t) == 2, "ora_address_monitor_
 
 /**
  * @brief Return code for One ROM API functions
+ *
+ * New result codes may be added in future and applied to existing API calls.
+ * Plugins should handle unexpected failure (not ORA_RESULT_OK) codes
+ * gracefully.
  */
 typedef enum {
     ORA_RESULT_OK    = 0,
@@ -1487,13 +1498,22 @@ typedef enum {
      */
     ORA_RESULT_NOT_READY = 15,
     /**
-     * @brief The hardware is already claimed
+     * @brief The hardware is already claimed or set up
      * @sa ora_claim_dma_channel_fn_t
      * @sa ora_claim_uart_fn_t
      * @sa ora_claim_gpio_fn_t
+     * @sa ora_claim_pio_fn_t
+     * @sa ora_setup_address_monitor_fn_t
      * @since firmware 0.8.1
      */
     ORA_RESULT_IN_USE = 16,
+    /**
+     * @brief The request doesn't match how the hardware is already
+     * configured
+     * @sa ora_claim_pio_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_RESULT_CONFLICT = 17,
 } ora_result_t;
 
 /**
@@ -1898,7 +1918,10 @@ typedef uint8_t (*ora_get_data_pin_nums_fn_t)(uint8_t *data_pins_out, uint8_t nu
  *                        @since firmware 0.7.3
  * @return ORA_RESULT_INVALID_SIZE if @p options->size is smaller than the
  *         structure was when it first shipped, ORA_RESULT_INVALID_ARG if
- *         @p options->priority is not an @ref ora_address_monitor_priority_t
+ *         @p options->priority is not an @ref ora_address_monitor_priority_t,
+ *         ORA_RESULT_IN_USE if the monitor is already configured or there are
+ *         no free PIO state machines or instructions for it.  Before firmware
+ *         0.8.1 a second call set the monitor up again.
  */
 typedef ora_result_t (*ora_setup_address_monitor_fn_t)(
     volatile uint32_t *ring_buf,
@@ -3779,6 +3802,94 @@ typedef ora_result_t (*ora_claim_uart_fn_t)(uint32_t uart, uint32_t flags);
  * @retval ORA_RESULT_INVALID_ARG @p gpio is out of range, or @p flags isn't 0
  */
 typedef ora_result_t (*ora_claim_gpio_fn_t)(uint32_t gpio, uint32_t flags);
+
+/**
+ * @brief Any PIO block
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PIO_BLOCK_ANY  0xFFFFFFFFu
+
+/**
+ * @brief Any free state machine in the PIO block
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PIO_SM_ANY     0xFFFFFFFFu
+
+/**
+ * @brief Any free run of instructions in the PIO block
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PIO_INSTR_ANY  0xFFFFFFFFu
+
+/**
+ * @brief A PIO block's GPIOBASE
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+typedef enum {
+    /** @brief The block accesses GPIOs 0 to 31 */
+    ORA_PIO_GPIOBASE_0  = 0,
+
+    /** @brief The block accesses GPIOs 16 to 47 */
+    ORA_PIO_GPIOBASE_16 = 16,
+} ora_pio_gpiobase_t;
+
+/**
+ * @brief Claim a PIO state machine and instruction range
+ * @sa ORA_ID_CLAIM_PIO
+ * @since firmware 0.8.1
+ *
+ * Claims a state machine and @p num_instrs consecutive instructions in one PIO
+ * block.  Either both are claimed or neither is.  A PIO claim lasts until One
+ * ROM reboots.  The state machines and instructions required by the core
+ * firmware are claimed before the plugins start and a plugin must dynamically
+ * handle new versions of firmware that allocate different PIO blocks/SMs using
+ * this call.
+ *
+ * GPIOBASE applies to a whole block.  The first claim in a block sets the
+ * block's GPIOBASE to @p gpio_base, and every later claim in that block must
+ * pass the same value.
+ *
+ * The plugin writes the instructions and configures the state machine itself
+ * directly.
+ *
+ * @param block        In: the block to claim in, or @ref ORA_PIO_BLOCK_ANY for
+ *                     any block.  Out: the block claimed in.
+ * @param sm           In: the state machine to claim, or @ref ORA_PIO_SM_ANY
+ *                     for any free one.  Out: the state machine claimed.
+ * @param first_instr  In: the first instruction to claim, or
+ *                     @ref ORA_PIO_INSTR_ANY for any free run.  Out: the first
+ *                     instruction claimed.
+ * @param num_instrs   The number of instructions to claim, 1 to 32
+ * @param gpio_base    The block's required GPIOBASE
+ * @param flags        Pass 0.  All bits are reserved and must be 0.
+ *
+ * @p block, @p sm and @p first_instr are unchanged unless the result is
+ * ORA_RESULT_OK.
+ *
+ * @retval ORA_RESULT_OK          Claimed successfully
+ * @retval ORA_RESULT_IN_USE      The state machine or instructions requested
+ *                                aren't free.  With @ref ORA_PIO_BLOCK_ANY, no
+ *                                block with a usable GPIOBASE has a free state
+ *                                machine and enough free consecutive
+ *                                instructions.
+ * @retval ORA_RESULT_CONFLICT    @p block already has claims with a different
+ *                                GPIOBASE
+ * @retval ORA_RESULT_INVALID_ARG A pointer is NULL, @p *block, @p *sm,
+ *                                @p *first_instr, @p num_instrs or
+ *                                @p gpio_base is out of range, @p *sm or
+ *                                @p *first_instr is set while @p *block is
+ *                                @ref ORA_PIO_BLOCK_ANY, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_claim_pio_fn_t)(uint32_t *block,
+                                           uint32_t *sm,
+                                           uint32_t *first_instr,
+                                           uint32_t num_instrs,
+                                           ora_pio_gpiobase_t gpio_base,
+                                           uint32_t flags);
 
 /**
  * @brief Get a commissioning value

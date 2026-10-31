@@ -111,6 +111,58 @@ void ffi_set_gpio_claims(uint64_t claims) {
     }
 }
 
+uint32_t ffi_pio_instr_claims(uint8_t block) {
+    return RUNTIME->pio_instr_claims[block];
+}
+
+void ffi_set_pio_instr_claims(uint8_t block, uint32_t claims) {
+    RUNTIME->pio_instr_claims[block] = claims;
+}
+
+uint16_t ffi_pio_block_claims(void) {
+    return RUNTIME->pio_block_claims;
+}
+
+void ffi_set_pio_block_claims(uint16_t claims) {
+    RUNTIME->pio_block_claims = claims;
+}
+
+uint8_t ffi_rgb_led_pio(void) {
+    return RUNTIME->rgb_led_pio;
+}
+
+void ffi_set_rgb_led_pio(uint8_t pio) {
+    RUNTIME->rgb_led_pio = pio;
+}
+
+uint8_t ffi_addr_monitor_pio(void) {
+    return RUNTIME->addr_monitor_pio;
+}
+
+// See Emulator::poison_unclaimed_pio().
+void ffi_poison_unclaimed_pio(uint8_t irq) {
+    for (uint8_t block = 0; block < APIO_MAX_PIO_BLOCKS; block++) {
+        for (uint8_t instr = 0; instr < APIO_MAX_PIO_INSTRS; instr++) {
+            if (!(RUNTIME->pio_instr_claims[block] & (1u << instr))) {
+                _apio_emulated_pio.instr[block][instr] = APIO_IRQ_SET_WAIT(irq);
+            }
+        }
+    }
+}
+
+// See Emulator::unclaimed_pio_used().
+int8_t ffi_unclaimed_pio_written(uint8_t irq) {
+    for (uint8_t block = 0; block < APIO_MAX_PIO_BLOCKS; block++) {
+        for (uint8_t instr = 0; instr < APIO_MAX_PIO_INSTRS; instr++) {
+            if (!(RUNTIME->pio_instr_claims[block] & (1u << instr)) &&
+                (_apio_emulated_pio.instr[block][instr] != APIO_IRQ_SET_WAIT(irq))) {
+                return (int8_t)block;
+            }
+        }
+    }
+    return -1;
+}
+
 // See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
 // it writable so the harness can stand where the CLI does on a device.
 extern onerom_metadata_header_t _metadata_start;

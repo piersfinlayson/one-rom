@@ -41,6 +41,8 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::driver;
 use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_gen::{ChipConfig, Config};
+use onerom_metadata::onerom_addr_monitor_pio_t as MonitorPio;
+use onerom_metadata::onerom_pio_block_claim_t as PioClaim;
 use onerom_metadata::{MaybeKnown, RomSlotType};
 
 use onerom_fw_tester::geometry;
@@ -380,6 +382,7 @@ fn run_case_inner(case: &Case, stop: &Arc<AtomicBool>) -> Result<String, String>
         // trailing GROUP/CMD payload, driven through the yield hook.
         layer2_knock(&emu, &cache, unobserved, byte_bg, stop, mode, cs_active)?;
     }
+    check_unclaimed_pio(&emu)?;
 
     // Layer 3 boots again, as it starts the monitor in standby.  Layer 4 boots
     // again for a monitor of its own.
@@ -414,12 +417,189 @@ fn boot(board: Board, sel: u8, word_size: u8, log_enabled: bool) -> Result<Emula
     if emu.limp_mode() {
         return Err("firmware entered limp mode".to_string());
     }
+    emu.poison_unclaimed_pio();
     emu.setup_epio(word_size);
     Ok(emu)
 }
 
+/// Fail if the firmware wrote or ran an unclaimed PIO instruction.
+fn check_unclaimed_pio(emu: &Emulator) -> Result<(), String> {
+    match emu.unclaimed_pio_used() {
+        Some(block) => Err(format!(
+            "the firmware wrote or ran an unclaimed instruction in PIO block {block}"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Setting up the monitor fails if its PIO space can't be claimed, and leaves
+/// the claims unchanged.  Each case marks every instruction in one or both
+/// blocks as claimed.  With only the address block full, the CS state
+/// machine's claim succeeds first and must be released.
+fn setup_monitor_without_space(
+    emu: &Emulator,
+    ring: *mut u32,
+    mode: ffi::ora_monitor_mode_t,
+) -> Result<(), String> {
+    let saved = (emu.pio_instr_claims(), emu.pio_block_claims());
+    for (label, blocks) in [
+        ("address block full", &[1usize][..]),
+        ("both blocks full", &[1, 2]),
+    ] {
+        let mut instrs = saved.0;
+        for &block in blocks {
+            instrs[block] = u32::MAX;
+        }
+        emu.set_pio_instr_claims(instrs);
+        // SAFETY: as for the real setup in setup_monitor.
+        let r = unsafe {
+            emu.setup_address_monitor_with_options(
+                ring,
+                RING_ENTRIES_LOG2,
+                mode,
+                RING_DATA_SIZE,
+                std::ptr::null(),
+            )
+        };
+        let after = (emu.pio_instr_claims(), emu.pio_block_claims());
+        emu.set_pio_instr_claims(saved.0);
+        if r != OraResult::InUse {
+            return Err(format!(
+                "setup_address_monitor with {label} returned {r:?}, expected InUse"
+            ));
+        }
+        if after != (instrs, saved.1) {
+            return Err(format!(
+                "setup_address_monitor with {label} left claims {after:x?}, expected {:x?}",
+                (instrs, saved.1)
+            ));
+        }
+        if emu.addr_monitor_pio() != onerom_metadata::ADDR_MONITOR_PIO_NONE {
+            return Err(format!(
+                "setup_address_monitor with {label} set addr_monitor_pio to {:#04x}",
+                emu.addr_monitor_pio()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The state machines recorded in `addr_monitor_pio` are claimed, with one run
+/// of instructions in each of their blocks.  A second setup changes nothing.
+fn check_monitor_claims(
+    emu: &Emulator,
+    before: ([u32; 3], u16),
+    ring: *mut u32,
+    mode: ffi::ora_monitor_mode_t,
+) -> Result<(), String> {
+    let pio = emu.addr_monitor_pio();
+    let field = |mask: u8, shift: u32| u32::from(pio & mask) >> shift;
+    let sms = [
+        (
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_BLOCK,
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT,
+            ),
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_SM,
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_SM_SHIFT,
+            ),
+        ),
+        (
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_CS_BLOCK,
+                MonitorPio::ADDR_MONITOR_PIO_CS_BLOCK_SHIFT,
+            ),
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_CS_SM,
+                MonitorPio::ADDR_MONITOR_PIO_CS_SM_SHIFT,
+            ),
+        ),
+    ];
+    let after = (emu.pio_instr_claims(), emu.pio_block_claims());
+    let mut want_sms = before.1;
+    for &(block, sm) in &sms {
+        if block >= 3 {
+            return Err(format!(
+                "addr_monitor_pio is {pio:#04x}, with no monitor state machines recorded"
+            ));
+        }
+        want_sms |= (1 << sm) << (block * PioClaim::PIO_CLAIM_BLOCK_1_SMS_SHIFT);
+    }
+    if after.1 != want_sms {
+        return Err(format!(
+            "state machine claims {:#06x}, want {want_sms:#06x} for monitor {pio:#04x}",
+            after.1
+        ));
+    }
+    for block in 0..3 {
+        let added = after.0[block] & !before.0[block];
+        if (after.0[block] & before.0[block]) != before.0[block] {
+            return Err(format!(
+                "block {block}: setting up the monitor removed instruction claims"
+            ));
+        }
+        let run = added.checked_shr(added.trailing_zeros()).unwrap_or(0);
+        if run & run.wrapping_add(1) != 0 {
+            return Err(format!(
+                "block {block}: instructions {added:#010x} claimed for the monitor aren't one run"
+            ));
+        }
+        let has_sm = sms.iter().any(|&(b, _)| b as usize == block);
+        if has_sm != (added != 0) {
+            return Err(format!(
+                "block {block}: unexpected instruction claims {added:#010x} for the monitor"
+            ));
+        }
+    }
+
+    // SAFETY: as for the real setup in setup_monitor.
+    let r = unsafe {
+        emu.setup_address_monitor_with_options(
+            ring,
+            RING_ENTRIES_LOG2,
+            mode,
+            RING_DATA_SIZE,
+            std::ptr::null(),
+        )
+    };
+    if r != OraResult::InUse {
+        return Err(format!(
+            "second setup_address_monitor returned {r:?}, expected InUse"
+        ));
+    }
+    if (
+        emu.pio_instr_claims(),
+        emu.pio_block_claims(),
+        emu.addr_monitor_pio(),
+    ) != (after.0, after.1, pio)
+    {
+        return Err("second setup_address_monitor changed the claims".to_string());
+    }
+    Ok(())
+}
+
+/// The state machines the emulated PIO has enabled, per block.
+fn enabled_sms() -> [u8; 3] {
+    // SAFETY: `_apio_emulated_pio` is a plain C global, and the emulator is
+    // single threaded.
+    unsafe { (*core::ptr::addr_of!(ffi::_apio_emulated_pio)).enabled_sms }
+}
+
 /// Arm the seam, configure and start the address monitor, and init the knock.
 fn setup_monitor(emu: &Emulator) -> Result<(), String> {
+    // Before setup the monitor has no state machines, so starting it enables
+    // none.
+    let before = enabled_sms();
+    emu.start_address_monitor();
+    if enabled_sms() != before {
+        return Err(format!(
+            "start_address_monitor before setup enabled state machines: {:?} to {:?}",
+            before,
+            enabled_sms()
+        ));
+    }
+
     emu.arm_monitor();
     let ring = emu.sram_host_ptr(RING_BASE);
 
@@ -461,6 +641,9 @@ fn setup_monitor(emu: &Emulator) -> Result<(), String> {
         }
     }
 
+    setup_monitor_without_space(emu, ring, mode)?;
+    let before = (emu.pio_instr_claims(), emu.pio_block_claims());
+
     // The real setup, asking for high priority so the accepted path is the
     // one a plugin that wants it takes.
     let high = Emulator::address_monitor_options(
@@ -475,6 +658,7 @@ fn setup_monitor(emu: &Emulator) -> Result<(), String> {
     if r != OraResult::Ok {
         return Err(format!("setup_address_monitor returned {r:?}"));
     }
+    check_monitor_claims(emu, before, ring, mode)?;
     emu.update_from_apio();
     emu.start_address_monitor();
     emu.update_from_apio();
@@ -764,7 +948,7 @@ fn layer3_standby(case: &Case, word_size: u8, mode: u8, cs_active: u32) -> Resul
             ));
         }
     }
-    Ok(())
+    check_unclaimed_pio(&emu)
 }
 
 /// The CS monitor's arming and release timing.  See [`min_cs_act`].
@@ -795,7 +979,8 @@ fn layer4_min_cs_act(
         1 << RING_ENTRIES_LOG2,
         case.cs,
         min_cycles,
-    )
+    )?;
+    check_unclaimed_pio(&emu)
 }
 
 /// Label for a /BYTE mode, for error messages.

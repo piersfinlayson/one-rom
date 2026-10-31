@@ -58,6 +58,8 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
     .current_ram_slot = 0xFF,
     .usb_dpram_pool_offset = USB_DPRAM_SIZE,
     .dma_channel_claims = DMA_FIRMWARE_CHANNELS,
+    .rgb_led_pio = RGB_LED_PIO_NONE,
+    .addr_monitor_pio = ADDR_MONITOR_PIO_NONE,
 };
 
 STATIC_ASSERT(DMA_FIRMWARE_CHANNELS & (1u << DMA_CH_ADDR_READ), "DMA_CH_ADDR_READ not in DMA_FIRMWARE_CHANNELS");

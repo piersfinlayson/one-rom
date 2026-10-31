@@ -246,7 +246,7 @@ static uint8_t monitor_cs_1_lone_pin(const onerom_alg_cs_config_t *cs_alg) {
     return MONITOR_CS_1_NO_LONE_PIN;
 }
 
-// Instructions in each CS monitor program, checked before any is built because
+// Instructions in each CS monitor program, claimed before any is built because
 // APIO_ADD_INSTR doesn't bounds check.  Per program, because a 40 pin part in
 // /BYTE mode has 12 left and one figure for all of them would fail monitors
 // that fit.
@@ -278,8 +278,37 @@ static uint8_t monitor_cs_instrs(const onerom_alg_cs_config_t *cs_alg,
     }
 }
 
-static void pio_setup_address_monitor_pios() {
+// Instructions in the address-read monitor program.
+#define MONITOR_ADDR_INSTRS 2
+
+static uint8_t monitor_addr_block(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_ADDR_BLOCK) >>
+           ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT;
+}
+
+static uint8_t monitor_addr_sm(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_ADDR_SM) >>
+           ADDR_MONITOR_PIO_ADDR_SM_SHIFT;
+}
+
+static uint8_t monitor_cs_block(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_CS_BLOCK) >>
+           ADDR_MONITOR_PIO_CS_BLOCK_SHIFT;
+}
+
+static uint8_t monitor_cs_sm(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_CS_SM) >>
+           ADDR_MONITOR_PIO_CS_SM_SHIFT;
+}
+
+static ora_pio_gpiobase_t monitor_gpiobase(uint8_t gpio_base) {
+    return (gpio_base == 0) ? ORA_PIO_GPIOBASE_0 : ORA_PIO_GPIOBASE_16;
+}
+
+static ora_result_t pio_setup_address_monitor_pios(void) {
     const onerom_rom_slot_t *slot = RUNTIME->current_rom_slot;
+    const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
+    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
 
     // APIO_ASM_CONTINUE() rather than APIO_ASM_INIT(): this function extends
     // the PIO configuration built at boot rather than starting from scratch.
@@ -316,44 +345,38 @@ static void pio_setup_address_monitor_pios() {
         } else {
             ERR("Address/CS monitor blocks %u/%u not adjacent",
                 addr_block, cs_data_block);
-            return;
+            return ORA_RESULT_INTERNAL_ERROR;
         }
     }
 
-    // Use the same block as the ROM serving CS/Data PIO, starting from
-    // where it left off
-    uint8_t cs_data_sm_pos = GET_PIO_BLOCK_INSTR_LEN(RUNTIME->cs_data_pio_block_info);
-
+    // Every JMP target below is relative to the program's start, so a program
+    // works wherever its instructions are claimed.
     uint32_t min_cycles = monitor_min_cs_act_cycles(slot);
-    uint8_t cs_monitor_alg = slot->alg->alg_cs->alg;
-    uint8_t cs_monitor_instrs = monitor_cs_instrs(slot->alg->alg_cs, min_cycles);
-    if ((uint32_t)cs_data_sm_pos + cs_monitor_instrs > APIO_MAX_PIO_INSTRS) {
-        // LCOV_UNREACHABLE_START - the tightest combination is a 40 pin part
-        // in /BYTE mode, 12 instructions left against AlgCs0's 9.
-        ERR("CS monitor alg %u needs %u instructions, block %u has %u left",
-            (unsigned)cs_monitor_alg, (unsigned)cs_monitor_instrs,
-            (unsigned)cs_data_block,
-            (unsigned)(APIO_MAX_PIO_INSTRS - cs_data_sm_pos));
-        return;
-        // LCOV_UNREACHABLE_STOP
+    uint8_t cs_monitor_instrs = monitor_cs_instrs(cs_alg, min_cycles);
+    uint32_t cs_block = cs_data_block;
+    uint32_t cs_sm = ORA_PIO_SM_ANY;
+    uint32_t cs_first = ORA_PIO_INSTR_ANY;
+    ora_result_t rc = ora_claim_pio(&cs_block, &cs_sm, &cs_first, cs_monitor_instrs,
+                                    monitor_gpiobase(cs_alg->gpio_base), 0);
+    if (rc != ORA_RESULT_OK) {
+        return rc;
+    }
+    uint32_t addr_claim_block = addr_block;
+    uint32_t addr_sm = ORA_PIO_SM_ANY;
+    uint32_t addr_first = ORA_PIO_INSTR_ANY;
+    rc = ora_claim_pio(&addr_claim_block, &addr_sm, &addr_first, MONITOR_ADDR_INSTRS,
+                       monitor_gpiobase(addr_alg->gpio_base), 0);
+    if (rc != ORA_RESULT_OK) {
+        pio_release((uint8_t)cs_block, (uint8_t)cs_sm, (uint8_t)cs_first, cs_monitor_instrs);
+        return rc;
     }
 
-    APIO_SET_BLOCK_FROM_VAR(cs_data_block, cs_data_sm_pos);
+    APIO_SET_BLOCK_FROM_VAR(cs_block, cs_first);
 
     //
-    // SM 0: CS Monitor
+    // CS Monitor
     //
-    if (CHECK_PIO_SM_INFO(RUNTIME->cs_data_pio_sm_info, SM_ADDR_MONITOR_CS_MONITOR)) {
-        ERR("CS monitor SM already in use");
-        return;
-    }
-    APIO_SET_SM(SM_ADDR_MONITOR_CS_MONITOR);
-    const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
-    if (cs_alg->gpio_base == 0) {
-        APIO_GPIOBASE_0();
-    } else {
-        APIO_GPIOBASE_16();
-    }
+    APIO_SET_SM_VAR(cs_sm);
     uint8_t base_cs_pin = cs_alg->base_cs_pin;
     uint8_t num_cs_pins = cs_alg->num_cs_pins;
     uint32_t execctrl = 0;
@@ -503,7 +526,7 @@ static void pio_setup_address_monitor_pios() {
                     // ignored pin is the third.
                     ERR("AlgCs1 ignored pin %u is out of SET's range",
                         (unsigned)params->cs_ignore_index);
-                    return;
+                    return ORA_RESULT_INTERNAL_ERROR;
                     // LCOV_UNREACHABLE_STOP
                 }
 
@@ -649,29 +672,17 @@ static void pio_setup_address_monitor_pios() {
     );
     APIO_SM_JMP_TO_START();
 
-    APIO_END_BLOCK_FROM(cs_data_sm_pos);
+    APIO_END_BLOCK_FROM(cs_first);
 
     //
-    // SM 1: Address read monitor
+    // Address read monitor
     //
-    uint8_t addr_sm_pos = GET_PIO_BLOCK_INSTR_LEN(RUNTIME->addr_pio_block_info);
-    APIO_SET_BLOCK_FROM_VAR(addr_block, addr_sm_pos);
-
-    // There is currently only a single address algorithm
-    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
-    APIO_SET_SM(SM_ADDR_MONITOR_ADDR_READ);
-
-    // Set this block's GPIOBASE from the address algorithm.  It may differ from
-    // the CS/data block's base — 32-pin ROMs have the address pins in the
-    // upper GPIO bank (base 16) while CS/data stay in the lower bank (base 0).
-    // The two monitor SMs are in separate blocks, so each uses the base
-    // appropriate to the pins it reads.  The CS monitor set its block's base
-    // above.
-    if (addr_alg->gpio_base == 0) {
-        APIO_GPIOBASE_0();
-    } else {
-        APIO_GPIOBASE_16();
-    }
+    // There is currently only a single address algorithm.  Its block's
+    // GPIOBASE may differ from the CS/data block's — 32-pin ROMs have the
+    // address pins in the upper GPIO bank (base 16) while CS/data stay in the
+    // lower bank (base 0).  Each claim above passes its own block's GPIOBASE.
+    APIO_SET_BLOCK_FROM_VAR(addr_claim_block, addr_first);
+    APIO_SET_SM_VAR(addr_sm);
 
     APIO_ADD_INSTR(APIO_WAIT_IRQ_HIGH(ADDR_MONITOR_IRQ));
     APIO_WRAP_TOP();
@@ -689,9 +700,15 @@ static void pio_setup_address_monitor_pios() {
     );
     APIO_SM_JMP_TO_START();
 
-    APIO_END_BLOCK_FROM(addr_sm_pos);
+    APIO_END_BLOCK_FROM(addr_first);
 
-    return;
+    RUNTIME->addr_monitor_pio = (uint8_t)(
+        (addr_claim_block << ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT) |
+        (addr_sm << ADDR_MONITOR_PIO_ADDR_SM_SHIFT) |
+        (cs_block << ADDR_MONITOR_PIO_CS_BLOCK_SHIFT) |
+        (cs_sm << ADDR_MONITOR_PIO_CS_SM_SHIFT));
+
+    return ORA_RESULT_OK;
 }
 
 #if REAL_HARDWARE
@@ -797,13 +814,17 @@ ora_result_t pio_setup_address_monitor(
         return ORA_RESULT_INVALID_SIZE;
     }
 
-    pio_setup_address_monitor_pios();
+    if (RUNTIME->addr_monitor_pio != ADDR_MONITOR_PIO_NONE) {
+        return ORA_RESULT_IN_USE;
+    }
+    ora_result_t rc = pio_setup_address_monitor_pios();
+    if (rc != ORA_RESULT_OK) {
+        return rc;
+    }
     pio_setup_address_monitor_dma(
         DMA_CH_ADDR_MONITOR,
-        // The address-read monitor SM shares the ROM serving address block.  The
-        // DMA must drain that block's RX FIFO, not the (unused) monitor block.
-        GET_PIO_BLOCK_INFO(RUNTIME->addr_pio_block_info),
-        SM_ADDR_MONITOR_ADDR_READ,
+        monitor_addr_block(),
+        monitor_addr_sm(),
         ring_buf,
         ring_size_log2,
         data_size,
@@ -1755,10 +1776,11 @@ ora_result_t pio_start_address_monitor(void) {
     // pio_setup_address_monitor_pios), so enable each in its own block rather
     // than in the unused monitor block.  The serving SMs are left as they are,
     // so the CS SM stays stopped in standby mode.
-    uint8_t addr_block = GET_PIO_BLOCK_INFO(RUNTIME->addr_pio_block_info);
-    uint8_t cs_block   = GET_PIO_BLOCK_INFO(RUNTIME->cs_data_pio_block_info);
-    pio_enable_sms(addr_block, 1u << SM_ADDR_MONITOR_ADDR_READ);
-    pio_enable_sms(cs_block, 1u << SM_ADDR_MONITOR_CS_MONITOR);
+    if (RUNTIME->addr_monitor_pio == ADDR_MONITOR_PIO_NONE) {
+        return ORA_RESULT_OK;
+    }
+    pio_enable_sms(monitor_addr_block(), (uint8_t)(1u << monitor_addr_sm()));
+    pio_enable_sms(monitor_cs_block(), (uint8_t)(1u << monitor_cs_sm()));
 
     return ORA_RESULT_OK;
 }

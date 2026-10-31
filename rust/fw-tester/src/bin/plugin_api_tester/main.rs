@@ -361,6 +361,15 @@ fn run_slot(
     );
     report.add("uart_claims", tests::claim::test_uart_claims(&emulator));
     report.add(
+        "pio_claims",
+        tests::claim::test_pio_claims(&emulator, tests::led::has_rgb(&emulator)),
+    );
+    if tests::led::has_rgb(&emulator) {
+        report.add("pio_led_claim", tests::claim::test_pio_led_claim(&emulator));
+    } else {
+        report.skip("pio_led_claim", "board has no RGB LED");
+    }
+    report.add(
         "peripheral_and_irq_calls",
         tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
     );
@@ -568,6 +577,7 @@ fn run_slot(
             }
         })
         .unwrap_or(8);
+    emulator.poison_unclaimed_pio();
     emulator.setup_epio(word_size);
     emulator.step_cycles(timing::CYCLES_BEFORE_START);
 
@@ -756,6 +766,17 @@ fn run_slot(
     } else {
         report.skip("led_rgb_defaults", "board has no RGB LED");
     }
+
+    // Last, so it covers everything above.
+    report.add(
+        "unclaimed_pio",
+        match emulator.unclaimed_pio_used() {
+            Some(block) => Err(format!(
+                "the firmware wrote or ran an unclaimed instruction in PIO block {block}"
+            )),
+            None => Ok(()),
+        },
+    );
 
     // `emulator` dropped here; Drop impl frees the epio handle before the next
     // slot boots.

@@ -405,10 +405,22 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
 
         "inline_array" => {
             let n = field.count.unwrap_or(0);
-            let total = n as usize * prim_size(field.element.as_deref().unwrap_or("u8"));
-            out.push_str(&format!(
-                "{indent}let {name} = view.read_bytes::<{n}>(offset)?; offset += {total};\n"
-            ));
+            let element = field.element.as_deref().unwrap_or("u8");
+            let size = prim_size(element);
+            let total = n as usize * size;
+            if size == 1 {
+                out.push_str(&format!(
+                    "{indent}let {name} = view.read_bytes::<{n}>(offset)?; offset += {total};\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{indent}let mut {name} = [0{element}; {n}];\n\
+                     {indent}for (i, e) in {name}.iter_mut().enumerate() {{\n\
+                     {indent}    *e = view.read_{element}_le(offset + (i * {size}) as u32)?;\n\
+                     {indent}}}\n\
+                     {indent}offset += {total};\n"
+                ));
+            }
             // Optional magic validation: compare the leading bytes against
             // the generated constants named. More than one name means the
             // value changed between firmware generations, and every value
@@ -1697,11 +1709,12 @@ pub fn rust_default_expr(field: &Field, schema: &Schema, release: &str) -> Strin
         "struct_array_ptr" | "struct_ptr_array_ptr" => return "Vec::new()".to_string(),
         "opaque_ptr" | "fn_ptr" => return "Pointer::Null".to_string(),
         "inline_array" => {
+            let element = field.element.as_deref().unwrap_or("u8");
             return format!(
                 "[{}]",
                 array_default_elements(field)
                     .iter()
-                    .map(|b| format!("{b}u8"))
+                    .map(|b| format!("{b}{element}"))
                     .collect::<Vec<_>>()
                     .join(", ")
             );

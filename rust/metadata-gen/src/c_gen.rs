@@ -20,7 +20,7 @@ use onerom_config::chip::{CHIP_TYPES, ChipType};
 
 use crate::schema::{
     ARRAY_KINDS, Bitfield, BitfieldMember, ConstantValue, Field, POINTER_KINDS, Schema, SimpleFam,
-    Struct, TaggedFam, array_default_elements, field_size, strip_type_suffix,
+    Struct, TaggedFam, array_default_elements, field_size, prim_size, strip_type_suffix,
 };
 
 // ---------------------------------------------------------------------------
@@ -331,20 +331,22 @@ fn emit_accessor_default_object(field: &Field, accessor: &str, out: &mut String)
         return;
     }
     let elements = array_default_elements(field);
-    let bytes = |row: &[u8]| -> String {
+    let element = field.element.as_deref().unwrap_or("u8");
+    let digits = prim_size(element) * 2;
+    let values = |row: &[u32]| -> String {
         row.iter()
-            .map(|b| format!("0x{b:02X}"))
+            .map(|b| format!("0x{b:0digits$X}"))
             .collect::<Vec<_>>()
             .join(", ")
     };
     let name = c_default_object_name(accessor);
-    let etype = c_primitive(field.element.as_deref().unwrap_or("u8"));
+    let etype = c_primitive(element);
 
     if field.kind == "inline_array2d" {
         let cols = field.cols.unwrap_or(0) as usize;
         let rows: Vec<String> = elements
             .chunks(cols.max(1))
-            .map(|row| format!("{{ {} }}", bytes(row)))
+            .map(|row| format!("{{ {} }}", values(row)))
             .collect();
         out.push_str(&format!(
             "static const {etype} {name}[{}][{}] = {{ {} }};\n",
@@ -356,7 +358,7 @@ fn emit_accessor_default_object(field: &Field, accessor: &str, out: &mut String)
         out.push_str(&format!(
             "static const {etype} {name}[{}] = {{ {} }};\n",
             c_array_dim(field.count_ref.as_deref(), field.count),
-            bytes(&elements),
+            values(&elements),
         ));
     }
 }

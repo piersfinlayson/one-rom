@@ -100,6 +100,9 @@ pub struct SetResult {
     /// tester-derived gap set and the firmware's declared `GpioOverLow` set
     /// disagree.  The set's read passes are not run when this is set.
     pub gap_error: Option<String>,
+    /// `Some(msg)` → the firmware wrote or ran an unclaimed PIO instruction.
+    /// See `Emulator::poison_unclaimed_pio`.
+    pub unclaimed_pio: Option<String>,
     /// Optional informational note shown in the report alongside this set's
     /// results (e.g. sel-wrap or one-beyond annotation).
     pub note: Option<String>,
@@ -114,6 +117,7 @@ impl SetResult {
             skip_reason: None,
             boot_error: None,
             gap_error: None,
+            unclaimed_pio: None,
             note: None,
         }
     }
@@ -126,6 +130,7 @@ impl SetResult {
             skip_reason: Some(reason.to_string()),
             boot_error: None,
             gap_error: None,
+            unclaimed_pio: None,
             note: None,
         }
     }
@@ -138,6 +143,7 @@ impl SetResult {
             skip_reason: None,
             boot_error: Some(reason.to_string()),
             gap_error: None,
+            unclaimed_pio: None,
             note: None,
         }
     }
@@ -152,6 +158,7 @@ impl SetResult {
             skip_reason: None,
             boot_error: None,
             gap_error: Some(reason.to_string()),
+            unclaimed_pio: None,
             note: None,
         }
     }
@@ -160,11 +167,19 @@ impl SetResult {
         self.note = Some(note);
     }
 
+    pub fn set_unclaimed_pio(&mut self, msg: String) {
+        self.unclaimed_pio = Some(msg);
+    }
+
     /// `true` iff the set ran and every chip/mode passed.
     /// Boot errors and non-skipped sets with failures return `false`.
     /// Skipped sets return `false` but are excluded from [`TestReport::all_passed`].
     pub fn passed(&self) -> bool {
-        if self.skipped || self.boot_error.is_some() || self.gap_error.is_some() {
+        if self.skipped
+            || self.boot_error.is_some()
+            || self.gap_error.is_some()
+            || self.unclaimed_pio.is_some()
+        {
             return false;
         }
         self.chip_results.iter().all(|c| c.passed())
@@ -245,6 +260,9 @@ impl TestReport {
             if let Some(ref msg) = set.gap_error {
                 println!("Set {} : ADDRESS-WINDOW GAP CHECK — {}", set.set_idx, msg);
                 continue;
+            }
+            if let Some(ref msg) = set.unclaimed_pio {
+                println!("Set {} : UNCLAIMED PIO INSTRUCTION — {}", set.set_idx, msg);
             }
             if set.skipped {
                 println!(

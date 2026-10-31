@@ -29,6 +29,15 @@ uint16_t ffi_dma_channel_claims(void);
 void ffi_set_dma_channel_claims(uint16_t claims);
 uint8_t ffi_hw_claims(void);
 void ffi_set_hw_claims(uint8_t claims);
+uint32_t ffi_pio_instr_claims(uint8_t block);
+void ffi_set_pio_instr_claims(uint8_t block, uint32_t claims);
+uint16_t ffi_pio_block_claims(void);
+void ffi_set_pio_block_claims(uint16_t claims);
+uint8_t ffi_rgb_led_pio(void);
+void ffi_set_rgb_led_pio(uint8_t pio);
+uint8_t ffi_addr_monitor_pio(void);
+void ffi_poison_unclaimed_pio(uint8_t irq);
+int8_t ffi_unclaimed_pio_written(uint8_t irq);
 
 // The GPIO claims in runtime info, bit N for GPIO N.
 uint64_t ffi_gpio_claims(void);

@@ -164,7 +164,7 @@ fn arm(emu: &Emulator, led: u8) -> Result<LedState, String> {
 /// state behind.  Setting the status LED after the reset re-establishes the
 /// channel and `status_led_enabled` together, which a reset alone does not: the
 /// reset forgets what the channels were doing without driving either LED.
-fn with_engine<F>(emu: &Emulator, body: F) -> Result<(), String>
+pub fn with_engine<F>(emu: &Emulator, body: F) -> Result<(), String>
 where
     F: FnOnce(&Emulator) -> Result<(), String>,
 {

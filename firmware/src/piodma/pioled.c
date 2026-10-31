@@ -111,8 +111,8 @@ STATIC_ASSERT(
     "ora_led_state_t is smaller than the size it first shipped at"
 );
 
-// The first GPIO the state machine can address, given GPIOBASE 16.
-#define LED_GPIOBASE_FIRST      16u
+// The RGB LED's PIO program length, in instructions.
+#define LED_PIO_INSTRS          4u
 
 // TIMER0_IRQ_1, this firmware's interrupt for the frame timer.  Alarm 0 is
 // left to plugins, which reach it through ORA_IRQ_TIMER0_IRQ_0.
@@ -188,6 +188,9 @@ typedef struct {
 } led_channel_t;
 STATIC_ASSERT(sizeof(led_channel_t) == 24, "led_channel_t must be 24 bytes");
 
+// The use of static variables in the One ROM firmware is deprecated and its
+// use must not be extended.
+
 static led_channel_t led_channels[LED_COUNT];
 
 // Interrupts are masked for as long as the lock is held.  The frame interrupt
@@ -220,8 +223,8 @@ static void led_unlock(uint32_t primask) {
 }
 #endif // TEST_BUILD
 
-// Whether the RGB LED's state machine has been programmed and enabled.
-static uint8_t led_pio_claimed;
+// Whether the RGB LED's GPIO has been switched to its state machine.
+static uint8_t led_pin_set_up;
 
 // A pin handover owed to the status LED, and when it comes due.  Only a board
 // whose two LEDs share a GPIO ever has one.
@@ -377,44 +380,74 @@ static uint32_t led_last_pixel;
 static uint32_t led_pixel_count;
 #endif // TEST_BUILD
 
+static uint8_t led_pio_block(void) {
+    return (RUNTIME->rgb_led_pio & RGB_LED_PIO_BLOCK) >> RGB_LED_PIO_BLOCK_SHIFT;
+}
+
+static uint8_t led_pio_sm(void) {
+    return (RUNTIME->rgb_led_pio & RGB_LED_PIO_SM) >> RGB_LED_PIO_SM_SHIFT;
+}
+
 static void led_pio_write(uint32_t grb) {
 #if defined(TEST_BUILD)
     led_last_pixel = grb;
     led_pixel_count++;
 #endif // TEST_BUILD
 
-    APIO_TXF_AT(BLOCK_LED, SM_LED) = grb << 8;
+    APIO_TXF_AT(led_pio_block(), led_pio_sm()) = grb << 8;
 }
 
-// Program and enable the state machine that drives the RGB LED.
-//
-// Extends the PIO configuration built at boot rather than starting over, the
-// way the address monitor does, so nothing already running is disturbed.  Block
-// BLOCK_LED carries no serving state machine, so the block is built from
-// instruction zero.
-static void led_pio_claim(uint8_t gpio) {
+// Claim, program and enable the RGB LED's state machine before the plugins
+// start.  The GPIO is switched over when the LED first lights.
+void pio_led_launch(void) {
+    uint8_t gpio = led_gpio(ORA_LED_RGB);
+    if (gpio == GPIO_NONE) {
+        return;
+    }
+
+    // Prefer a block already in use with the right GPIOBASE.  Claiming in an
+    // unused block would fix its GPIOBASE, and a plugin may require the other
+    // value.
+    ora_pio_gpiobase_t gpio_base = (gpio < 32u) ? ORA_PIO_GPIOBASE_0 : ORA_PIO_GPIOBASE_16;
+    uint32_t block = ORA_PIO_BLOCK_ANY;
+    for (uint32_t b = 0; b < APIO_MAX_PIO_BLOCKS; b++) {
+        if (pio_block_in_use(b) && (pio_block_gpiobase(b) == gpio_base)) {
+            block = b;
+            break;
+        }
+    }
+    uint32_t sm = ORA_PIO_SM_ANY;
+    uint32_t first = ORA_PIO_INSTR_ANY;
+    ora_result_t rc = ora_claim_pio(&block, &sm, &first, LED_PIO_INSTRS, gpio_base, 0);
+    if ((rc != ORA_RESULT_OK) && (block != ORA_PIO_BLOCK_ANY)) {
+        block = ORA_PIO_BLOCK_ANY;
+        rc = ora_claim_pio(&block, &sm, &first, LED_PIO_INSTRS, gpio_base, 0);
+    }
+    if (rc != ORA_RESULT_OK) {
+        ERR("RGB LED PIO claim failed");
+        return;
+    }
+    RUNTIME->rgb_led_pio = (uint8_t)((block << RGB_LED_PIO_BLOCK_SHIFT) |
+                                     (sm << RGB_LED_PIO_SM_SHIFT));
+
     uint32_t mhz = ora_get_sysclk_mhz();
     uint32_t clkdiv_int;
     uint32_t clkdiv_frac;
 
-    // GPIOBASE 16 covers GPIOs 16 to 47, which is every GPIO an RGB LED sits
-    // on, so the state machine addresses the pin relative to that window.
-    uint8_t pin = (uint8_t)(gpio - LED_GPIOBASE_FIRST);
+    // The pin number is relative to the block's GPIOBASE.
+    uint8_t pin = (uint8_t)(gpio - gpio_base);
 
     // The SM's clock, as a divider of the system clock.  The fraction is in
     // 1/256ths.
     clkdiv_int  = (mhz * 1000000u) / LED_PIO_HZ;
     clkdiv_frac = (((mhz * 1000000u) % LED_PIO_HZ) * 256u) / LED_PIO_HZ;
 
+    // Adds to the PIO configuration built at boot, so nothing already running
+    // is disturbed.
     APIO_ASM_CONTINUE();
 
-    APIO_GPIO_PULL_NONE(gpio);
-    APIO_GPIO_INPUT_OUTPUT(gpio, BLOCK_LED);
-    APIO_GPIO_DRIVE(gpio, APIO_DRIVE_8MA);
-    APIO_GPIO_SLEW_FAST(gpio);
-
-    APIO_SET_BLOCK_FROM(BLOCK_LED, 0);
-    APIO_SET_SM(SM_LED);
+    APIO_SET_BLOCK_FROM_VAR(block, first);
+    APIO_SET_SM_VAR(sm);
 
     APIO_WRAP_BOTTOM();
     APIO_ADD_INSTR(APIO_ADD_DELAY(APIO_OUT_X(1), LED_DELAY_OUT));
@@ -444,28 +477,36 @@ static void led_pio_claim(uint8_t gpio) {
 
     APIO_SM_CLKDIV_SET(clkdiv_int, clkdiv_frac);
 
-    // Take the pin low and make it an output before the program runs, so the
-    // line is at the WS2812's reset level rather than wherever boot left it.
+    // Set the state machine's pin low and as an output before the program
+    // runs.  The line is then at the WS2812's reset level when the GPIO is
+    // switched over.
     APIO_SM_EXEC_INSTR(APIO_SET_PINS(0));
     APIO_SM_EXEC_INSTR(APIO_SET_PIN_DIRS(1));
     APIO_SM_JMP_TO_START();
 
-    APIO_GPIOBASE_16();
+    APIO_END_BLOCK_FROM(first);
+    pio_enable_sms((uint8_t)block, (uint8_t)(1u << sm));
+}
 
-    APIO_END_BLOCK();
-    APIO_ENABLE_SMS(BLOCK_LED, 1u << SM_LED);
+// Switch the RGB LED's GPIO to its state machine.  Called the first time the LED
+// lights.
+static void led_pio_pin_set_up(uint8_t gpio) {
+    APIO_GPIO_PULL_NONE(gpio);
+    pio_gpio_to_block(gpio, led_pio_block());
+    APIO_GPIO_DRIVE(gpio, APIO_DRIVE_8MA);
+    APIO_GPIO_SLEW_FAST(gpio);
 
-    led_pio_claimed = 1;
+    led_pin_set_up = 1;
 
-    // Setting the pin low above started a low, and the chip takes a frame only
-    // after one that has lasted its reset time.  Microseconds have passed, so
-    // the first pixel owes that wait - this is the frame that follows power-up,
-    // and without the wait the chip reads it out of step and lights a colour
-    // nobody asked for.
+    // Switching the GPIO over started a low.  The WS2812 reads a frame only
+    // after a low that has lasted its reset time, and only microseconds have
+    // passed, so the first pixel waits for it.  Without the wait the chip reads
+    // the first frame out of step and lights the wrong colour.
     LED_FLAG_SET(LED_FLAG_RESET_OWED);
 
-    // On a shared pin the claim is only ever momentary: the status LED has the
-    // pin the rest of the time, so it is owed straight back.
+    // On a shared pin the state machine uses the pin only while a pixel is
+    // sent.  The status LED uses it the rest of the time, so the pin is owed
+    // straight back.
     if (led_pin_is_shared()) {
         led_park_due_us = (uint32_t)onerom_timer_us64() + LED_PARK_DELAY_US;
         LED_FLAG_SET(LED_FLAG_PARK_PENDING);
@@ -523,7 +564,7 @@ static void led_borrow_pin(uint8_t gpio) {
         return;
     }
 
-    APIO_GPIO_INPUT_OUTPUT(gpio, BLOCK_LED);
+    pio_gpio_to_block(gpio, led_pio_block());
     gpio_pio_claim(gpio);
     LED_FLAG_SET(LED_FLAG_PIN_WITH_PIO);
     led_park_due_us = (uint32_t)onerom_timer_us64() + LED_PARK_DELAY_US;
@@ -537,6 +578,12 @@ static void led_borrow_pin(uint8_t gpio) {
 // three values.  The envelope is how far up a fade the frame is, 0 to 255, and
 // multiplies with brightness rather than replacing it - a breathe at 40%
 // brightness peaks at 40%.
+//
+// Marked noinline because -O3 would otherwise inline it into one caller and
+// keep a separate copy for the others.  That is an unnecessary optimisation.
+// This may be able to be removed in future if One ROM moves to a more
+// targetted optimisation approach.
+__attribute__((noinline))
 static void led_rgb_write(
     const led_channel_t *ch,
     uint8_t red,
@@ -557,8 +604,8 @@ static void led_rgb_write(
         // LCOV_UNREACHABLE_STOP
     }
 
-    if (!led_pio_claimed) {
-        led_pio_claim(gpio);
+    if (!led_pin_set_up) {
+        led_pio_pin_set_up(gpio);
     }
 
     // On a shared pin the state machine gets it for as long as the pixel takes,
@@ -902,7 +949,7 @@ void pio_led_frame(void) {
 #if defined(TEST_BUILD)
 void pio_led_reset(void) {
     memset(led_channels, 0, sizeof(led_channels));
-    led_pio_claimed = 0;
+    led_pin_set_up = 0;
     led_deadline_ms = 0;
     led_have_deadline = 0;
     led_flags = 0;
@@ -978,6 +1025,9 @@ ora_result_t pio_led_set(const ora_led_request_t *req) {
     }
 
     if (led_gpio(req->led) == GPIO_NONE) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    if ((req->led == ORA_LED_RGB) && (RUNTIME->rgb_led_pio == RGB_LED_PIO_NONE)) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
 

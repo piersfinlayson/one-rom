@@ -82,6 +82,7 @@ pub enum OraResult {
     LogFull,
     NotReady,
     InUse,
+    Conflict,
     /// A code this binding does not know. Carries the C type's own width,
     /// which `-fshort-enums` makes one byte.
     Unknown(ffi::ora_result_t),
@@ -107,6 +108,7 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_LOG_FULL => Self::LogFull,
             ffi::ora_result_t_ORA_RESULT_NOT_READY => Self::NotReady,
             ffi::ora_result_t_ORA_RESULT_IN_USE => Self::InUse,
+            ffi::ora_result_t_ORA_RESULT_CONFLICT => Self::Conflict,
             other => Self::Unknown(other),
         }
     }
@@ -231,6 +233,13 @@ macro_rules! plugin_call {
 pub const ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS: u32 = 0x00000001;
 pub const ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS: u32 = 0x00000002;
 
+/// The IRQ flag an unclaimed instruction sets after
+/// [`Emulator::poison_unclaimed_pio`].  Serving, the RGB LED and the address
+/// monitor don't use it.
+const UNCLAIMED_PIO_IRQ: u8 = 7;
+
+const PIO_BLOCKS: u8 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RttUp {
     pub is_usb_dpram_log: bool,
@@ -303,6 +312,10 @@ impl Emulator {
             // SAFETY: firmware_main initialises the remaining global state and
             // returns (stubs prevent it from spinning or touching hardware).
             ffi::firmware_main();
+
+            // Run the part of plugin launch that comes before the plugins.  The
+            // rest is compiled out of a test build.
+            ffi::launch_prepare();
         }
         Self {
             epio: core::ptr::null_mut(),
@@ -724,6 +737,69 @@ impl Emulator {
 
     pub fn set_gpio_claims(&self, claims: u64) {
         unsafe { ffi::ffi_set_gpio_claims(claims) };
+    }
+
+    /// Runtime info's `pio_instr_claims`, one word per PIO block, bit N for
+    /// instruction N.
+    pub fn pio_instr_claims(&self) -> [u32; 3] {
+        std::array::from_fn(|block| unsafe { ffi::ffi_pio_instr_claims(block as u8) })
+    }
+
+    pub fn set_pio_instr_claims(&self, claims: [u32; 3]) {
+        for (block, claim) in claims.into_iter().enumerate() {
+            unsafe { ffi::ffi_set_pio_instr_claims(block as u8, claim) };
+        }
+    }
+
+    /// Runtime info's `pio_block_claims`, as `onerom_pio_block_claim_t` bits.
+    pub fn pio_block_claims(&self) -> u16 {
+        unsafe { ffi::ffi_pio_block_claims() }
+    }
+
+    pub fn set_pio_block_claims(&self, claims: u16) {
+        unsafe { ffi::ffi_set_pio_block_claims(claims) };
+    }
+
+    /// Runtime info's `rgb_led_pio`, as `onerom_rgb_led_pio_t` bits.
+    pub fn rgb_led_pio(&self) -> u8 {
+        unsafe { ffi::ffi_rgb_led_pio() }
+    }
+
+    pub fn set_rgb_led_pio(&self, pio: u8) {
+        unsafe { ffi::ffi_set_rgb_led_pio(pio) };
+    }
+
+    /// Claim the RGB LED's PIO state machine and write its program, as plugin
+    /// launch does.
+    pub fn pio_led_launch(&self) {
+        unsafe { ffi::pio_led_launch() };
+    }
+
+    /// Runtime info's `addr_monitor_pio`, as `onerom_addr_monitor_pio_t` bits.
+    pub fn addr_monitor_pio(&self) -> u8 {
+        unsafe { ffi::ffi_addr_monitor_pio() }
+    }
+
+    /// Fill every unclaimed PIO instruction with `IRQ WAIT` on IRQ flag
+    /// `UNCLAIMED_PIO_IRQ`.  A state machine that runs one sets that flag in
+    /// its block and stops.  See [`Self::unclaimed_pio_used`].
+    ///
+    /// Call after boot and before [`Self::setup_epio`].  The instructions are
+    /// written to the apio emulation's record, which `epio_update_from_apio()`
+    /// copies into epio on every call.
+    pub fn poison_unclaimed_pio(&self) {
+        unsafe { ffi::ffi_poison_unclaimed_pio(UNCLAIMED_PIO_IRQ) };
+    }
+
+    /// The first PIO block in which the firmware has written or run an
+    /// unclaimed instruction since [`Self::poison_unclaimed_pio`].
+    pub fn unclaimed_pio_used(&self) -> Option<u8> {
+        let epio = self.epio_or_panic();
+        let written = unsafe { ffi::ffi_unclaimed_pio_written(UNCLAIMED_PIO_IRQ) };
+        let ran = (0..PIO_BLOCKS).find(
+            |&block| unsafe { ffi::epio_peek_block_irq_num(epio, block, UNCLAIMED_PIO_IRQ) } != 0,
+        );
+        u8::try_from(written).ok().or(ran)
     }
 
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
@@ -2042,6 +2118,33 @@ impl Emulator {
             std::ptr::null_mut(),
             0
         ))
+    }
+
+    /// `ORA_ID_CLAIM_PIO`, passing `block`, `sm` and `first_instr` in and
+    /// returning their values after the call.  `None` passes NULL for that
+    /// argument and is returned as `None`.
+    pub fn claim_pio(
+        &self,
+        block: Option<u32>,
+        sm: Option<u32>,
+        first_instr: Option<u32>,
+        num_instrs: u32,
+        gpio_base: ffi::ora_pio_gpiobase_t,
+        flags: u32,
+    ) -> (OraResult, Option<u32>, Option<u32>, Option<u32>) {
+        let (mut block, mut sm, mut first_instr) = (block, sm, first_instr);
+        let ptr = |v: &mut Option<u32>| v.as_mut().map_or(std::ptr::null_mut(), |v| v as *mut u32);
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_PIO,
+            ffi::ora_claim_pio_fn_t,
+            ptr(&mut block),
+            ptr(&mut sm),
+            ptr(&mut first_instr),
+            num_instrs,
+            gpio_base,
+            flags
+        ));
+        (r, block, sm, first_instr)
     }
 
     /// `ORA_ID_CLAIM_UART`.

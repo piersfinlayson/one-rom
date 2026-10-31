@@ -102,6 +102,21 @@ void pio_disable_sms(uint8_t block, uint8_t sms);
 // Run instr on a state machine at once, whether or not it is enabled.
 void pio_sm_exec(uint8_t block, uint8_t sm, uint16_t instr);
 
+void pio_set_gpiobase(uint8_t block, ora_pio_gpiobase_t gpio_base);
+void pio_gpio_to_block(uint8_t gpio, uint8_t block);
+
+// plugin.c
+
+// The plugin call, declared here because the firmware also calls it.
+ora_result_t ora_claim_pio(uint32_t *block,
+                           uint32_t *sm,
+                           uint32_t *first_instr,
+                           uint32_t num_instrs,
+                           ora_pio_gpiobase_t gpio_base,
+                           uint32_t flags);
+
+void pio_release(uint8_t block, uint8_t sm, uint8_t first_instr, uint8_t num_instrs);
+
 // piorom.c
 extern int piorom2(void);
 
@@ -134,6 +149,8 @@ ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out);
 // report, and restore a beacon to.  Nothing is scheduled here, so this reads no
 // clock and touches no timer.
 void pio_led_boot(void);
+
+void pio_led_launch(void);
 
 // Advance every LED whose mode repeats and end any hold that has expired.
 // Called from the TIMER0 alarm 1 handler, which it re-arms for whichever LED
@@ -242,6 +259,7 @@ const ora_entry_args_t *plugin_entry_args(
 );
 const ora_plugin_header_t *system_plugin_to_launch(void);
 const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched);
+uint8_t launch_prepare(void);
 #if defined(TEST_BUILD)
 int other_core_yield_capability_from(uint32_t this_core);
 #endif // TEST_BUILD

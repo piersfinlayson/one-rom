@@ -162,6 +162,17 @@ void setup_adc(void) {
     STUB_LOG("setup_adc");
 }
 
+// There is no OTP to lock.
+void otp_lock(void) {
+    STUB_LOG("otp_lock");
+}
+
+// There is no clock to start.  clk_peri's frequency is a constant, so
+// ORA_METADATA_KEY_CLK_PERI_HZ returns the same value either way.
+void setup_clk_peri(void) {
+    STUB_LOG("setup_clk_peri");
+}
+
 // There is no TIMER0 to start.  Under a test build the counter behind
 // ora_get_plugin_uptime_ms() is the scripted sequence further down this file,
 // which a test drives directly.

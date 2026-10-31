@@ -451,7 +451,7 @@ fn run_single_set(
         })
         .collect();
 
-    SetResult::done(set_idx, chip_results)
+    check_unclaimed_pio(&emulator, SetResult::done(set_idx, chip_results))
     // `emulator` dropped here; Drop impl frees the epio handle.
 }
 
@@ -682,7 +682,7 @@ fn run_standby_set(
             .and_then(|()| expect_undriven(&emulator, &cache, chip_type, force_16_bit)),
     );
 
-    let mut result = SetResult::done(set_idx, vec![chip_result]);
+    let mut result = check_unclaimed_pio(&emulator, SetResult::done(set_idx, vec![chip_result]));
     result.set_note("boots into standby, served once standby was turned off".to_string());
     result
 }
@@ -1179,7 +1179,7 @@ fn run_multi_set(
         });
     }
 
-    SetResult::done(set_idx, chip_results)
+    check_unclaimed_pio(&emulator, SetResult::done(set_idx, chip_results))
     // `emulator` dropped here; Drop impl frees the epio handle.
 }
 
@@ -1415,7 +1415,7 @@ fn run_banked_set(
         });
     }
 
-    SetResult::done(set_idx, chip_results)
+    check_unclaimed_pio(&emulator, SetResult::done(set_idx, chip_results))
     // `emulator` dropped here; Drop impl frees the epio handle.
 }
 
@@ -1537,10 +1537,21 @@ fn boot_set(
 
     let word_size = word_size_for_set(chip_set);
     debug!("Set {}: word_size={}", set_idx, word_size);
+    emulator.poison_unclaimed_pio();
     emulator.setup_epio(word_size);
     emulator.step_cycles(timing::CYCLES_BEFORE_START);
 
     Ok((emulator, fw_version))
+}
+
+/// Fail the set if the firmware wrote or ran an unclaimed PIO instruction.
+fn check_unclaimed_pio(emulator: &Emulator, mut result: SetResult) -> SetResult {
+    if let Some(block) = emulator.unclaimed_pio_used() {
+        result.set_unclaimed_pio(format!(
+            "the firmware wrote or ran an unclaimed instruction in PIO block {block}"
+        ));
+    }
+    result
 }
 
 // ── Per chip ──────────────────────────────────────────────────────────────────

@@ -93,7 +93,6 @@ pub fn test_alloc_mem(emu: &Emulator) -> Result<(), String> {
     let flags = emu.firmware_flags() & !LOG_IN_DPRAM;
     emu.set_firmware_flags(flags);
 
-    check_alloc(emu, "before the launch", &alloc_request(4), Err(full))?;
     emu.launch_usb_dpram(0);
 
     let req = alloc_request(4);

@@ -52,6 +52,29 @@ void pio_sm_exec(uint8_t block, uint8_t sm, uint16_t instr) {
 #endif // REAL_HARDWARE
 }
 
+// The apio macros for these require a block number known at compile time.
+void pio_set_gpiobase(uint8_t block, ora_pio_gpiobase_t gpio_base) {
+    uint32_t value = (gpio_base == ORA_PIO_GPIOBASE_16) ? APIO_GPIOBASE_VAL_16
+                                                        : APIO_GPIOBASE_VAL_0;
+    if (block == 0) {
+        APIO0_GPIOBASE = value;
+    } else if (block == 1) {
+        APIO1_GPIOBASE = value;
+    } else {
+        APIO2_GPIOBASE = value;
+    }
+}
+
+void pio_gpio_to_block(uint8_t gpio, uint8_t block) {
+    if (block == 0) {
+        APIO_GPIO_INPUT_OUTPUT(gpio, 0);
+    } else if (block == 1) {
+        APIO_GPIO_INPUT_OUTPUT(gpio, 1);
+    } else {
+        APIO_GPIO_INPUT_OUTPUT(gpio, 2);
+    }
+}
+
 int pio(void) {
     int rc;
 
