@@ -3,15 +3,16 @@
 # without saying why in the commit.
 firmware/generated/onerom_metadata.h                 100.0
 firmware/include/include.h                           100.0
+firmware/include/piodma/piodma.h                     100.0
 firmware/src/log.c                                   100.0
 firmware/src/main.c                                  86.0
 firmware/src/otp.c                                   100.0
 firmware/src/piodma/dma.c                            100.0
 firmware/src/piodma/pio.c                            100.0
 firmware/src/piodma/pioled.c                         100.0
-firmware/src/piodma/pioplugin.c                      78.4
-firmware/src/piodma/piorom2.c                        82.3
-firmware/src/plugin.c                                98.5
+firmware/src/piodma/pioplugin.c                      79.4
+firmware/src/piodma/piorom2.c                        82.9
+firmware/src/plugin.c                                98.6
 firmware/src/rp235x.c                                73.5
 firmware/src/rtt.c                                   96.8
 firmware/src/utils.c                                 77.8
