@@ -53,7 +53,7 @@ In detail:
     - Reserves its USB DPRAM in the plugin header and reduces its usage by 128 bytes.
     - Fix: a host request to halt an unused endpoint no longer reads past the end of tinyusb's endpoint table.
     - With firmware 0.8.1, supports a plugin with exclusive use of the serial port.
-    - Adds serial port 2 for a user plugin that requests it.
+    - A user plugin can configure the USB plugin's two serial ports.
     - USB DPRAM can be read over picobootx.
     - REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
     - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
@@ -71,7 +71,7 @@ In detail:
   - New: a plugin can reserve USB DPRAM for a USB controller by using `usb_controller_dpram_size` in its header.
   - New: `ora_alloc_mem()` allocates memory from a pool shared by both plugins.
   - New: log channels 2 and 3 when using plugin header fields `channel_2_size` and `channel_3_size`.
-  - New: `ora_get_peer_data()` retrieves the other plugin's `peer_data`.
+  - New: `ora_get_peer_data()` retrieves peer plugin data blocks.
   - New: a plugin can claim hardware resources:
     - DMA channel: `ora_claim_dma_channel()`
     - UART: `ora_claim_uart()`

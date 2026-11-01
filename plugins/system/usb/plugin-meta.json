@@ -6,5 +6,5 @@
     "source": "https://github.com/piersfinlayson/one-rom",
     "license": "MIT",
     "build_output": "build/usb_system_plugin.bin",
-    "peer_formats": ["0x31425355"]
+    "peer_formats": ["0x63425355", "0x69425355"]
 }

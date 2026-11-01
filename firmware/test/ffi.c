@@ -349,10 +349,9 @@ void ffi_set_plugin_channel_sizes(uint8_t index, uint16_t channel_2,
     plugin_headers[index].channel_3_size = channel_3;
 }
 
-void ffi_set_plugin_peer_data(uint8_t index, const uint32_t *words) {
+void ffi_set_plugin_peer_data(uint8_t index, uint32_t addr) {
     assert(index < 2);
-    memcpy(plugin_headers[index].peer_data, words,
-           sizeof(plugin_headers[index].peer_data));
+    plugin_headers[index].peer_data = addr;
 }
 
 void ffi_set_plugin_magic(uint8_t index, uint32_t magic) {

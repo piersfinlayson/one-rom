@@ -3509,7 +3509,7 @@ type = "usize"
 value = 40
 ora_api = true
 first_release = "0.8.1"
-comment = "Offset of peer_data in the plugin header."
+comment = "Offset of the little-endian 32-bit peer_data in the plugin header. peer_data is the address of the plugin's first peer data block."
 
 [[constants]]
 name = "LOG_CHANNEL_2_MAX_SIZE"

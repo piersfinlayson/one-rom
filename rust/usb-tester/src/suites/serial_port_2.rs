@@ -19,8 +19,12 @@ use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_plugin_tester::run::Outcome;
 
 use crate::device::Device;
-use crate::suites::descriptors::{request_serial_port_2, serial_port_2_requested};
+use crate::suites::descriptors::{
+    USB_PEER_USBC_SERIAL_PORT_2, request_serial_port_2, request_serial_ports,
+    serial_port_2_requested,
+};
 use crate::{Ctx, Scenario};
+use onerom_metadata::onerom_log_channel_claim_t;
 
 const SYSTEM: ffi::ora_plugin_type_t = ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_SYSTEM;
 const USER: ffi::ora_plugin_type_t = ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_USER;
@@ -38,7 +42,7 @@ const DATA: &[u8] = b"serial port 2 data";
 /// Passes to run for a few packets to move.
 const PASSES: u32 = 8;
 
-/// Serial port 2 is present, with serial port 1's input turned off and `DATA`
+/// Serial port 2 is enabled, with serial port 1's input turned off and `DATA`
 /// written to channel 2 by the user plugin.
 fn arrange(emu: &Emulator, channel_3_size: u16) {
     request_serial_port_2(emu, 0, channel_3_size);
@@ -52,6 +56,16 @@ fn arrange(emu: &Emulator, channel_3_size: u16) {
 
 fn arrange_with_channel_3(emu: &Emulator) {
     arrange(emu, CHANNEL_3_SIZE);
+}
+
+/// Only serial port 2 enabled, with `DATA` written to channel 2 by the user plugin.
+fn arrange_only(emu: &Emulator) {
+    request_serial_ports(emu, USB_PEER_USBC_SERIAL_PORT_2, 0, 0, CHANNEL_3_SIZE);
+    emu.set_calling_plugin(USER);
+    emu.log_open_write(TO_HOST, c"user");
+    emu.log_write(TO_HOST, DATA);
+    emu.log_open_read(FROM_HOST);
+    emu.set_calling_plugin(SYSTEM);
 }
 
 fn arrange_without_channel_3(emu: &Emulator) {
@@ -129,7 +143,43 @@ fn channel_2_reaches_the_host(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, S
             String::from_utf8_lossy(DATA)
         ));
     }
+    check_interfaces(0b10)
+}
+
+/// Check the plugin wrote to exactly the CDC interfaces in `want`, bit N for
+/// interface N.
+fn check_interfaces(want: u8) -> Result<Outcome, String> {
+    // SAFETY: the plugin isn't running.
+    let itfs = unsafe { crate::ffi::usb_host_test_tx_itfs() };
+    if itfs != want {
+        return Err(format!(
+            "the plugin wrote to CDC interfaces {itfs:#04b}, not {want:#04b}"
+        ));
+    }
     Ok(Outcome::Pass)
+}
+
+/// If only serial port 2 is enabled it is tinyusb's first CDC interface.  The
+/// USB plugin doesn't read channel 0 when serial port 1 isn't enabled.
+fn only_channel_2_reaches_the_host(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+
+    let out = dev.collect_cdc(PASSES)?;
+    if out.as_bytes() != DATA {
+        return Err(format!(
+            "the port received {out:?}, not {:?}",
+            String::from_utf8_lossy(DATA)
+        ));
+    }
+    let claims = dev.emulator().log_channel_claims();
+    if claims & onerom_log_channel_claim_t::LOG_CLAIM_SYSTEM_READ_0 != 0 {
+        return Err(format!(
+            "the USB plugin reads channel 0 without serial port 1 (claims {claims:#06x})"
+        ));
+    }
+    check_interfaces(0b01)
 }
 
 fn host_data_reaches_channel_3(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
@@ -218,6 +268,12 @@ pub static SCENARIOS: &[Scenario] = &[
         about: "data from the host that doesn't fit in channel 3 waits on the endpoint",
         run: host_data_waits_while_channel_3_is_full,
         before_start: Some(arrange_with_channel_3),
+    },
+    Scenario {
+        name: "serial_port_2.only_channel_2_reaches_the_host",
+        about: "with only serial port 2 enabled channel 2 is sent on the one serial port and channel 0 isn't read",
+        run: only_channel_2_reaches_the_host,
+        before_start: Some(arrange_only),
     },
     Scenario {
         name: "serial_port_2.host_data_is_discarded_without_channel_3",

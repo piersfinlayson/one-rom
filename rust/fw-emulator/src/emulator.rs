@@ -83,6 +83,7 @@ pub enum OraResult {
     NotReady,
     InUse,
     Conflict,
+    NotFound,
     /// A code this binding does not know. Carries the C type's own width,
     /// which `-fshort-enums` makes one byte.
     Unknown(ffi::ora_result_t),
@@ -109,6 +110,7 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_NOT_READY => Self::NotReady,
             ffi::ora_result_t_ORA_RESULT_IN_USE => Self::InUse,
             ffi::ora_result_t_ORA_RESULT_CONFLICT => Self::Conflict,
+            ffi::ora_result_t_ORA_RESULT_NOT_FOUND => Self::NotFound,
             other => Self::Unknown(other),
         }
     }
@@ -934,8 +936,10 @@ impl Emulator {
         unsafe { ffi::ffi_set_plugin_channel_sizes(index, channel_2, channel_3) };
     }
 
-    pub fn set_plugin_peer_data(index: u8, words: [u32; 8]) {
-        unsafe { ffi::ffi_set_plugin_peer_data(index, words.as_ptr()) };
+    /// Set plugin `index`'s header to point at a peer data block at `addr`, or
+    /// at none for 0.  Write the block with [`Emulator::set_flash_words`].
+    pub fn set_plugin_peer_data(index: u8, addr: u32) {
+        unsafe { ffi::ffi_set_plugin_peer_data(index, addr) };
     }
 
     pub fn set_plugin_magic(index: u8, magic: u32) {
@@ -967,6 +971,15 @@ impl Emulator {
     /// bytes can be set.
     pub fn set_flash_byte(addr: u32, value: u8) {
         unsafe { ffi::stub_flash_set8(addr, value) };
+    }
+
+    /// Write little-endian words to flash from `addr`.
+    pub fn set_flash_words(addr: u32, words: &[u32]) {
+        for (word_addr, word) in (addr..).step_by(4).zip(words) {
+            for (byte_addr, byte) in (word_addr..).zip(word.to_le_bytes()) {
+                Self::set_flash_byte(byte_addr, byte);
+            }
+        }
     }
 
     pub fn clear_flash() {
@@ -2045,14 +2058,40 @@ impl Emulator {
     }
 
     /// `ORA_ID_GET_PEER_DATA`, as the plugin [`Self::set_calling_plugin`]
-    /// last set.
-    pub fn get_peer_data(&self) -> Option<[u32; 8]> {
-        let ptr = plugin_call!(
+    /// last set, returning the result and the block's words up to its size.
+    /// The words are empty unless the result is `Ok`.
+    pub fn get_peer_data(&self, format: u32, flags: u32) -> (OraResult, Vec<u32>) {
+        let mut ptr: *const u32 = std::ptr::null();
+        let r = OraResult::from(plugin_call!(
             ffi::api_id_t_ORA_ID_GET_PEER_DATA,
-            ffi::ora_get_peer_data_fn_t
-        );
-        // SAFETY: a non-NULL result points at a header's eight peer data words.
-        (!ptr.is_null()).then(|| unsafe { *ptr.cast::<[u32; 8]>() })
+            ffi::ora_get_peer_data_fn_t,
+            format,
+            flags,
+            &mut ptr
+        ));
+        if !r.is_ok() || ptr.is_null() {
+            return (r, Vec::new());
+        }
+        // SAFETY: on Ok the pointer is at a valid block, which starts with an
+        // ora_peer_data_header_t.
+        unsafe {
+            let size = (*ptr.cast::<ffi::ora_peer_data_header_t>()).size;
+            (
+                r,
+                std::slice::from_raw_parts(ptr, size as usize / 4).to_vec(),
+            )
+        }
+    }
+
+    /// [`Self::get_peer_data`] with `block_out` NULL.
+    pub fn get_peer_data_null_out(&self, format: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PEER_DATA,
+            ffi::ora_get_peer_data_fn_t,
+            format,
+            0,
+            std::ptr::null_mut()
+        ))
     }
 
     /// `ORA_ID_ALLOC_MEM`, returning the result and the address.  An address

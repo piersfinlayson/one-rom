@@ -838,7 +838,7 @@ typedef enum {
     ORA_ID_ALLOC_MEM                 = 0x00000045,
 
     /**
-     * @brief Retrieve the other plugin's peer data
+     * @brief Retrieve one of the other plugin's peer data blocks
      * @sa ora_get_peer_data_fn_t
      * @since firmware 0.8.1
      */
@@ -1514,6 +1514,12 @@ typedef enum {
      * @since firmware 0.8.1
      */
     ORA_RESULT_CONFLICT = 17,
+    /**
+     * @brief The requested item or resource doesn't exist
+     * @sa ora_get_peer_data_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_RESULT_NOT_FOUND = 18,
 } ora_result_t;
 
 /**
@@ -3726,14 +3732,79 @@ typedef ora_result_t (*ora_alloc_mem_fn_t)(const ora_alloc_request_t *req,
                                            uint32_t *addr_out);
 
 /**
- * @brief Retrieve the other plugin's peer data
+ * @brief Retrieve one of the other plugin's peer data blocks
  * @sa ORA_ID_GET_PEER_DATA
  * @since firmware 0.8.1
  *
- * @return The other plugin's ora_plugin_header_t::peer_data in flash, or NULL
- *         if there is no other plugin
+ * The firmware checks the other plugin's blocks in order and returns the first
+ * valid block with @p format.  A block is valid if:
+ * - it is 4-byte aligned
+ * - its size is a multiple of 4 and at least @ref ORA_PEER_DATA_MIN_SIZE bytes
+ * - it is inside the peer plugin's flash region
+ *
+ * The check stops at a format word with value 0, an invalid block or the end of
+ * the region.
+ *
+ * @param format     The format word of the block to retrieve
+ * @param flags      Pass 0.  All bits are reserved and must be 0.
+ * @param block_out  Out: the block.  Unchanged unless the result is
+ *                   ORA_RESULT_OK.
+ * @retval ORA_RESULT_OK          Retrieved successfully
+ * @retval ORA_RESULT_NOT_FOUND   There is no other plugin or none of its valid
+ *                                blocks has @p format
+ * @retval ORA_RESULT_INVALID_ARG @p block_out is NULL, or @p flags isn't 0
  */
-typedef const uint32_t *(*ora_get_peer_data_fn_t)(void);
+typedef ora_result_t (*ora_get_peer_data_fn_t)(uint32_t format, uint32_t flags,
+                                               const uint32_t **block_out);
+
+/**
+ * @brief The start of every peer data block
+ * @sa ora_plugin_header_t::peer_data
+ * @since firmware 0.8.1
+ *
+ * A peer data block is data one plugin provides for the other.  The provider
+ * puts its blocks one after another in its flash and ends them with a word of
+ * value 0.
+ *
+ * Its header's peer_data is the address of the first peer data block.  The
+ * reader is the other plugin, which receives a block with
+ * @ref ora_get_peer_data_fn_t.  The firmware checks the block's position and
+ * size and, if valid, returns it to the reader.  The firmware doesn't police
+ * the data beyond the size fitting within the provider's flash area.
+ *
+ * A block is this header followed by the words defined by that block's
+ * format.  Its size must be a multiple of 4 bytes.
+ *
+ * The reader ignores words past the size.  A peer data block using an earlier
+ * version of the block's format may be shorter, so in this case the reader uses
+ * the default for each missing word.
+ *
+ * A format is defined by the plugin that implements it.  Its format word is
+ * defined in that plugin's plugin-meta.json.
+ */
+typedef struct {
+    /**
+     * @brief The block's format
+     *
+     * A 0 format word ends the provider's blocks.
+     */
+    uint32_t format;
+
+    /** @brief The block's size in bytes, including this header */
+    uint32_t size;
+
+    /** @brief The format's version */
+    uint32_t version;
+} ora_peer_data_header_t;
+
+/**
+ * @brief Size in bytes of the smallest valid peer data block
+ * @sa ora_get_peer_data_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PEER_DATA_MIN_SIZE      12u
+_Static_assert(sizeof(ora_peer_data_header_t) == ORA_PEER_DATA_MIN_SIZE,
+               "ora_peer_data_header_t must be 12 bytes");
 
 /**
  * @brief Any free DMA channel
@@ -4177,32 +4248,20 @@ typedef struct {
     uint16_t channel_3_size;
 
     /**
-     * @brief Data for the other plugin
-     * @sa ora_get_peer_data_fn_t
+     * @brief Address of this plugin's first peer data block, or 0 for none
+     * @see ora_peer_data_header_t
      * @since firmware 0.8.1
-     *
-     * Used for two plugins to communicate build time configuration and
-     * related information using a data block transparent to the firmware.
-     * 
-     * firmware.
-     * The firmware ignores this field.
-     *
-     * Word 0 identifies the format of words 1 to 7.  Word 0 is 0 if this
-     * data is unused, including by plugins built before its introduction.
-     *
-     * A format is defined and published by a plugin, and the word 0 for that
-     * format is defined in its plugin-meta.json.
      */
     // offset 40
-    uint32_t peer_data[8];
+    uint32_t peer_data;
 
     /**
      * @brief Reserved for future use
      *
      * This field is reserved for future use and must be set to 0.
      */
-    // offset 72
-    uint8_t reserved[184];
+    // offset 44
+    uint8_t reserved[212];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
 #if UINTPTR_MAX == 0xFFFFFFFFu

@@ -108,7 +108,7 @@ void ffi_set_plugin_boot_slot_addr(uint8_t index, uint32_t addr);
 void ffi_set_plugin_usb_controller_dpram_size(uint8_t index, uint16_t size);
 void ffi_set_plugin_channel_sizes(uint8_t index, uint16_t channel_2,
                                   uint16_t channel_3);
-void ffi_set_plugin_peer_data(uint8_t index, const uint32_t *words);
+void ffi_set_plugin_peer_data(uint8_t index, uint32_t addr);
 void ffi_set_plugin_magic(uint8_t index, uint32_t magic);
 void ffi_set_plugin_api_version(uint8_t index, uint32_t api_version);
 void ffi_set_plugin_min_fw_version(

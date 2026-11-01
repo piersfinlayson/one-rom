@@ -1863,11 +1863,75 @@ static ora_plugin_type_t ora_calling_plugin(void) {
 }
 #endif // REAL_HARDWARE
 
-const uint32_t *ora_get_peer_data(void) {
-    const ora_plugin_header_t *other =
-        (ora_calling_plugin() == ORA_PLUGIN_TYPE_SYSTEM)
-            ? user_plugin_to_start() : system_plugin_to_start();
-    return (other != NULL) ? other->peer_data : NULL;
+static uint32_t flash_read_word(uint32_t addr) {
+    return (uint32_t)flash_read_byte(addr)
+        | ((uint32_t)flash_read_byte(addr + 1u) << 8)
+        | ((uint32_t)flash_read_byte(addr + 2u) << 16)
+        | ((uint32_t)flash_read_byte(addr + 3u) << 24);
+}
+
+#if !REAL_HARDWARE
+// A test build's flash is the stub's byte model so the block is copied out of
+// it for the caller to read.
+#define PEER_DATA_TEST_MAX_WORDS 16u
+static uint32_t peer_data_test_copy[PEER_DATA_TEST_MAX_WORDS];
+#endif // !REAL_HARDWARE
+
+ora_result_t ora_get_peer_data(
+    uint32_t format,
+    uint32_t flags,
+    const uint32_t **block_out
+) {
+    if ((flags != 0u) || (block_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint8_t other_type = (ora_calling_plugin() == ORA_PLUGIN_TYPE_SYSTEM)
+        ? ORA_PLUGIN_TYPE_USER : ORA_PLUGIN_TYPE_SYSTEM;
+    const ora_plugin_header_t *other = (other_type == ORA_PLUGIN_TYPE_USER)
+        ? user_plugin_to_start() : system_plugin_to_start();
+    if ((other == NULL) || (other->peer_data == 0u)) {
+        return ORA_RESULT_NOT_FOUND;
+    }
+
+    uint32_t start = FLASH_CS0_BASE_ADDR + ((other_type == ORA_PLUGIN_TYPE_USER)
+        ? USER_PLUGIN_OFFSET : SYSTEM_PLUGIN_OFFSET);
+    uint32_t end = start + ((other_type == ORA_PLUGIN_TYPE_USER)
+        ? USER_PLUGIN_SIZE : SYSTEM_PLUGIN_SIZE);
+
+    // Each block's size is a multiple of 4 so every block after a 4-byte
+    // aligned first block is aligned too.
+    uint32_t addr = other->peer_data;
+    if (((addr % 4u) != 0u) || (addr < start)) {
+        return ORA_RESULT_NOT_FOUND;
+    }
+    while ((addr < end) && ((end - addr) >= ORA_PEER_DATA_MIN_SIZE)) {
+        uint32_t block_format = flash_read_word(
+            addr + offsetof(ora_peer_data_header_t, format));
+        if (block_format == 0u) {
+            break;
+        }
+        uint32_t size = flash_read_word(
+            addr + offsetof(ora_peer_data_header_t, size));
+        if ((size < ORA_PEER_DATA_MIN_SIZE) || ((size % 4u) != 0u)
+            || (size > (end - addr))) {
+            break;
+        }
+        if (block_format == format) {
+#if REAL_HARDWARE
+            *block_out = (const uint32_t *)(uintptr_t)addr;
+#else // !REAL_HARDWARE
+            assert(size <= sizeof(peer_data_test_copy));
+            for (uint32_t ii = 0; ii < (size / 4u); ii++) {
+                peer_data_test_copy[ii] = flash_read_word(addr + (ii * 4u));
+            }
+            *block_out = peer_data_test_copy;
+#endif // REAL_HARDWARE
+            return ORA_RESULT_OK;
+        }
+        addr += size;
+    }
+    return ORA_RESULT_NOT_FOUND;
 }
 
 // A channel exists if it is in range and has a buffer.  rtt.c decides the

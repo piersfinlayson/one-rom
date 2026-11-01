@@ -32,6 +32,10 @@ unsafe extern "C" {
     /// Bytes flushed and not yet taken.
     pub fn usb_host_test_tx_pending() -> u32;
 
+    /// The CDC interfaces written to since the plugin was reset, bit N for
+    /// interface N.
+    pub fn usb_host_test_tx_itfs() -> u8;
+
     /// Queue bytes from the terminal.  They enter the endpoint's FIFO a packet
     /// at a time, as the plugin empties it.  Returns how many were queued.
     pub fn usb_host_test_push_rx(buf: *const u8, len: u32) -> u32;
@@ -128,4 +132,10 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn onerom_usb_test_configuration_desc_size() -> u32;
     pub fn onerom_usb_test_bos_desc_size() -> u32;
+}
+
+// The plugin's own peer data, compiled into the plugin under `ORA_HOST_TEST`.
+// A host build's address doesn't fit the header's 32-bit `peer_data`.
+unsafe extern "C" {
+    pub fn onerom_usb_test_peer_data() -> *const u32;
 }

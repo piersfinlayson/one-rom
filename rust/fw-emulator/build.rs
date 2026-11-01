@@ -333,6 +333,8 @@ fn main() {
         .allowlist_var("ORA_PIO_SM_ANY")
         .allowlist_var("ORA_PIO_INSTR_ANY")
         .allowlist_var("ORA_DMA_CHANNEL_ANY")
+        .allowlist_type("ora_peer_data_header_t")
+        .allowlist_var("ORA_PEER_DATA_MIN_SIZE")
         .allowlist_var("ORA_FIRMWARE_STATE_QUERY_FLAG_WAIT")
         .allowlist_function("otp_commissioning_value")
         .allowlist_function("otp_commissioned_board")

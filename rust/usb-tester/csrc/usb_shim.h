@@ -48,6 +48,10 @@ uint32_t usb_host_test_take_tx(uint8_t *buf, uint32_t max_len);
 // Bytes waiting to be taken.
 uint32_t usb_host_test_tx_pending(void);
 
+// The CDC interfaces the plugin has written to since it was reset, bit N for
+// interface N.
+uint8_t usb_host_test_tx_itfs(void);
+
 // ---------------------------------------------------------------------------
 // picoboot
 //

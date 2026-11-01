@@ -19,6 +19,32 @@ void usb_main(
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
 );
+// This plugin's capabilities.  See usb_peer.h.
+static const struct {
+    usb_peer_usbi_t usbi;
+    uint32_t        end;
+} usb_peer_data = {
+    .usbi = {
+        .hdr = {
+            .format  = USB_PEER_USBI_FORMAT,
+            .size    = sizeof(usb_peer_usbi_t),
+            .version = USB_PEER_USBI_VERSION,
+        },
+        .serial_ports = USB_PEER_USBI_SERIAL_PORT_1 | USB_PEER_USBI_SERIAL_PORT_2,
+    },
+    .end = 0,
+};
+_Static_assert(sizeof(usb_peer_data) == sizeof(usb_peer_usbi_t) + 4u,
+               "usb_peer_data must be contiguous");
+
+#if defined(ORA_HOST_TEST)
+// This plugin's peer data, for a test.  A host build's address doesn't fit the
+// header's 32-bit peer_data.
+const uint32_t *onerom_usb_test_peer_data(void) {
+    return (const uint32_t *)&usb_peer_data;
+}
+#endif // ORA_HOST_TEST
+
 ORA_SECTION(".plugin_header")
 const ora_plugin_header_t ora_plugin_header = {
     .magic    = ORA_PLUGIN_MAGIC,
@@ -36,7 +62,12 @@ const ora_plugin_header_t ora_plugin_header = {
     .min_fw_minor_version = 8,
     .min_fw_patch_version = 1,
     .usb_controller_dpram_size = CFG_TUD_RP2040_DPRAM_SIZE,
-    .peer_data = { USB_PEER_FORMAT, USB_PEER_SERIAL_PORT_2 },
+#if defined(ORA_HOST_TEST)
+    // A host build's addresses don't fit the field and nothing reads it.
+    .peer_data = 0,
+#else
+    .peer_data = (uint32_t)(uintptr_t)&usb_peer_data,
+#endif
     .reserved = {0},
 };
 _Static_assert(CFG_TUD_RP2040_DPRAM_SIZE <= ORA_USB_CONTROLLER_DPRAM_MAX,
@@ -44,6 +75,23 @@ _Static_assert(CFG_TUD_RP2040_DPRAM_SIZE <= ORA_USB_CONTROLLER_DPRAM_MAX,
 
 // Plugin context, stored in .bss
 usb_plugin_context_t context;
+
+// Returns the user plugin's USBc block, or NULL if the block is missing or
+// invalid.
+const usb_peer_usbc_t *usb_peer_usbc(void) {
+    ora_get_peer_data_fn_t get_peer_data =
+        context.ora_lookup_fn(ORA_ID_GET_PEER_DATA);
+    const uint32_t *block = NULL;
+    if ((get_peer_data == NULL)
+        || (get_peer_data(USB_PEER_USBC_FORMAT, 0, &block) != ORA_RESULT_OK)) {
+        return NULL;
+    }
+    const usb_peer_usbc_t *usbc = (const usb_peer_usbc_t *)block;
+    if ((usbc->hdr.version < 1u) || (usbc->hdr.size < sizeof(usb_peer_usbc_t))) {
+        return NULL;
+    }
+    return usbc;
+}
 
 // Place the plugin's initialised data and clear its zeroed data.
 //
@@ -198,9 +246,9 @@ void usb_init(ora_lookup_fn_t ora_lookup_fn, uint8_t entry_flags) {
 
     // Resolved once here, with the rest of the one-time API resolution, since
     // none of it changes while the plugin runs.
+    serial_ports_init();
     log_drain_init();
     log_input_init();
-    serial_port_2_init();
 
     // Set up USB.  tinyusb will register its own IRQ handler, using the API
     // functions we provide.

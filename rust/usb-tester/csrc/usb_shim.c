@@ -111,6 +111,10 @@ static uint32_t s_tx_fifo_len;
 static uint8_t  s_connected = 1;
 static uint8_t  s_dtr;
 
+// The CDC interfaces written to since the plugin was reset, bit N for
+// interface N.
+static uint8_t  s_tx_itfs;
+
 // Flushed bytes accumulate here.  Sized for a whole banner and several log
 // lines, so a scenario can run many passes before reading.
 #define USB_SHIM_TX_LOG_SIZE 4096u
@@ -127,6 +131,10 @@ void usb_host_test_set_connected(uint8_t connected) {
 
 uint32_t usb_host_test_tx_pending(void) {
     return s_tx_log_len;
+}
+
+uint8_t usb_host_test_tx_itfs(void) {
+    return s_tx_itfs;
 }
 
 uint32_t usb_host_test_take_tx(uint8_t *buf, uint32_t max_len) {
@@ -151,9 +159,11 @@ uint32_t tud_cdc_n_write_available(uint8_t itf) {
 }
 
 uint32_t tud_cdc_n_write(uint8_t itf, const void *buffer, uint32_t bufsize) {
-    (void)itf;
     uint32_t room = tud_cdc_n_write_available(itf);
     uint32_t n = (bufsize < room) ? bufsize : room;
+    if (n > 0u) {
+        s_tx_itfs |= (uint8_t)(1u << itf);
+    }
     memcpy(&s_tx_fifo[s_tx_fifo_len], buffer, n);
     s_tx_fifo_len += n;
     return n;
@@ -555,7 +565,8 @@ const volatile uint8_t *usb_host_test_dpram(void) {
     return (const volatile uint8_t *)stub_usb_dpram();
 }
 
-// Flash the plugin reads serial port 2's name from.  See stub_flash_read8().
+// Flash the plugin reads the serial ports' descriptions from.  See
+// stub_flash_read8().
 uint8_t usb_host_test_flash_read8(uint32_t addr) {
     return stub_flash_read8(addr);
 }
@@ -665,6 +676,7 @@ void usb_host_test_reset_plugin(void) {
     s_entry_flags = 0;
     s_tinyusb_inits = 0;
     s_controller_resets = 0;
+    s_tx_itfs = 0;
 }
 
 // Version fields from the plugin's own header, so the harness can report which

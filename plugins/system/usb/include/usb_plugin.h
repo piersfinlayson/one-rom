@@ -63,9 +63,13 @@ typedef struct {
 
     uint8_t exclusive_serial_in;
 
-    // Serial port 2's state using SERIAL_PORT_2_* bits.  Set by
-    // serial_port_2_init().
+    // 1 if serial port 1 is enabled.  Set by serial_ports_init().
+    uint8_t serial_port_1_enabled;
+
+    // Serial port 2's state as SERIAL_PORT_2_* bits, then its tinyusb CDC
+    // interface.  Set by serial_ports_init().
     uint8_t serial_port_2;
+    uint8_t serial_port_2_cdc_itf;
 
     // Whether a terminal has the CDC port open, and whether a session it has
     // just started is still to be set up.  Both are set from tud_cdc_line_state_cb(),
@@ -95,7 +99,11 @@ typedef struct {
 // Forward declaration of the context, which we define in usb_main.c
 extern usb_plugin_context_t context;
 
+// From usb_main.c
+const usb_peer_usbc_t *usb_peer_usbc(void);
+
 // Forward declaration of plugin's Picoboot functions, from usb_picoboot.c
+
 void usb_picoboot_init(uint8_t ep_out, uint8_t ep_in);
 bool usb_picoboot_control_xfer_cb(
     uint8_t rhport,

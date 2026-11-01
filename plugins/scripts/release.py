@@ -60,7 +60,7 @@ MANIFEST_KEY_ORDER = (
     "peer_formats", "latest", "releases",
 )
 
-# A peer data format: word 0 of a plugin header's peer_data, as 0x and eight
+# A peer data format: word 0 of a plugin's peer data block, as 0x and eight
 # hex digits.
 PEER_FORMAT_RE          = re.compile(r"^0x[0-9a-fA-F]{8}$")
 

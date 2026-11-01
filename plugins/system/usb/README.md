@@ -78,7 +78,7 @@ The USB system plugin uses tinyusb to implement a USB device containing:
 - a dummy vendor interface (required to provide compatibility with Raspberry Pi's picotool)
 - the picobootx vendor interface used to manage One ROM live
 - a bi-directional CDC interface, carrying One ROM's logs out to and data in from a terminal and data what the terminal sends back in. See [Logging](/docs/LOGGING.md).
-- a second CDC interface, serial port 2, present when a user plugin's peer data contains request for it. It sends log channel 2 to the host and writes data from the host to log channel 3. See [Serial port 2](#serial-port-2).
+- a second CDC interface, serial port 2, enabled when a user plugin's peer data block has its flag set. It sends log channel 2 to the host and writes data from the host to log channel 3. See [Serial ports](#serial-ports).
 
 The majority of the picoboot protocol is supported, and there are also extensions to provide additional functionality:
 - Live ROM image reading/writing (using a virtual address located at 0x9000_0000)
@@ -91,17 +91,36 @@ Currently, updating the firmware, ROM metadata and this USB plugin must be done 
 
 For more information about One ROM's plugin system, see the [plugin API documentation](/firmware/ora/plugin.h).
 
-## Serial port 2
+## Serial ports
 
-A user plugin requests serial port 2 with this format in its header's `peer_data`:
+A user plugin sets the serial ports and their descriptions with a peer data block in this format. A plugin's peer data blocks are described at `ora_peer_data_header_t` in the [plugin API](/firmware/ora/api.h).
 
-| Word | Contents |
-| --- | --- |
-| 0 | `0x31425355`, "USB1" |
-| 1 | Bit 0 set to request serial port 2 |
-| 2 | Address of the port's name, or 0 for "One ROM Serial 2". The name is NUL-terminated printable ASCII of at most 31 characters in the user plugin's flash region. |
-| 3–7 | 0 |
+| Word | Contents | Default |
+| --- | --- | --- |
+| 0 | `0x63425355`, "USBc" | |
+| 1 | The block's size in bytes, 24 | |
+| 2 | The version, 1 | |
+| 3 | Flags. Serial port 1 is enabled when bit 0 is set, and serial port 2 is enabled when bit 1 is set. | `0x1`, serial port 1 only |
+| 4 | Address of serial port 1's description | 0, "One ROM Serial" |
+| 5 | Address of serial port 2's description | 0, "One ROM Serial 2" |
+
+[usb_peer.h](include/usb_peer.h) defines this format as `usb_peer_usbc_t`.
+
+The defaults are used when the user plugin doesn't have a valid USBc block.
+
+A description is NUL-terminated printable ASCII of at most 31 characters in the user plugin's flash region.
+
+If only serial port 2 is enabled it is the host's first serial port.
 
 Log channels 2 and 3 exist only if their sizes are set in a plugin header.
 
-Bit 0 of word 1 is set in the USB plugin's own `peer_data` when serial port 2 is supported.
+The USB plugin's own peer data block is used to advertise its capabilities to other plugins, using the following format:
+
+| Word | Contents |
+| --- | --- |
+| 0 | `0x69425355`, "USBi" |
+| 1 | The block's size in bytes, 16 |
+| 2 | The version, 1 |
+| 3 | Supported serial ports. Bit 0 is set if serial port 1 is supported, and bit 1 is set if serial port 2 is supported. |
+
+`usb_peer.h` defines this format as `usb_peer_usbi_t`.

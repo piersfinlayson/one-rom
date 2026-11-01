@@ -12,9 +12,9 @@
 // In exclusive serial IN mode only channel 0 goes to the port, as soon as the
 // bus is ready.
 //
-// Serial port 2 is added if the user plugin's peer data has
-// USB_PEER_SERIAL_PORT_2 set.  Channel 2 is sent to the host on serial port 2
-// and data the host sends on it is written to channel 3.
+// The serial ports are set by the user plugin's peer data.  See usb_peer.h.
+// Channel 2 is sent to the host on serial port 2 and data the host sends on it
+// is written to channel 3.
 
 #include "usb_plugin.h"
 #include "tusb.h"
@@ -372,6 +372,10 @@ static void log_banner_write(void) {
 }
 
 void log_drain_init(void) {
+    if (!context.serial_port_1_enabled) {
+        return;
+    }
+
     ora_log_open_read_fn_t open_read =
         context.ora_lookup_fn(ORA_ID_LOG_OPEN_READ);
 
@@ -420,7 +424,7 @@ void log_drain_init(void) {
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
     (void)rts;
 
-    if (itf != LOG_DRAIN_CDC_ITF) {
+    if (!context.serial_port_1_enabled || (itf != LOG_DRAIN_CDC_ITF)) {
         return;
     }
 
@@ -552,6 +556,10 @@ void log_drain_task(void) {
 }
 
 void log_input_init(void) {
+    if (!context.serial_port_1_enabled) {
+        return;
+    }
+
     ora_log_open_write_fn_t open_write =
         context.ora_lookup_fn(ORA_ID_LOG_OPEN_WRITE);
     ora_log_write_fn_t log_write = context.ora_lookup_fn(ORA_ID_LOG_WRITE);
@@ -611,21 +619,28 @@ void log_input_task(void) {
     }
 }
 
-// Serial port 2 is tinyusb's second CDC interface.
-#define SERIAL_PORT_2_CDC_ITF       1
 #define SERIAL_PORT_2_TO_HOST_CH    ORA_LOG_CHANNEL_2
 #define SERIAL_PORT_2_FROM_HOST_CH  ORA_LOG_CHANNEL_3
 #define SERIAL_PORT_2_INPUT_NAME    "usb-in-2"
 
-void serial_port_2_init(void) {
-    ora_get_peer_data_fn_t get_peer_data =
-        context.ora_lookup_fn(ORA_ID_GET_PEER_DATA);
-    const uint32_t *peer = (get_peer_data != NULL) ? get_peer_data() : NULL;
-    if ((peer == NULL) || (peer[USB_PEER_WORD_FORMAT] != USB_PEER_FORMAT)
-        || !(peer[USB_PEER_WORD_FLAGS] & USB_PEER_SERIAL_PORT_2)) {
+void serial_ports_init(void) {
+    const usb_peer_usbc_t *usbc = usb_peer_usbc();
+    uint32_t flags = USB_PEER_USBC_SERIAL_PORT_1;
+    if (usbc != NULL) {
+        flags = usbc->flags;
+    }
+    if (flags & USB_PEER_USBC_SERIAL_PORT_1) {
+        context.serial_port_1_enabled = 1;
+    } else {
+        LOG("Serial port 1 not enabled");
+    }
+    if (!(flags & USB_PEER_USBC_SERIAL_PORT_2)) {
         return;
     }
-    context.serial_port_2 = SERIAL_PORT_2_PRESENT;
+    context.serial_port_2 = SERIAL_PORT_2_ENABLED;
+
+    // tinyusb numbers its CDC interfaces in configuration descriptor order.
+    context.serial_port_2_cdc_itf = context.serial_port_1_enabled;
 
     // Either channel is absent when its size isn't set in a plugin header.
     ora_log_open_read_fn_t open_read = context.ora_lookup_fn(ORA_ID_LOG_OPEN_READ);
@@ -651,7 +666,7 @@ static void serial_port_2_to_host(void) {
 
     // Limit the read to the endpoint's free space.  Reading removes the bytes
     // from channel 2 so any that didn't fit would be lost.
-    uint32_t avail = tud_cdc_n_write_available(SERIAL_PORT_2_CDC_ITF);
+    uint32_t avail = tud_cdc_n_write_available(context.serial_port_2_cdc_itf);
     if (avail == 0) {
         return;
     }
@@ -664,19 +679,19 @@ static void serial_port_2_to_host(void) {
          != ORA_RESULT_OK) || (copied == 0)) {
         return;
     }
-    tud_cdc_n_write(SERIAL_PORT_2_CDC_ITF, buf, copied);
-    tud_cdc_n_write_flush(SERIAL_PORT_2_CDC_ITF);
+    tud_cdc_n_write(context.serial_port_2_cdc_itf, buf, copied);
+    tud_cdc_n_write_flush(context.serial_port_2_cdc_itf);
 }
 
 static void serial_port_2_from_host(void) {
     uint8_t buf[LOG_INPUT_CHUNK];
     uint32_t free = 0;
 
-    if (tud_cdc_n_available(SERIAL_PORT_2_CDC_ITF) == 0) {
+    if (tud_cdc_n_available(context.serial_port_2_cdc_itf) == 0) {
         return;
     }
     if (!(context.serial_port_2 & SERIAL_PORT_2_FROM_HOST)) {
-        tud_cdc_n_read(SERIAL_PORT_2_CDC_ITF, buf, sizeof(buf));
+        tud_cdc_n_read(context.serial_port_2_cdc_itf, buf, sizeof(buf));
         return;
     }
 
@@ -691,7 +706,7 @@ static void serial_port_2_from_host(void) {
         free = sizeof(buf);
     }
 
-    uint32_t count = tud_cdc_n_read(SERIAL_PORT_2_CDC_ITF, buf, free);
+    uint32_t count = tud_cdc_n_read(context.serial_port_2_cdc_itf, buf, free);
     ora_log_write_fn_t log_write = context.ora_lookup_fn(ORA_ID_LOG_WRITE);
     if (log_write(SERIAL_PORT_2_FROM_HOST_CH, buf, count) != ORA_RESULT_OK) {
         ERR("Serial port 2 input dropped %lu bytes", (unsigned long)count);
@@ -699,7 +714,7 @@ static void serial_port_2_from_host(void) {
 }
 
 void serial_port_2_task(void) {
-    if (!(context.serial_port_2 & SERIAL_PORT_2_PRESENT)) {
+    if (!(context.serial_port_2 & SERIAL_PORT_2_ENABLED)) {
         return;
     }
     serial_port_2_to_host();

@@ -36,17 +36,17 @@ void log_input_init(void);
 // hold, ensuring back pressure is applied to the host.
 void log_input_task(void);
 
-// Serial port 2 is present.
-#define SERIAL_PORT_2_PRESENT   (1u << 0)
+// Serial port 2 is enabled.
+#define SERIAL_PORT_2_ENABLED   (1u << 0)
 // The plugin reads log channel 2 for serial port 2.
 #define SERIAL_PORT_2_TO_HOST   (1u << 1)
 // The plugin writes serial port 2's input to log channel 3.
 #define SERIAL_PORT_2_FROM_HOST (1u << 2)
 
-// Add serial port 2 if USB_PEER_SERIAL_PORT_2 is set in the user plugin's
-// peer data, and claim channels 2 and 3 for it.  Call once at plugin start
-// before USB starts.
-void serial_port_2_init(void);
+// Choose the serial ports from the user plugin's peer data and claim channels 2
+// and 3 for serial port 2.  Call once at plugin start, before
+// log_drain_init(), log_input_init() and USB starting.
+void serial_ports_init(void);
 
 // Copy channel 2 to the host once the host has enumerated One ROM and copy data
 // from the host into channel 3.  Data from the host is dropped if this plugin

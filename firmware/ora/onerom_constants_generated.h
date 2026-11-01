@@ -159,7 +159,7 @@
 // @since firmware 0.8.1
 #define ORA_PLUGIN_HEADER_CHANNEL_3_SIZE_OFFSET 0x26
 
-// Offset of peer_data in the plugin header.
+// Offset of the little-endian 32-bit peer_data in the plugin header. peer_data is the address of the plugin's first peer data block.
 // @since firmware 0.8.1
 #define ORA_PLUGIN_HEADER_PEER_DATA_OFFSET 0x28
 

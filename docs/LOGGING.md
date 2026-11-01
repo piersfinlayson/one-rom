@@ -29,7 +29,7 @@ A plugin can claim exclusive use of the serial port.  In this case, One ROM's lo
 
 ### Serial Port 2
 
-A user plugin can request a second serial port from the USB plugin in its header's `peer_data`.  Serial port 2 sends log channel 2 to the host and writes data from the host to log channel 3.  Channel 2 is RTT up buffer 2 and channel 3 is RTT down buffer 1, so a debug probe can also read and write them.  See the [USB plugin](/plugins/system/usb/README.md#serial-port-2).
+A user plugin can request a second serial port from the USB plugin using a peer data block.  Serial port 2 sends log channel 2 to the host and writes data from the host to log channel 3.  Channel 2 is RTT up buffer 2 and channel 3 is RTT down buffer 1, so a debug probe can also read and write them.  See the [USB plugin](/plugins/system/usb/README.md#serial-ports).
 
 ### Connecting
 
