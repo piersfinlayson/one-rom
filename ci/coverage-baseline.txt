@@ -22,7 +22,7 @@ plugins/user/host-control/src/host_control_main.c    94.2
 plugins/system/usb/src/usb_descriptors.c             100.0
 plugins/system/usb/src/usb_gpio.c                    81.9
 plugins/system/usb/src/usb_led.c                     94.4
-plugins/system/usb/src/usb_log.c                     88.0
-plugins/system/usb/src/usb_main.c                    75.8
+plugins/system/usb/src/usb_log.c                     88.7
+plugins/system/usb/src/usb_main.c                    78.6
 plugins/system/usb/src/usb_picobootx.c               86.7
 plugins/system/usb/src/usb_rom.c                     75.0
