@@ -427,6 +427,11 @@ test_family_24_part_1() {
     test_24_config onerom-config/test/24-bank-23xx.json
     test_24_config onerom-config/test/24-bank-27xx.json
     test_24_config onerom-config/test/24-bank-28xx.json
+
+    # Multi-chip 2332 sets.  C onwards only - see the note on the LATE board
+    # lists above.
+    test_24_config_c_onwards onerom-config/test/24-multi-2332.json
+    run_boards run_config_api onerom-config/test/24-multi-2332.json $FIRE_24_LATE_BOARDS
 }
 
 test_family_24_part_2() {
