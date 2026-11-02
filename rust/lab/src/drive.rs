@@ -10,6 +10,7 @@
 
 use embassy_rp::pac;
 
+use crate::delay;
 use crate::error::Error;
 
 pub const DEFAULT_DELAY_CYCLES: u32 = 16;
@@ -44,12 +45,14 @@ impl Driver {
         })
     }
 
+    /// Runs from RAM so its speed doesn't depend on the XIP cache.
     #[inline(never)]
+    #[unsafe(link_section = ".data.ram_func")]
     pub fn toggle(&mut self, count: u32) {
         let out = pac::SIO.gpio_out(0);
         for _ in 0..count {
             out.value_xor().write_value(self.mask);
-            cortex_m::asm::delay(self.delay_cycles);
+            delay::cycles(self.delay_cycles);
         }
         self.toggles += count as u64;
     }

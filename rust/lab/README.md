@@ -167,7 +167,7 @@ lines when deselected. `tristate failures` is 0 for a chip that passes.
 ```text
 Fast reading 27256, read delay 16 cycles. Press any key to stop.
   Reference SHA1: 4a8a2c6ee8829e8ae3cee645f0875e9edc197e83
-  1.0s  passes 80  reads 2.6M  2.53MHz  mismatches 0
+  1.0s  passes 84  reads 2.7M  2.69MHz  mismatches 0
 ```
 
 Lab prints a status line each second, ending with the mismatches on each data
@@ -188,7 +188,7 @@ for all data lines supported by the chip. A hex mask takes a `0x` or `$` prefix.
 
 ```text
 Driving D0 D1 D2 D3 D4 D5 D6 D7, delay 0 cycles. Press any key to stop.
-  1.0s  toggles 11.5M  5.65MHz
+  1.0s  toggles 24.9M  12.23MHz
 ```
 
 The delay is the number of 150MHz CPU cycles between toggles. Lab drives the

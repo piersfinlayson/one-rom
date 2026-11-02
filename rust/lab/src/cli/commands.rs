@@ -30,6 +30,7 @@ use onerom_metadata::{MaybeKnown, OneromBoardSize};
 use sha1::{Digest, Sha1};
 
 use crate::commissioning::Check;
+use crate::core1;
 use crate::drive::Driver;
 use crate::error::Error;
 use crate::fast_read::{self, FastReader};
@@ -270,17 +271,20 @@ async fn fast_read_loop(
     .await?;
     while let Ok(Some(_)) = usb::cdc_try_recv().await {}
 
-    yield_to_usb().await;
-    let sha1 = fast.read_reference();
+    let mut reference = fast_read::lend_reference().expect("one fast read at a time");
+    let sha1 = core1::run(|| fast.read_reference(&mut reference)).await;
     send_line(&format!("  Reference SHA1: {}", hex::encode(sha1))).await?;
 
     let start = Instant::now();
     let mut status_at = start + FAST_READ_STATUS;
     loop {
         let chunk_end = Instant::now() + FAST_READ_CHUNK;
-        while Instant::now() < chunk_end {
-            fast.compare_pass();
-        }
+        core1::run(|| {
+            while Instant::now() < chunk_end {
+                fast.compare_pass(&reference);
+            }
+        })
+        .await;
         if usb::cdc_try_recv().await?.is_some() {
             return Ok(start.elapsed());
         }
@@ -353,9 +357,12 @@ async fn drive_loop(delay: u32, driver: &mut Driver) -> Result<Duration, Error> 
     let mut status_at = start + FAST_READ_STATUS;
     loop {
         let chunk_end = Instant::now() + FAST_READ_CHUNK;
-        while Instant::now() < chunk_end {
-            driver.toggle(DRIVE_BURST);
-        }
+        core1::run(|| {
+            while Instant::now() < chunk_end {
+                driver.toggle(DRIVE_BURST);
+            }
+        })
+        .await;
         if usb::cdc_try_recv().await?.is_some() {
             return Ok(start.elapsed());
         }
@@ -1101,12 +1108,11 @@ async fn do_rbcp(
     let table = SignerTable::built_in();
 
     for &mode in modes {
-        yield_to_usb().await;
         let mut reader = RomReader::new(board, chip, cs.to_polarities(), false)?;
         reader.init();
         reader.set_host(host)?;
         reader.begin_read(mode);
-        let result = crate::rbcp::query(&mut reader, board, mode);
+        let result = core1::run(|| crate::rbcp::query(&mut reader, board, mode)).await;
         reader.end_read();
         // A host bus fault replaces the RBCP error it caused.
         let result = reader
@@ -1397,13 +1403,6 @@ fn resolve_range(range: ReadRange, chip: ChipType) -> (usize, usize) {
     (start, count)
 }
 
-/// Allow the USB task to send queued output before a whole-ROM read, which
-/// blocks the executor until it finishes.  send_line's yield isn't enough as
-/// the executor polls the calling task again before the USB task.
-async fn yield_to_usb() {
-    Timer::after_millis(1).await;
-}
-
 /// Route a read to the correct format handler, then query the One ROM over
 /// RBCP where `rbcp` is set.
 async fn do_read(
@@ -1476,8 +1475,7 @@ async fn output_checksum(
         .await?;
     }
 
-    yield_to_usb().await;
-    let results = reader.read();
+    let results = core1::run(|| reader.read()).await;
     reader.host_fault()?;
 
     send_line("").await?;
@@ -1604,14 +1602,16 @@ async fn scan_cs(
             let mut sha = Sha1::new();
             let mut checksum = core::num::Wrapping(0u32);
 
-            yield_to_usb().await;
-            reader.begin_read(mode);
-            for addr in 0..rom_bytes {
-                let byte = reader.read_byte_at(addr, mode);
-                sha.update([byte]);
-                checksum += core::num::Wrapping(byte as u32);
-            }
-            reader.end_read();
+            core1::run(|| {
+                reader.begin_read(mode);
+                for addr in 0..rom_bytes {
+                    let byte = reader.read_byte_at(addr, mode);
+                    sha.update([byte]);
+                    checksum += core::num::Wrapping(byte as u32);
+                }
+                reader.end_read();
+            })
+            .await;
             reader.host_fault()?;
 
             let mut sha1 = [0u8; 20];

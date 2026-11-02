@@ -10,7 +10,6 @@
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cell::UnsafeCell;
 use core::fmt;
 use core::sync::atomic::{Ordering, compiler_fence};
 
@@ -27,6 +26,7 @@ use onerom_lab_bus::{
 use pio::{InstructionOperands, JmpCondition, SetDestination};
 
 use crate::error::Error;
+use crate::loan::{Lender, Loan};
 
 /// `c64`, or `profile`'s fields as `H`'s arguments.
 pub fn name(profile: &HostProfile) -> String {
@@ -224,26 +224,17 @@ struct Buffers {
     s: [u32; MAX_SEGMENTS],
 }
 
-struct BuffersCell(UnsafeCell<Buffers>);
-
-// Only the CLI task reads through the host bus, one read at a time.
-unsafe impl Sync for BuffersCell {}
-
 const NO_SEGMENT: Segment = Segment {
     addr: 0,
     selected: false,
     cycles: 0,
 };
 
-static BUFFERS: BuffersCell = BuffersCell(UnsafeCell::new(Buffers {
+static BUFFERS: Lender<Buffers> = Lender::new(Buffers {
     segments: [NO_SEGMENT; MAX_SEGMENTS],
     a: [0; MAX_SEGMENTS],
     s: [0; MAX_SEGMENTS],
-}));
-
-fn buffers() -> &'static mut Buffers {
-    unsafe { &mut *BUFFERS.0.get() }
-}
+});
 
 /// The machines, set up to read one chip in one bit mode.  Dropping it stops
 /// them and returns the GPIOs to SIO.
@@ -258,6 +249,7 @@ pub struct HostBus {
     switched: Vec<(u8, u32, u32)>,
     /// SIO output enables cleared, for GPIOs 0-31 and 32-47.
     released: [u32; 2],
+    buffers: Loan<Buffers>,
 }
 
 impl HostBus {
@@ -278,6 +270,7 @@ impl HostBus {
             addr_shift,
             switched: Vec::new(),
             released: [0; 2],
+            buffers: BUFFERS.lend().expect("one host bus at a time"),
         };
         bus.stop();
         bus.configure();
@@ -378,7 +371,7 @@ impl HostBus {
 
     /// Reads `addr` with one burst and returns the data lines, D0 in bit 0.
     pub fn read(&mut self, addr: usize, state: &mut BurstState) -> Result<u16, Error> {
-        let b = buffers();
+        let b = &mut *self.buffers;
         let addr = (addr >> self.addr_shift) as u32;
         let burst = burst(&self.profile, state, addr, &mut b.segments);
         let segments = &b.segments[..burst.segments];

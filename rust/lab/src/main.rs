@@ -26,11 +26,14 @@ use static_cell::StaticCell;
 mod cdc;
 mod cli;
 mod commissioning;
+mod core1;
+mod delay;
 mod drive;
 mod error;
 mod fast_read;
 mod host;
 mod hw;
+mod loan;
 mod logs;
 mod metadata;
 mod output;
@@ -103,6 +106,8 @@ async fn main(spawner: Spawner) -> ! {
 
     init_serial_id();
     debug!("Serial ID: {}", serial_id());
+
+    core1::start(p.CORE1);
 
     let usb_device = usb::Usb::new(p.USB);
     usb::run(spawner, usb_device);

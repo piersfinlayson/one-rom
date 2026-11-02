@@ -2,6 +2,8 @@
 
 ## v0.4.1 - unreleased
 
+- Long running operations, like ROM reads, now run on the second core, so USB isn't impacted.
+- Execute performance critical processing from RAM.
 - `R` queries One ROM information using RBCP.
 - `a` is a batch read that reads the ROM and queries One ROM information.
 - `x` reads a chip continuously at MHz rates.

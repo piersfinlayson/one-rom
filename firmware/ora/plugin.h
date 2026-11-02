@@ -386,6 +386,9 @@ void ora_delay_ms(uint32_t ms);
  * the other plugin after each call.  @p loop must return promptly so the other
  * plugin can enter exclusive mode.  To pause, call @ref ora_delay_ms.
  *
+ * A plugin that requires interrupts must define its own
+ * @ref ora_plugin_header_t with ora_plugin_header_t::irq_handler set.
+ *
  * @p setup is declared as:
  * @code
  * void setup(ora_lookup_fn_t ora_lookup_fn,

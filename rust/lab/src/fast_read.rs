@@ -14,12 +14,13 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::cell::UnsafeCell;
 use core::iter::once;
 use embassy_rp::pac;
 use sha1::{Digest, Sha1};
 
+use crate::delay;
 use crate::error::Error;
+use crate::loan::{Lender, Loan};
 use crate::rom::FastReadPins;
 
 /// The largest chip a fast read supports.  Every 24 and 28 pin chip fits.
@@ -30,10 +31,6 @@ pub const MAX_LISTED: usize = 8;
 
 /// The default cycles at 150 MHz between setting an address and sampling the
 /// data.
-///
-/// Every address pin and the strobe change at once, so this is longer than
-/// the delay a normal read uses.  A Fire 28 C read early at 8 cycles and
-/// cleanly at 12.
 pub const DEFAULT_DELAY_CYCLES: u32 = 16;
 
 /// The longest delay accepted.  A pass at this delay takes about half a
@@ -41,15 +38,14 @@ pub const DEFAULT_DELAY_CYCLES: u32 = 16;
 pub const MAX_DELAY_CYCLES: u32 = 1000;
 
 /// The first pass, as raw data bits.  Static rather than on the 16KB heap.
-struct Reference(UnsafeCell<[u8; MAX_BYTES]>);
+pub type Reference = [u8; MAX_BYTES];
 
-// Only the CLI task runs a fast read, one at a time.
-unsafe impl Sync for Reference {}
+static REFERENCE: Lender<Reference> = Lender::new([0; MAX_BYTES]);
 
-static REFERENCE: Reference = Reference(UnsafeCell::new([0; MAX_BYTES]));
-
-fn reference() -> &'static mut [u8; MAX_BYTES] {
-    unsafe { &mut *REFERENCE.0.get() }
+/// Lends the buffer for a fast read's first pass, or returns `None` while it is
+/// lent.
+pub fn lend_reference() -> Option<Loan<Reference>> {
+    REFERENCE.lend()
 }
 
 /// A mismatch against the first pass.
@@ -161,18 +157,17 @@ impl FastReader {
         out.value_xor()
             .write_value((self.addr_out ^ target) | self.strobe);
         self.addr_out = target;
-        cortex_m::asm::delay(self.delay_cycles);
+        delay::cycles(self.delay_cycles);
         let raw = (pac::SIO.gpio_in(0).read() >> self.data_shift) as u8;
         out.value_xor().write_value(self.strobe);
         raw
     }
 
-    /// Read the first pass and return the SHA-1 of the bytes it read.
-    pub fn read_reference(&mut self) -> [u8; 20] {
-        let reference = &mut reference()[..self.size];
-        for (addr, byte) in reference.iter_mut().enumerate() {
-            *byte = self.read(addr);
-        }
+    /// Read the first pass into `reference` and return the SHA-1 of the bytes
+    /// it read.
+    pub fn read_reference(&mut self, reference: &mut Reference) -> [u8; 20] {
+        self.read_pass(reference);
+        let reference = &reference[..self.size];
         let mut sha = Sha1::new();
         for &raw in reference.iter() {
             sha.update([self.tables.decode[raw as usize]]);
@@ -182,11 +177,24 @@ impl FastReader {
         sha1
     }
 
-    /// Read a pass and compare it with the first.
+    /// Read the first pass, from RAM like [`Self::compare_pass`] so both run at
+    /// the same speed.
     #[inline(never)]
-    pub fn compare_pass(&mut self) {
+    #[unsafe(link_section = ".data.ram_func")]
+    fn read_pass(&mut self, reference: &mut Reference) {
+        let reference = &mut reference[..self.size];
+        for (addr, byte) in reference.iter_mut().enumerate() {
+            *byte = self.read(addr);
+        }
+    }
+
+    /// Read a pass and compare it with the first, in `reference`.  Runs from
+    /// RAM so its speed doesn't depend on the XIP cache.
+    #[inline(never)]
+    #[unsafe(link_section = ".data.ram_func")]
+    pub fn compare_pass(&mut self, reference: &Reference) {
         self.passes += 1;
-        let reference = &reference()[..self.size];
+        let reference = &reference[..self.size];
         for (addr, &expected) in reference.iter().enumerate() {
             let raw = self.read(addr);
             if raw != expected {

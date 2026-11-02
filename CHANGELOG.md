@@ -39,6 +39,7 @@ In detail:
   - Moves to logic shared with the CLI to combine and verify built firmware.
   - The Analyse tab's Open in Create button copies the configuration and ROM images of a One ROM or firmware file into the Create tab.
 - Lab:
+  - Long running operations, like ROM reads, now run on the second core, so USB isn't impacted.
   - `R` queries One ROM information using RBCP.
   - `a` is a batch read that reads the ROM and queries One ROM information.
   - `x` reads a chip continuously at MHz rates.
