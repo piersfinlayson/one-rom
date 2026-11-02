@@ -167,6 +167,8 @@
 #define IO_BANK0_INTR(n)        (*(volatile uint32_t *)(IO_BANK0_BASE + 0x230 + ((n) * 4)))
 #define IO_BANK0_PROC_INTE(core, n) \
     (*(volatile uint32_t *)(IO_BANK0_BASE + 0x248 + ((core) * 0x48) + ((n) * 4)))
+#define IO_BANK0_PROC_INTF(core, n) \
+    (*(volatile uint32_t *)(IO_BANK0_BASE + 0x260 + ((core) * 0x48) + ((n) * 4)))
 #define IO_BANK0_PROC_INTS(core, n) \
     (*(volatile uint32_t *)(IO_BANK0_BASE + 0x278 + ((core) * 0x48) + ((n) * 4)))
 #define IO_BANK0_PROC0_INTE1 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x24C))

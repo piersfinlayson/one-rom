@@ -89,6 +89,7 @@ void setup_vbus_interrupt(void) {
     *inte |= (1 << bit);                        // Enable rising edge interrupt
     *intr = (1 << bit);                         // Clear any pending
     NVIC_ISER0 |= (1 << IRQ_IO_IRQ_BANK0);      // Enable IO_BANK0 interrupt in NVIC
+    RUNTIME->firmware_flags |= FIRMWARE_FLAG_VBUS_DETECT;
 
     // Set as input, pull-down, output disable
     GPIO_PAD(vbus_pin) |= (PAD_PD | PAD_OUTPUT_DISABLE | PAD_INPUT);

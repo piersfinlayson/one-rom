@@ -3413,9 +3413,12 @@ void irq_handler_usbctrl_irq(void) {
 
 // IO_IRQ_BANK0 handler, on either core.  On core 0, vbus_connect_handler()
 // enters the bootloader if the VBUS interrupt fired.  If irq_to_plugin()
-// doesn't call a plugin handler, the GPIO interrupts that fired are cleared
-// and disabled.  Clearing has no effect on a level interrupt, so it is
-// disabled too.
+// doesn't call a plugin handler, every GPIO interrupt that fired is stopped,
+// with one write for each kind of interrupt:
+// - acknowledging stops an edge interrupt
+// - disabling stops a level interrupt
+// - clearing the force bit stops a forced interrupt
+SIZE_OPTIMISED
 void irq_handler_io_bank0(void) {
     uint32_t core = SIO_CPUID;
     if (core == 0u) {
@@ -3424,9 +3427,24 @@ void irq_handler_io_bank0(void) {
     if (irq_to_plugin(IRQ_IO_IRQ_BANK0)) {
         return;
     }
+
+    // When VBUS detection is enabled, the loop below skips the VBUS pin.  If
+    // the VBUS pin's interrupt fired after vbus_connect_handler() checked,
+    // this handler runs again immediately, and vbus_connect_handler() enters
+    // the bootloader.
+    uint32_t vbus_reg = IO_BANK0_INT_REG_COUNT;
+    uint32_t vbus_bit = 0u;
+    if ((core == 0u) && (RUNTIME->firmware_flags & FIRMWARE_FLAG_VBUS_DETECT)) {
+        vbus_reg = HW->gpio_vbus / 8u;
+        vbus_bit = 1u << (((HW->gpio_vbus % 8u) * 4u) + 3u);
+    }
     for (uint32_t ii = 0; ii < IO_BANK0_INT_REG_COUNT; ii++) {
         uint32_t fired = IO_BANK0_PROC_INTS(core, ii);
+        if (ii == vbus_reg) {
+            fired &= ~vbus_bit;
+        }
         IO_BANK0_PROC_INTE(core, ii) &= ~fired;
+        IO_BANK0_PROC_INTF(core, ii) &= ~fired;
         IO_BANK0_INTR(ii) = fired;
     }
 }

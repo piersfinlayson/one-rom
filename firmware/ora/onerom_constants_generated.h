@@ -553,4 +553,8 @@
 // @since firmware 0.8.1
 #define ORA_FIRMWARE_FLAG_LOG_IN_UP1 ((uint8_t)2)
 
+// Whether VBUS detection is enabled.
+// @since firmware 0.8.1
+#define ORA_FIRMWARE_FLAG_VBUS_DETECT ((uint8_t)4)
+
 #endif // ONEROM_CONSTANTS_H

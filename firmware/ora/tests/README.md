@@ -17,6 +17,7 @@ not a date.
 | Test | What it covers |
 | --- | --- |
 | [log-test](log-test) | The plugin logging API's claim exclusion across two cores |
+| [irq-test](irq-test) | Interrupt delivery to plugins, and exclusive mode with both plugins requesting it at once |
 
 ## Building
 
@@ -25,6 +26,8 @@ Both plugin types are built from this directory:
 ```bash
 make log-test                       # log-test/build/plugin_user.bin
 make log-test PLUGIN_TYPE=SYSTEM    # log-test/build/plugin_system.bin
+make irq-test                       # irq-test/build/plugin_user.bin
+make irq-test PLUGIN_TYPE=SYSTEM    # irq-test/build/plugin_system.bin
 ```
 
 The build machinery is the same `plugin.mk` the examples use, so the

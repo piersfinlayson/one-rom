@@ -1787,6 +1787,12 @@ bit = 1
 first_release = "0.8.1"
 comment = """One ROM's log is in RTT up buffer 1. Never cleared once set."""
 
+[[bitfields.members]]
+name = "FIRMWARE_FLAG_VBUS_DETECT"
+bit = 2
+first_release = "0.8.1"
+comment = """Whether VBUS detection is enabled."""
+
 [[bitfields]]
 name = "onerom_log_channel_claim_t"
 size = 2
