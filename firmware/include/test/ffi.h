@@ -42,6 +42,22 @@ int8_t ffi_unclaimed_pio_written(uint8_t irq);
 // The GPIO claims in runtime info, bit N for GPIO N.
 uint64_t ffi_gpio_claims(void);
 void ffi_set_gpio_claims(uint64_t claims);
+uint8_t ffi_hw_claims2(void);
+void ffi_set_hw_claims2(uint8_t claims);
+uint8_t ffi_timer_alarm_claims(void);
+void ffi_set_timer_alarm_claims(uint8_t claims);
+uint32_t ffi_spinlock_claims(void);
+void ffi_set_spinlock_claims(uint32_t claims);
+uint16_t ffi_pwm_slice_claims(void);
+void ffi_set_pwm_slice_claims(uint16_t claims);
+
+// A plugin's interrupt claims in runtime info, bit N for interrupt N.
+uint64_t ffi_irq_claims(ora_plugin_type_t plugin);
+void ffi_set_irq_claims(ora_plugin_type_t plugin, uint64_t claims);
+
+// Calls usb_reserve() for plugin with a header containing only properties1, and
+// returns its result.
+uint8_t ffi_usb_reserve(ora_plugin_type_t plugin, uint8_t properties1);
 
 // The generation recorded in the metadata header, and a way to change it.
 //

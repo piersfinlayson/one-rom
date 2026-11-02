@@ -234,11 +234,11 @@ pub fn test_lookup_coverage(emu: &Emulator, base_dir: &Path) -> Result<(), Strin
         ),
         (ffi::api_id_t_ORA_ID_ALLOC_MEM, "ORA_ID_ALLOC_MEM"),
         (ffi::api_id_t_ORA_ID_GET_PEER_DATA, "ORA_ID_GET_PEER_DATA"),
+        (ffi::api_id_t_ORA_ID_CLAIM_HW, "ORA_ID_CLAIM_HW"),
         (
-            ffi::api_id_t_ORA_ID_CLAIM_DMA_CHANNEL,
-            "ORA_ID_CLAIM_DMA_CHANNEL",
+            ffi::api_id_t_ORA_ID_SET_IRQ_ENABLED,
+            "ORA_ID_SET_IRQ_ENABLED",
         ),
-        (ffi::api_id_t_ORA_ID_CLAIM_UART, "ORA_ID_CLAIM_UART"),
         (ffi::api_id_t_ORA_ID_CLAIM_GPIO, "ORA_ID_CLAIM_GPIO"),
         (ffi::api_id_t_ORA_ID_CLAIM_PIO, "ORA_ID_CLAIM_PIO"),
     ];

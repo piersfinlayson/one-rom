@@ -33,6 +33,7 @@ mod firmware_inspect;
 mod hardware;
 mod inspect_gpio;
 mod inspect_header;
+mod inspect_info;
 mod inspect_otp;
 mod inspect_peek;
 mod inspect_slots;

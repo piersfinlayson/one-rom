@@ -1463,6 +1463,282 @@ name = "OVERRIDE_STATE_ON"
 value = 2
 comment = "On"
 
+# ---
+
+[[enums]]
+name = "onerom_irq_t"
+size = 1
+comment = """An RP2350 interrupt taken from the RP2350 datasheet's interrupt table."""
+strip_prefix = "IRQ_"
+ora_api = true
+first_release = "0.8.1"
+
+[[enums.variants]]
+name = "IRQ_TIMER0_IRQ_0"
+value = 0
+comment = "TIMER0 alarm 0"
+
+[[enums.variants]]
+name = "IRQ_TIMER0_IRQ_1"
+value = 1
+comment = "TIMER0 alarm 1"
+
+[[enums.variants]]
+name = "IRQ_TIMER0_IRQ_2"
+value = 2
+comment = "TIMER0 alarm 2"
+
+[[enums.variants]]
+name = "IRQ_TIMER0_IRQ_3"
+value = 3
+comment = "TIMER0 alarm 3"
+
+[[enums.variants]]
+name = "IRQ_TIMER1_IRQ_0"
+value = 4
+comment = "TIMER1 alarm 0"
+
+[[enums.variants]]
+name = "IRQ_TIMER1_IRQ_1"
+value = 5
+comment = "TIMER1 alarm 1"
+
+[[enums.variants]]
+name = "IRQ_TIMER1_IRQ_2"
+value = 6
+comment = "TIMER1 alarm 2"
+
+[[enums.variants]]
+name = "IRQ_TIMER1_IRQ_3"
+value = 7
+comment = "TIMER1 alarm 3"
+
+[[enums.variants]]
+name = "IRQ_PWM_IRQ_WRAP_0"
+value = 8
+comment = "PWM wrap interrupt 0"
+
+[[enums.variants]]
+name = "IRQ_PWM_IRQ_WRAP_1"
+value = 9
+comment = "PWM wrap interrupt 1"
+
+[[enums.variants]]
+name = "IRQ_DMA_IRQ_0"
+value = 10
+comment = "DMA interrupt 0"
+
+[[enums.variants]]
+name = "IRQ_DMA_IRQ_1"
+value = 11
+comment = "DMA interrupt 1"
+
+[[enums.variants]]
+name = "IRQ_DMA_IRQ_2"
+value = 12
+comment = "DMA interrupt 2"
+
+[[enums.variants]]
+name = "IRQ_DMA_IRQ_3"
+value = 13
+comment = "DMA interrupt 3"
+
+[[enums.variants]]
+name = "IRQ_USBCTRL_IRQ"
+value = 14
+comment = "USB controller"
+
+[[enums.variants]]
+name = "IRQ_PIO0_IRQ_0"
+value = 15
+comment = "PIO0 interrupt 0"
+
+[[enums.variants]]
+name = "IRQ_PIO0_IRQ_1"
+value = 16
+comment = "PIO0 interrupt 1"
+
+[[enums.variants]]
+name = "IRQ_PIO1_IRQ_0"
+value = 17
+comment = "PIO1 interrupt 0"
+
+[[enums.variants]]
+name = "IRQ_PIO1_IRQ_1"
+value = 18
+comment = "PIO1 interrupt 1"
+
+[[enums.variants]]
+name = "IRQ_PIO2_IRQ_0"
+value = 19
+comment = "PIO2 interrupt 0"
+
+[[enums.variants]]
+name = "IRQ_PIO2_IRQ_1"
+value = 20
+comment = "PIO2 interrupt 1"
+
+[[enums.variants]]
+name = "IRQ_IO_IRQ_BANK0"
+value = 21
+comment = "GPIO bank 0 per-core"
+
+[[enums.variants]]
+name = "IRQ_IO_IRQ_BANK0_NS"
+value = 22
+comment = "GPIO bank 0, non-secure"
+
+[[enums.variants]]
+name = "IRQ_IO_IRQ_QSPI"
+value = 23
+comment = "QSPI pins per-core"
+
+[[enums.variants]]
+name = "IRQ_IO_IRQ_QSPI_NS"
+value = 24
+comment = "QSPI pins, non-secure"
+
+[[enums.variants]]
+name = "IRQ_SIO_IRQ_FIFO"
+value = 25
+comment = "Inter-core FIFO, one for each core"
+
+[[enums.variants]]
+name = "IRQ_SIO_IRQ_BELL"
+value = 26
+comment = "Doorbells per-core"
+
+[[enums.variants]]
+name = "IRQ_SIO_IRQ_FIFO_NS"
+value = 27
+comment = "Inter-core FIFO, non-secure"
+
+[[enums.variants]]
+name = "IRQ_SIO_IRQ_BELL_NS"
+value = 28
+comment = "Doorbells, non-secure"
+
+[[enums.variants]]
+name = "IRQ_SIO_IRQ_MTIMECMP"
+value = 29
+comment = "SIO timer compare per-core"
+
+[[enums.variants]]
+name = "IRQ_CLOCKS_IRQ"
+value = 30
+comment = "Clocks"
+
+[[enums.variants]]
+name = "IRQ_SPI0_IRQ"
+value = 31
+comment = "SPI0"
+
+[[enums.variants]]
+name = "IRQ_SPI1_IRQ"
+value = 32
+comment = "SPI1"
+
+[[enums.variants]]
+name = "IRQ_UART0_IRQ"
+value = 33
+comment = "UART0"
+
+[[enums.variants]]
+name = "IRQ_UART1_IRQ"
+value = 34
+comment = "UART1"
+
+[[enums.variants]]
+name = "IRQ_ADC_IRQ_FIFO"
+value = 35
+comment = "ADC FIFO"
+
+[[enums.variants]]
+name = "IRQ_I2C0_IRQ"
+value = 36
+comment = "I2C0"
+
+[[enums.variants]]
+name = "IRQ_I2C1_IRQ"
+value = 37
+comment = "I2C1"
+
+[[enums.variants]]
+name = "IRQ_OTP_IRQ"
+value = 38
+comment = "OTP"
+
+[[enums.variants]]
+name = "IRQ_TRNG_IRQ"
+value = 39
+comment = "TRNG"
+
+[[enums.variants]]
+name = "IRQ_PROC0_IRQ_CTI"
+value = 40
+comment = "Core 0 cross-trigger"
+
+[[enums.variants]]
+name = "IRQ_PROC1_IRQ_CTI"
+value = 41
+comment = "Core 1 cross-trigger"
+
+[[enums.variants]]
+name = "IRQ_PLL_SYS_IRQ"
+value = 42
+comment = "System PLL"
+
+[[enums.variants]]
+name = "IRQ_PLL_USB_IRQ"
+value = 43
+comment = "USB PLL"
+
+[[enums.variants]]
+name = "IRQ_POWMAN_IRQ_POW"
+value = 44
+comment = "Power manager"
+
+[[enums.variants]]
+name = "IRQ_POWMAN_IRQ_TIMER"
+value = 45
+comment = "Power manager timer"
+
+[[enums.variants]]
+name = "IRQ_SPARE_IRQ_0"
+value = 46
+comment = "Spare, raised by software only"
+
+[[enums.variants]]
+name = "IRQ_SPARE_IRQ_1"
+value = 47
+comment = "Spare, raised by software only"
+
+[[enums.variants]]
+name = "IRQ_SPARE_IRQ_2"
+value = 48
+comment = "Spare, raised by software only"
+
+[[enums.variants]]
+name = "IRQ_SPARE_IRQ_3"
+value = 49
+comment = "Spare, raised by software only"
+
+[[enums.variants]]
+name = "IRQ_SPARE_IRQ_4"
+value = 50
+comment = "Spare, raised by software only"
+
+[[enums.variants]]
+name = "IRQ_SPARE_IRQ_5"
+value = 51
+comment = "Spare, raised by software only"
+
+[[enums.variants]]
+name = "IRQ_INVALID"
+value = 0xFF
+sentinel = true
+comment = "Not an interrupt"
+
 # ===========================================================================
 # Bit fields
 # ===========================================================================
@@ -1608,12 +1884,59 @@ first_release = "0.8.1"
 [[bitfields.members]]
 name = "HW_CLAIM_UART_0"
 bit = 0
-comment = "UART0 is claimed."
+comment = "UART0 claim."
 
 [[bitfields.members]]
 name = "HW_CLAIM_UART_1"
 bit = 1
-comment = "UART1 is claimed."
+comment = "UART1 claim."
+
+[[bitfields.members]]
+name = "HW_CLAIM_I2C_0"
+bit = 2
+comment = "I2C0 claim."
+
+[[bitfields.members]]
+name = "HW_CLAIM_I2C_1"
+bit = 3
+comment = "I2C1 claim."
+
+[[bitfields.members]]
+name = "HW_CLAIM_SPI_0"
+bit = 4
+comment = "SPI0 claim."
+
+[[bitfields.members]]
+name = "HW_CLAIM_SPI_1"
+bit = 5
+comment = "SPI1 claim."
+
+[[bitfields.members]]
+name = "HW_CLAIM_ADC"
+bit = 6
+comment = "ADC claim."
+
+[[bitfields.members]]
+name = "HW_CLAIM_USB"
+bit = 7
+comment = "USB controller claim, including the reservation at launch."
+
+[[bitfields]]
+name = "onerom_hw_claim2_t"
+size = 1
+comment = "Hardware claimed by a plugin, continued from onerom_hw_claim_t. An unused bit is 0."
+strip_prefix = "HW_CLAIM2_"
+first_release = "0.8.1"
+
+[[bitfields.members]]
+name = "HW_CLAIM2_SHA256"
+bit = 0
+comment = "SHA-256 accelerator claim."
+
+[[bitfields.members]]
+name = "HW_CLAIM2_TRNG"
+bit = 1
+comment = "TRNG claim."
 
 [[bitfields]]
 name = "onerom_pio_block_claim_t"
@@ -2434,7 +2757,7 @@ comment = """OneROM runtime environment information.
 Written and maintained by the firmware at runtime; not generated by the pre-processor.
 Parsed only."""
 generate = "parse"
-size = 96
+size = 116
 const_fields = false
 version_field = "version"
 version_constant = "RUNTIME_INFO_VERSION"
@@ -2722,7 +3045,7 @@ type = "u16"
 since_runtime_version = 4
 default_if_absent = 0
 expected_offset = 70
-comment = "DMA channels the firmware uses or a plugin has claimed. Bit N is channel N."
+comment = "DMA channels claimed by the firmware or a plugin. Bit N is channel N."
 
 [[structs.fields]]
 name = "gpio_claims"
@@ -2732,7 +3055,7 @@ count = 6
 since_runtime_version = 4
 default_if_absent = 0
 expected_offset = 72
-comment = "GPIOs a plugin has claimed. Bit (N % 8) of byte (N / 8) is GPIO N."
+comment = "GPIOs claimed by a plugin. Bit (N % 8) of byte (N / 8) is GPIO N."
 
 [[structs.fields]]
 name = "rgb_led_pio"
@@ -2772,10 +3095,60 @@ expected_offset = 92
 comment = "PIO state machines claimed by the firmware or a plugin, and each PIO block's GPIOBASE."
 
 [[structs.fields]]
-name = "reserved"
-kind = "padding"
-size = 2
-comment = "Pad to a multiple of 4 bytes. Set to 0."
+name = "pwm_slice_claims"
+kind = "scalar"
+type = "u16"
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 94
+comment = "PWM slices claimed by a plugin. Bit N is slice N."
+
+[[structs.fields]]
+name = "spinlock_claims"
+kind = "scalar"
+type = "u32"
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 96
+comment = "Spinlocks claimed by the firmware or a plugin. The firmware claims those it uses and those made unreliable by erratum RP2350-E2. Bit N is spinlock N."
+
+[[structs.fields]]
+name = "timer_alarm_claims"
+kind = "scalar"
+type = "u8"
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 100
+comment = "Timer alarms claimed by the firmware or a plugin. Bit N is TIMER0 alarm N and bit (4 + N) is TIMER1 alarm N."
+
+[[structs.fields]]
+name = "hw_claims2"
+kind = "bitfield"
+type = "onerom_hw_claim2_t"
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 101
+comment = "Hardware claimed by a plugin, continued from hw_claims."
+
+[[structs.fields]]
+name = "irq_claims_system"
+kind = "inline_array"
+element = "u8"
+count = 7
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 102
+comment = "Interrupts claimed by the system plugin. Bit (N % 8) of byte (N / 8) is onerom_irq_t interrupt N."
+
+[[structs.fields]]
+name = "irq_claims_user"
+kind = "inline_array"
+element = "u8"
+count = 7
+since_runtime_version = 4
+default_if_absent = 0
+expected_offset = 109
+comment = "Interrupts claimed by the user plugin. Bit (N % 8) of byte (N / 8) is onerom_irq_t interrupt N."
 
 # ===========================================================================
 # Tagged FAM structs
@@ -3512,6 +3885,14 @@ first_release = "0.8.1"
 comment = "Offset of the little-endian 32-bit peer_data in the plugin header. peer_data is the address of the plugin's first peer data block."
 
 [[constants]]
+name = "PLUGIN_HEADER_IRQ_HANDLER_OFFSET"
+type = "usize"
+value = 44
+ora_api = true
+first_release = "0.8.1"
+comment = "Offset of the little-endian 32-bit irq_handler in the plugin header. irq_handler is the address of the plugin's interrupt handler, or 0 for none."
+
+[[constants]]
 name = "LOG_CHANNEL_2_MAX_SIZE"
 type = "u16"
 value = 0x100
@@ -3555,7 +3936,20 @@ value = 0x04
 ora_api = true
 first_release = "0.8.1"
 comment = """Plugin header properties1 bit requesting exclusive serial IN mode. With this
-bit set, plugin are started with ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN set."""
+bit set in either plugin's header, both plugins are started with
+ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN set."""
+
+[[constants]]
+name = "PROPERTY1_RESERVE_USB"
+type = "u8"
+value = 0x08
+ora_api = true
+first_release = "0.8.1"
+comment = """Plugin header properties1 bit. With it set, the firmware reserves the USB
+controller and its interrupt for the plugin at launch, unless the USB controller
+has already been claimed. If both plugins set it, they are reserved for the system
+plugin. The plugin they are reserved for is started with the
+ORA_ENTRY_FLAG_USB_RESERVED bit set."""
 
 # ---------------------------------------------------------------------------
 # USB DPRAM

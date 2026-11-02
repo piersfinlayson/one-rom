@@ -20,9 +20,9 @@
 # with PLUGIN_IS_SYSTEM, which is defined to 1 or 0 in both directions:
 #
 #   #if PLUGIN_IS_SYSTEM
-#   ORA_DEFINE_SYSTEM_PLUGIN(...);
+#   ORA_SYSTEM_PLUGIN(...);
 #   #else
-#   ORA_DEFINE_USER_PLUGIN(...);
+#   ORA_USER_PLUGIN(...);
 #   #endif
 #
 # Do not compare PLUGIN_TYPE_NUM against ORA_PLUGIN_TYPE_SYSTEM or

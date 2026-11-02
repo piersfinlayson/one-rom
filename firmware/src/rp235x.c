@@ -88,7 +88,7 @@ void setup_vbus_interrupt(void) {
     volatile uint32_t *intr = &IO_BANK0_INTR0 + reg_offset;
     *inte |= (1 << bit);                        // Enable rising edge interrupt
     *intr = (1 << bit);                         // Clear any pending
-    NVIC_ISER0 |= (1 << IO_IRQ_BANK0);          // Enable IO_BANK0 interrupt in NVIC
+    NVIC_ISER0 |= (1 << IRQ_IO_IRQ_BANK0);      // Enable IO_BANK0 interrupt in NVIC
 
     // Set as input, pull-down, output disable
     GPIO_PAD(vbus_pin) |= (PAD_PD | PAD_OUTPUT_DISABLE | PAD_INPUT);
@@ -104,14 +104,19 @@ void setup_vbus_interrupt(void) {
     }
 }
 
-// VBUS interrupt Handler
+// Enters the bootloader if the VBUS interrupt fired.  Called from core 0's
+// IO_IRQ_BANK0 handler, which is shared with the user plugin.
 void vbus_connect_handler(void) {
-    // Clear the interrupt
     uint8_t vbus_pin = HW->gpio_vbus;
+    if (vbus_pin >= MAX_GPIOS) {
+        return;
+    }
     uint32_t reg_offset = vbus_pin / 8;
-    uint32_t bit = ((vbus_pin % 8) * 4) + 3;
-    volatile uint32_t *intr = &IO_BANK0_INTR0 + reg_offset;
-    *intr = (1 << bit);
+    uint32_t bit = 1u << (((vbus_pin % 8) * 4) + 3);
+    if (!(IO_BANK0_PROC_INTS(0, reg_offset) & bit)) {
+        return;
+    }
+    IO_BANK0_INTR(reg_offset) = bit;
 
     // Disable interrupts before logging
     __asm volatile("cpsid i");

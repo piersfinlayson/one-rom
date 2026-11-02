@@ -161,6 +161,14 @@
 #define IO_BANK0_INTR2 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x238))
 #define IO_BANK0_INTR3 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x23C))
 #define IO_BANK0_PROC0_INTE0 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x248))
+// GPIO interrupt registers indexed by register number, 8 GPIOs per register.
+// Each core has its own enable and status registers.
+#define IO_BANK0_INT_REG_COUNT  6
+#define IO_BANK0_INTR(n)        (*(volatile uint32_t *)(IO_BANK0_BASE + 0x230 + ((n) * 4)))
+#define IO_BANK0_PROC_INTE(core, n) \
+    (*(volatile uint32_t *)(IO_BANK0_BASE + 0x248 + ((core) * 0x48) + ((n) * 4)))
+#define IO_BANK0_PROC_INTS(core, n) \
+    (*(volatile uint32_t *)(IO_BANK0_BASE + 0x278 + ((core) * 0x48) + ((n) * 4)))
 #define IO_BANK0_PROC0_INTE1 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x24C))
 #define IO_BANK0_PROC0_INTE2 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x250))
 #define IO_BANK0_PROC0_INTE3 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x254))
@@ -286,6 +294,12 @@
 #define TIMER0_INT_ALARM0   (1 << 0)
 #define TIMER0_INT_ALARM1   (1 << 1)
 
+// Alarms across TIMER0 and TIMER1
+#define TIMER_ALARM_COUNT   8
+
+// PWM
+#define PWM_SLICE_COUNT     12
+
 // OTP registers - see datasheet S13.
 //
 // Page n's software lock.  A write is ORed with the page's lock, so it can
@@ -405,6 +419,15 @@
 #define SPINLOCK_LED        30
 #define SPINLOCK_MEM_POOL   29
 #define SPINLOCK_HW_CLAIM   28
+#define SPINLOCK_COUNT      32
+#define SPINLOCK_FIRMWARE_CLAIMS ((1u << SPINLOCK_ORA_LOG) | (1u << SPINLOCK_LED) | \
+                                  (1u << SPINLOCK_MEM_POOL) | (1u << SPINLOCK_HW_CLAIM))
+
+// The spinlocks usable under erratum RP2350-E2, from the datasheet's
+// workaround.  The firmware claims the others so a plugin can't claim one.
+#define SPINLOCK_RP2350_E2_USABLE ((1u << 5) | (1u << 6) | (1u << 7) | \
+                                   (1u << 10) | (1u << 11) | 0xFFFC0000u)
+#define SPINLOCK_RP2350_E2_LOCKS  (~SPINLOCK_RP2350_E2_USABLE)
 
 #define SIO_GPIO_READ(pin)  ((pin < 32) ? \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x004)) >> pin) & 1) : \
@@ -432,9 +455,9 @@
 #define NVIC_ISER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E104)))
 #define NVIC_ICER0          (*((volatile uint32_t *)(PBB_BASE + 0x0E180)))
 #define NVIC_ICER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E184)))
-#define DMA_IRQ_0           10
-#define IRQ_USBCTRL      14
-#define IO_IRQ_BANK0        21
+// Interrupt numbers are the onerom_irq_t values generated from the metadata
+// schema.
+#define RP2350_IRQ_COUNT    52
 
 // SCB Registers
 #define SCB_VTOR            (*((volatile uint32_t *)(SCB_BASE + 0x08)))

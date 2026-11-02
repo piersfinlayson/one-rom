@@ -11,8 +11,9 @@
  * its plugin region.  The build system selects the region via
  * --defsym PLUGIN_TYPE=<type>.
  *
- * The plugin header must be defined in the plugin source using
- * ORA_DEFINE_SYSTEM_PLUGIN() or ORA_DEFINE_USER_PLUGIN() from ora/plugin.h.
+ * The plugin source code must define the plugin header in one of these ways:
+ * - with ORA_SYSTEM_PLUGIN() or ORA_USER_PLUGIN() from ora/plugin.h
+ * - as an ora_plugin_header_t in the .plugin_header section
  */
 
 INCLUDE onerom_linker_constants_generated.ld
@@ -81,7 +82,10 @@ SECTIONS
 
     .bss (NOLOAD) : {
         __bss_start = .;
-        *(.bss*)
+        /* Sorted by alignment, largest first, so padding isn't inserted    */
+        /* before a buffer aligned to its own size, for example a ring      */
+        /* buffer.                                                          */
+        *(SORT_BY_ALIGNMENT(.bss*))
         . = ALIGN(4);
         __bss_end = .;
     }

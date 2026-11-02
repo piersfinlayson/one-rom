@@ -128,22 +128,21 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
  * @brief Allow a host-side test build to make progress inside a busy-wait
  *
  * Place this in any loop whose exit condition depends on state only the other
- * core or external hardware can change — a spin on a ring-buffer write
- * pointer, a poll of a location the host writes, a wait on a DMA pointer.
+ * core or external hardware can change, for example:
+ * - a spin on a ring-buffer write pointer
+ * - a poll of a location the host writes
+ * - a wait on a DMA pointer
  *
  * On a device it compiles to nothing whatsoever.  It is therefore *not* a
  * delay, *not* a scheduling primitive, and carries no timing guarantee of any
- * kind; never reach for it to pace a loop.  It is also unrelated to
+ * kind. It must not be used to pace a loop.  It is also unrelated to
  * @ref ORA_ID_YIELD, which is about co-operating with the other plugin over
- * exclusive access — a different concern entirely, despite the name.
+ * exclusive access, which is a different concern.
  *
  * Under a host-side test build the emulated hardware only advances when the
  * harness advances it, so a loop like the above would spin forever with
- * nothing to change its exit condition.  This macro hands control back so the
+ * nothing to change its exit condition.  This macro returns control so the
  * harness can drive the next stimulus.
- *
- * Omitting it costs nothing on a device; the only consequence is that the loop
- * cannot be exercised on a host.
  *
  * @code
  * while (read_idx == write_idx) {
@@ -444,6 +443,9 @@ typedef enum {
     /**
      * @brief Register an IRQ handler
      * @sa ora_register_irq_fn_t
+     * @deprecated Claim the interrupt with @ref ORA_ID_CLAIM_HW, then use
+     *             ora_plugin_header_t::irq_handler and
+     *             @ref ORA_ID_SET_IRQ_ENABLED.
      */
     ORA_ID_REGISTER_IRQ = 0x0000000A,
 
@@ -468,6 +470,8 @@ typedef enum {
     /**
      * @brief Enable an IRQ
      * @sa ora_enable_irq_fn_t
+     * @deprecated Claim the interrupt with @ref ORA_ID_CLAIM_HW, then use
+     *             @ref ORA_ID_SET_IRQ_ENABLED.
      */
     ORA_ID_ENABLE_IRQ = 0x0000000E,
 
@@ -632,6 +636,7 @@ typedef enum {
     /**
      * @brief Yield to allow another core to enter exclusive mode
      * @sa ora_yield_fn_t
+     * @since firmware 0.7.0
      */
     ORA_ID_YIELD                = 0x00000029,
 
@@ -845,18 +850,18 @@ typedef enum {
     ORA_ID_GET_PEER_DATA             = 0x00000046,
 
     /**
-     * @brief Claim a DMA channel
-     * @sa ora_claim_dma_channel_fn_t
+     * @brief Claim hardware or an interrupt
+     * @sa ora_claim_hw_fn_t
      * @since firmware 0.8.1
      */
-    ORA_ID_CLAIM_DMA_CHANNEL         = 0x00000047,
+    ORA_ID_CLAIM_HW                  = 0x00000047,
 
     /**
-     * @brief Claim a UART
-     * @sa ora_claim_uart_fn_t
+     * @brief Enable or disable a claimed interrupt
+     * @sa ora_set_irq_enabled_fn_t
      * @since firmware 0.8.1
      */
-    ORA_ID_CLAIM_UART                = 0x00000048,
+    ORA_ID_SET_IRQ_ENABLED           = 0x00000048,
 
     /**
      * @brief Claim a GPIO
@@ -905,13 +910,11 @@ typedef enum {
 _Static_assert(sizeof(ora_core_t) == 1, "ora_core_t must be 1 byte");
 
 /**
- * @brief IRQ numbers
+ * @brief An RP2350 interrupt number
+ *
+ * The values are the ORA_IRQ_ constants in onerom_constants_generated.h.
  */
-typedef enum {
-    ORA_IRQ_TIMER0_IRQ_0 = 0,
-    ORA_IRQ_USBCTRL_IRQ = 14,
-    ORA_IRQ_INVALID = 0xFF,
-} ora_irq_t;
+typedef uint8_t ora_irq_t;
 _Static_assert(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
 
 /**
@@ -1265,6 +1268,29 @@ typedef struct {
  */
 typedef void (*ora_irq_handler_t)(void);
 
+/**
+ * @brief A plugin's interrupt handler
+ * @sa ora_plugin_header_t::irq_handler
+ * @since firmware 0.8.1
+ *
+ * The firmware calls a plugin's interrupt handler in interrupt context on the
+ * plugin's core for any interrupt the plugin has claimed and enabled, when that
+ * interrupt fires.  The plugin's handler is responsible for clearing the
+ * interrupt's cause.
+ *
+ * If a handler is registered for ORA_IRQ_USBCTRL_IRQ using
+ * @ref ora_register_irq_fn_t, that handler is called instead.  One ROM
+ * firmware uses ORA_IRQ_IO_IRQ_BANK0, for example for VBUS detection.  When
+ * using ORA_IRQ_IO_IRQ_BANK0, a plugin's handler must only clear or change the
+ * GPIO interrupts the plugin enabled.
+ *
+ * The firmware disables any firing interrupt on a core if the plugin has no
+ * interrupt handler, or if the plugin hasn't claimed that interrupt.
+ *
+ * @param irq  The ORA_IRQ_ number of the interrupt
+ */
+typedef void (*ora_plugin_irq_handler_t)(ora_irq_t irq);
+
 /** @} */ // plugin_api_types
 
 /**
@@ -1383,6 +1409,14 @@ typedef struct {
 #define ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN   (1u << 0)
 
 /**
+ * @brief The USB controller and its interrupt are reserved for this plugin
+ * @sa ora_entry_args_t
+ * @sa ORA_PROPERTY1_RESERVE_USB
+ * @since firmware 0.8.1
+ */
+#define ORA_ENTRY_FLAG_USB_RESERVED          (1u << 1)
+
+/**
  * @brief Monitor mode
  *
  * This enumeration defines the modes in which the address monitor can
@@ -1499,8 +1533,7 @@ typedef enum {
     ORA_RESULT_NOT_READY = 15,
     /**
      * @brief The hardware is already claimed or set up
-     * @sa ora_claim_dma_channel_fn_t
-     * @sa ora_claim_uart_fn_t
+     * @sa ora_claim_hw_fn_t
      * @sa ora_claim_gpio_fn_t
      * @sa ora_claim_pio_fn_t
      * @sa ora_setup_address_monitor_fn_t
@@ -1546,8 +1579,9 @@ typedef void *(*ora_lookup_fn_t)(api_id_t id);
  * @brief Plugin entry point function type
  *
  * This typedef defines the signature that all plugin entry point functions
- * must conform to.  Use @ref ORA_DEFINE_SYSTEM_PLUGIN or
- * @ref ORA_DEFINE_USER_PLUGIN to define your entry point.
+ * must conform to.  @ref ORA_SYSTEM_PLUGIN and @ref ORA_USER_PLUGIN are
+ * helper macros for simple plugins that implement this entry point and
+ * instead require a plugin to provide setup and loop functions.
  *
  * @param ora_lookup_fn A pointer to the API lookup function
  * @param plugin_type   Whether this is a system or user plugin
@@ -1727,6 +1761,11 @@ typedef void (*ora_setup_adc_fn_t)(void);
 /**
  * @brief Register an IRQ handler
  * @sa ORA_ID_REGISTER_IRQ
+ * @deprecated Claim the interrupt with @ref ora_claim_hw_fn_t, then use
+ *             ora_plugin_header_t::irq_handler and
+ *             @ref ora_set_irq_enabled_fn_t.
+ *
+ * DEPRECATED AS OF v0.8.1.  This function is still functional.
  * 
  * This is used by plugins that want to register an IRQ handler for a specific
  * IRQ.
@@ -1777,10 +1816,13 @@ typedef uint32_t (*ora_get_sysclk_mhz_fn_t)(void);
 /**
  * @brief Enable an IRQ
  * @sa ORA_ID_ENABLE_IRQ
+ * @deprecated Claim the interrupt with @ref ora_claim_hw_fn_t, then use
+ *             @ref ora_set_irq_enabled_fn_t.
+ *
+ * DEPRECATED AS OF v0.8.1.  This function is still functional.
  * 
- * This is used by plugins to enable an IRQ for which they have registered a
- * handler.  If the plugin has not registered a handler for the specified IRQ,
- * this function silently fails.
+ * Enables or disables @p irq on the calling plugin's core, whether or not a
+ * handler was registered for it with @ref ora_register_irq_fn_t.
  *
  * @param irq The IRQ to enable
  * @param enable Set to 1 to enable the IRQ, or 0 to disable it.
@@ -3807,49 +3849,128 @@ _Static_assert(sizeof(ora_peer_data_header_t) == ORA_PEER_DATA_MIN_SIZE,
                "ora_peer_data_header_t must be 12 bytes");
 
 /**
- * @brief Any free DMA channel
- * @sa ora_claim_dma_channel_fn_t
+ * @brief A type of hardware peripheral claimed with @ref ora_claim_hw_fn_t
  * @since firmware 0.8.1
+ *
+ * Each value's instances are numbered from 0.
  */
-#define ORA_DMA_CHANNEL_ANY  0xFFFFFFFFu
+typedef enum {
+    /** @brief A DMA channel, 0 to 15 */
+    ORA_HW_DMA_CHANNEL = 0,
+
+    /** @brief A UART, 0 or 1 */
+    ORA_HW_UART        = 1,
+
+    /** @brief An I2C block, 0 or 1 */
+    ORA_HW_I2C         = 2,
+
+    /** @brief An SPI block, 0 or 1 */
+    ORA_HW_SPI         = 3,
+
+    /** @brief The ADC, 0 */
+    ORA_HW_ADC         = 4,
+
+    /** @brief The USB controller, 0 */
+    ORA_HW_USB         = 5,
+
+    /** @brief The SHA-256 accelerator, 0 */
+    ORA_HW_SHA256      = 6,
+
+    /** @brief The TRNG, 0 */
+    ORA_HW_TRNG        = 7,
+
+    /**
+     * @brief A timer alarm, 0 to 7
+     *
+     * Instance N is TIMER0 alarm N and instance (4 + N) is TIMER1 alarm N.
+     */
+    ORA_HW_TIMER_ALARM = 8,
+
+    /**
+     * @brief An SIO spinlock, 0 to 31
+     *
+     * Because of erratum RP2350-E2, only spinlocks 5, 6, 7, 10, 11 and 18 to
+     * 31 are usable.  The firmware claims the others and the ones it uses
+     * before plugins start.
+     */
+    ORA_HW_SPINLOCK    = 9,
+
+    /** @brief A PWM slice, 0 to 11 */
+    ORA_HW_PWM_SLICE   = 10,
+
+    /** @brief An interrupt, as an ORA_IRQ_ number */
+    ORA_HW_IRQ         = 11,
+} ora_hw_t;
 
 /**
- * @brief Claim a DMA channel
- * @sa ORA_ID_CLAIM_DMA_CHANNEL
+ * @brief Any free instance
+ * @sa ora_claim_hw_fn_t
  * @since firmware 0.8.1
- *
- * A DMA claim lasts until One ROM reboots.  The channels the firmware uses are
- * claimed before the plugins are started.
- *
- * @param channel  In: the channel to claim, or @ref ORA_DMA_CHANNEL_ANY for any
- *                 free channel.  Out: the channel claimed.  Unchanged unless
- *                 the result is ORA_RESULT_OK.
- * @param flags    Pass 0.  All bits are reserved and must be 0.
- * @retval ORA_RESULT_OK          Claimed successfully
- * @retval ORA_RESULT_IN_USE      The channel is already claimed.  For
- *                                @ref ORA_DMA_CHANNEL_ANY this means there are
- *                                no free channels.
- * @retval ORA_RESULT_INVALID_ARG @p channel is NULL, @p *channel isn't a DMA
- *                                channel or @ref ORA_DMA_CHANNEL_ANY, or
- *                                @p flags isn't 0
  */
-typedef ora_result_t (*ora_claim_dma_channel_fn_t)(uint32_t *channel,
-                                                   uint32_t flags);
+#define ORA_HW_ANY  0xFFFFFFFFu
 
 /**
- * @brief Claim a UART
- * @sa ORA_ID_CLAIM_UART
+ * @brief Claim hardware or an interrupt
+ * @sa ORA_ID_CLAIM_HW
  * @since firmware 0.8.1
  *
- * A UART claim lasts until One ROM reboots.
+ * A claim lasts until One ROM reboots.  The hardware the firmware uses is
+ * claimed before plugins start.  A later firmware version may claim additional
+ * hardware peripherals, so a plugin must handle ORA_RESULT_IN_USE for any
+ * peripheral it attempts to claim.
  *
- * @param uart   The number of the UART to claim: 0 or 1
- * @param flags  Pass 0.  All bits are reserved and must be 0.
- * @retval ORA_RESULT_OK          Claimed successfully
- * @retval ORA_RESULT_IN_USE      The UART is already claimed
- * @retval ORA_RESULT_INVALID_ARG @p uart isn't 0 or 1, or @p flags isn't 0
+ * Interrupts associated with hardware must be claimed separately.
+ *
+ * If a plugin's header sets ORA_PROPERTY1_RESERVE_USB and the USB controller
+ * hasn't already been claimed, the USB controller and its interrupt are
+ * reserved for it at launch and the plugin entry point flag
+ * @ref ORA_ENTRY_FLAG_USB_RESERVED is set.  Subsequently claiming
+ * @ref ORA_HW_USB then returns ORA_RESULT_OK to that plugin and
+ * ORA_RESULT_IN_USE to the other plugin.  ORA_IRQ_USBCTRL_IRQ can only be
+ * claimed using ORA_PROPERTY1_RESERVE_USB.
+ *
+ * ORA_IRQ_IO_IRQ_BANK0, ORA_IRQ_SIO_IRQ_BELL and ORA_IRQ_SIO_IRQ_MTIMECMP exist
+ * on both cores, so both plugins are able to claim these interrupts.  Any other
+ * interrupt can be claimed by only one plugin.
+ *
+ * @param hw        The type of hardware peripheral
+ * @param instance  In: the instance to claim, or @ref ORA_HW_ANY for any free
+ *                  instance.  Out: the instance claimed.  Unchanged unless the
+ *                  result is ORA_RESULT_OK.
+ * @param flags     Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK            Claimed successfully
+ * @retval ORA_RESULT_IN_USE        The instance is already claimed.  For
+ *                                  @ref ORA_HW_ANY this means there are no
+ *                                  free instances.
+ * @retval ORA_RESULT_INVALID_ARG   @p instance is NULL, @p *instance is out of
+ *                                  range and isn't @ref ORA_HW_ANY, or
+ *                                  @p flags isn't 0
+ * @retval ORA_RESULT_NOT_SUPPORTED @p hw isn't an ora_hw_t value this firmware
+ *                                  supports
  */
-typedef ora_result_t (*ora_claim_uart_fn_t)(uint32_t uart, uint32_t flags);
+typedef ora_result_t (*ora_claim_hw_fn_t)(ora_hw_t hw,
+                                          uint32_t *instance,
+                                          uint32_t flags);
+
+/**
+ * @brief Enable or disable a claimed interrupt
+ * @sa ORA_ID_SET_IRQ_ENABLED
+ * @since firmware 0.8.1
+ *
+ * Enables or disables @p irq on the calling plugin's core.
+ *
+ * @param irq     An ORA_IRQ_ number claimed by the calling plugin with
+ *                @ref ora_claim_hw_fn_t
+ * @param enable  1 to enable, 0 to disable
+ * @param flags   Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK          Enabled or disabled
+ * @retval ORA_RESULT_INVALID_ARG @p irq isn't an ORA_IRQ_ number or the calling
+ *                                plugin hasn't claimed it, @p enable isn't 0
+ *                                or 1, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_set_irq_enabled_fn_t)(ora_irq_t irq,
+                                                 uint8_t enable,
+                                                 uint32_t flags);
 
 /**
  * @brief Claim a GPIO
@@ -4158,9 +4279,10 @@ typedef struct {
      * 
      * This is a bit field, with 1 indicating the presence of the property.
      * Bit 0 = LSB
-     * Bit 0 = supports running while USB is connected @sa ORA_PROPERTY1_SUPPORTS_USB_RUNNING
+     * Bit 0 = deprecated, has no effect @sa ORA_PROPERTY1_SUPPORTS_USB_RUNNING
      * Bit 1 = supports yielding to allow exclusive mode @sa ORA_PROPERTY1_SUPPORTS_YIELD
      * Bit 2 = requests exclusive serial IN mode @sa ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN
+     * Bit 3 = requests the USB controller and its interrupt at launch @sa ORA_PROPERTY1_RESERVE_USB
      */
     // offset 23
     uint8_t properties1;
@@ -4256,12 +4378,20 @@ typedef struct {
     uint32_t peer_data;
 
     /**
+     * @brief This plugin's interrupt handler, or NULL for none
+     * @see ora_plugin_irq_handler_t
+     * @since firmware 0.8.1
+     */
+    // offset 44
+    ora_plugin_irq_handler_t irq_handler;
+
+    /**
      * @brief Reserved for future use
      *
      * This field is reserved for future use and must be set to 0.
      */
-    // offset 44
-    uint8_t reserved[212];
+    // offset 48
+    uint8_t reserved[208];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
 #if UINTPTR_MAX == 0xFFFFFFFFu
@@ -4282,6 +4412,8 @@ _Static_assert(__builtin_offsetof(ora_plugin_header_t, channel_3_size) == ORA_PL
                "channel_3_size offset");
 _Static_assert(__builtin_offsetof(ora_plugin_header_t, peer_data) == ORA_PLUGIN_HEADER_PEER_DATA_OFFSET,
                "peer_data offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, irq_handler) == ORA_PLUGIN_HEADER_IRQ_HANDLER_OFFSET,
+               "irq_handler offset");
 #endif
 
 /**
@@ -4291,6 +4423,9 @@ _Static_assert(__builtin_offsetof(ora_plugin_header_t, peer_data) == ORA_PLUGIN_
 
 /** 
  * @brief Plugin property flag for USB support
+ * @deprecated This flag has no effect.  To stop One ROM entering the
+ *             bootloader when USB is connected, set
+ *             @ref ORA_OVERRIDE1_DISABLE_VBUS_DETECT.
  */
 #define ORA_PROPERTY1_SUPPORTS_USB_RUNNING (1 << 0)
 

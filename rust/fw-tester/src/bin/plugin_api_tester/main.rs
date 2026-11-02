@@ -355,11 +355,16 @@ fn run_slot(
     );
     report.add("alloc_mem", tests::platform::test_alloc_mem(&emulator));
     report.add("peer_data", tests::peer::test_peer_data(&emulator));
+    report.add("hw_claims", tests::claim_hw::test_hw_claims(&emulator));
+    report.add("irq_claims", tests::claim_hw::test_irq_claims(&emulator));
     report.add(
-        "dma_channel_claims",
-        tests::claim::test_dma_channel_claims(&emulator),
+        "set_irq_enabled",
+        tests::claim_hw::test_set_irq_enabled(&emulator),
     );
-    report.add("uart_claims", tests::claim::test_uart_claims(&emulator));
+    report.add(
+        "usb_reservation",
+        tests::claim_hw::test_usb_reservation(&emulator),
+    );
     report.add(
         "pio_claims",
         tests::claim::test_pio_claims(&emulator, tests::led::has_rgb(&emulator)),

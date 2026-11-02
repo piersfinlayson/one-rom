@@ -63,6 +63,10 @@ void usb_main(
     const ora_entry_args_t *entry_args
 );
 
+// The interrupt function in usb_main.c that tinyusb's dcd_rp2040 driver calls
+// on a device.
+void irq_set_enabled(uint32_t num, bool enabled);
+
 // The plugin's own header, as the firmware would read it before launching the
 // plugin.  Useful to the harness for asserting the plugin's declared version
 // and min_fw_version.
@@ -619,6 +623,63 @@ void ora_host_test_withhold_api(const uint32_t *ids, uint32_t count) {
     s_withheld_count = count;
 }
 
+// The number of ORA_ID_SET_IRQ_ENABLED calls the plugin has made, and the last
+// call's arguments and result.  The plugin logs only a failure so the tests read
+// them from here.
+static uint32_t s_irq_enabled_calls;
+static ora_irq_t s_irq_enabled_irq;
+static uint8_t s_irq_enabled_enable;
+static ora_result_t s_irq_enabled_result;
+
+static ora_result_t shim_set_irq_enabled(ora_irq_t irq, uint8_t enable, uint32_t flags) {
+    ora_set_irq_enabled_fn_t set_irq_enabled = ora_fn_lookup(ORA_ID_SET_IRQ_ENABLED);
+    s_irq_enabled_calls++;
+    s_irq_enabled_irq = irq;
+    s_irq_enabled_enable = enable;
+    s_irq_enabled_result = set_irq_enabled(irq, enable, flags);
+    return s_irq_enabled_result;
+}
+
+uint32_t usb_host_test_irq_enabled_calls(void) {
+    return s_irq_enabled_calls;
+}
+
+// The last call's interrupt, enable argument and result, packed as
+// irq | (enable << 8) | (result << 16).
+uint32_t usb_host_test_last_irq_enabled(void) {
+    return (uint32_t)s_irq_enabled_irq
+        | ((uint32_t)s_irq_enabled_enable << 8)
+        | ((uint32_t)s_irq_enabled_result << 16);
+}
+
+// Plugin header fields the firmware reads or calls.
+uint8_t usb_host_test_header_properties1(void) {
+    return ora_plugin_header.properties1;
+}
+
+void usb_host_test_header_irq(ora_irq_t irq) {
+    ora_plugin_header.irq_handler(irq);
+}
+
+// A stand-in for dcd_rp2040's dcd_int_handler(), which the plugin calls for
+// the USB controller interrupt.  It counts its calls.
+static uint32_t s_dcd_int_handler_calls;
+
+void dcd_int_handler(uint8_t rhport) {
+    (void)rhport;
+    s_dcd_int_handler_calls++;
+}
+
+uint32_t usb_host_test_dcd_int_handler_calls(void) {
+    return s_dcd_int_handler_calls;
+}
+
+// Enable or disable the USB controller interrupt, as tinyusb's dcd_rp2040
+// driver does.
+void usb_host_test_enable_usb_irq(uint8_t enabled) {
+    irq_set_enabled(ORA_IRQ_USBCTRL_IRQ, enabled != 0);
+}
+
 // The lookup provided to the plugin.  A withheld identifier returns NULL, as on
 // firmware older than the call.
 static void *shim_fn_lookup(api_id_t id) {
@@ -626,6 +687,9 @@ static void *shim_fn_lookup(api_id_t id) {
         if (s_withheld[i] == (uint32_t)id) {
             return NULL;
         }
+    }
+    if (id == ORA_ID_SET_IRQ_ENABLED) {
+        return shim_set_irq_enabled;
     }
     return ora_fn_lookup(id);
 }

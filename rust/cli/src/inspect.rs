@@ -118,7 +118,7 @@ pub(crate) async fn write_otp<O: LocalOtpAccess>(
     Ok(())
 }
 
-fn print_onerom_info(onerom: &ParsedDevice) -> Result<(), Error> {
+pub(crate) fn print_onerom_info(onerom: &ParsedDevice) -> Result<(), Error> {
     if let Some(sdrr) = onerom.as_original() {
         if let Some(info) = sdrr.flash.as_ref() {
             let json =

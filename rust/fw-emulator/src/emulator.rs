@@ -732,6 +732,60 @@ impl Emulator {
         unsafe { ffi::ffi_set_hw_claims(claims) };
     }
 
+    /// Runtime info's `hw_claims2`, as `onerom_hw_claim2_t` bits.
+    pub fn hw_claims2(&self) -> u8 {
+        unsafe { ffi::ffi_hw_claims2() }
+    }
+
+    pub fn set_hw_claims2(&self, claims: u8) {
+        unsafe { ffi::ffi_set_hw_claims2(claims) };
+    }
+
+    /// Runtime info's `timer_alarm_claims`, bit N for TIMER0 alarm N and bit
+    /// (4 + N) for TIMER1 alarm N.
+    pub fn timer_alarm_claims(&self) -> u8 {
+        unsafe { ffi::ffi_timer_alarm_claims() }
+    }
+
+    pub fn set_timer_alarm_claims(&self, claims: u8) {
+        unsafe { ffi::ffi_set_timer_alarm_claims(claims) };
+    }
+
+    /// Runtime info's `spinlock_claims`, bit N for spinlock N.
+    pub fn spinlock_claims(&self) -> u32 {
+        unsafe { ffi::ffi_spinlock_claims() }
+    }
+
+    pub fn set_spinlock_claims(&self, claims: u32) {
+        unsafe { ffi::ffi_set_spinlock_claims(claims) };
+    }
+
+    /// Runtime info's `pwm_slice_claims`, bit N for slice N.
+    pub fn pwm_slice_claims(&self) -> u16 {
+        unsafe { ffi::ffi_pwm_slice_claims() }
+    }
+
+    pub fn set_pwm_slice_claims(&self, claims: u16) {
+        unsafe { ffi::ffi_set_pwm_slice_claims(claims) };
+    }
+
+    /// Runtime info's `irq_claims_system` or `irq_claims_user` for `plugin`,
+    /// bit N for interrupt N.
+    pub fn irq_claims(&self, plugin: ffi::ora_plugin_type_t) -> u64 {
+        unsafe { ffi::ffi_irq_claims(plugin) }
+    }
+
+    pub fn set_irq_claims(&self, plugin: ffi::ora_plugin_type_t, claims: u64) {
+        unsafe { ffi::ffi_set_irq_claims(plugin, claims) };
+    }
+
+    /// Runs the launch-time USB reservation for `plugin` with a header whose
+    /// `properties1` field is the `properties1` argument.  Returns the entry
+    /// flags `plugin` would start with.
+    pub fn usb_reserve(&self, plugin: ffi::ora_plugin_type_t, properties1: u8) -> u8 {
+        unsafe { ffi::ffi_usb_reserve(plugin, properties1) }
+    }
+
     /// Runtime info's `gpio_claims`, bit N for GPIO N.
     pub fn gpio_claims(&self) -> u64 {
         unsafe { ffi::ffi_gpio_claims() }
@@ -2136,26 +2190,39 @@ impl Emulator {
         ))
     }
 
-    /// `ORA_ID_CLAIM_DMA_CHANNEL`, passing `channel` in and returning what the
-    /// call leaves in it.
-    pub fn claim_dma_channel(&self, channel: u32, flags: u32) -> (OraResult, u32) {
-        let mut channel = channel;
+    /// `ORA_ID_CLAIM_HW`, passing `instance` in and returning its value after
+    /// the call.
+    pub fn claim_hw(&self, hw: ffi::ora_hw_t, instance: u32, flags: u32) -> (OraResult, u32) {
+        let mut instance = instance;
         let r = OraResult::from(plugin_call!(
-            ffi::api_id_t_ORA_ID_CLAIM_DMA_CHANNEL,
-            ffi::ora_claim_dma_channel_fn_t,
-            &mut channel as *mut u32,
+            ffi::api_id_t_ORA_ID_CLAIM_HW,
+            ffi::ora_claim_hw_fn_t,
+            hw,
+            &mut instance as *mut u32,
             flags
         ));
-        (r, channel)
+        (r, instance)
     }
 
-    /// `ORA_ID_CLAIM_DMA_CHANNEL` with a NULL channel.
-    pub fn claim_dma_channel_null(&self) -> OraResult {
+    /// `ORA_ID_CLAIM_HW` with a NULL instance.
+    pub fn claim_hw_null(&self, hw: ffi::ora_hw_t) -> OraResult {
         OraResult::from(plugin_call!(
-            ffi::api_id_t_ORA_ID_CLAIM_DMA_CHANNEL,
-            ffi::ora_claim_dma_channel_fn_t,
+            ffi::api_id_t_ORA_ID_CLAIM_HW,
+            ffi::ora_claim_hw_fn_t,
+            hw,
             std::ptr::null_mut(),
             0
+        ))
+    }
+
+    /// `ORA_ID_SET_IRQ_ENABLED`.
+    pub fn set_irq_enabled(&self, irq: u8, enable: u8, flags: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_IRQ_ENABLED,
+            ffi::ora_set_irq_enabled_fn_t,
+            irq,
+            enable,
+            flags
         ))
     }
 
@@ -2184,16 +2251,6 @@ impl Emulator {
             flags
         ));
         (r, block, sm, first_instr)
-    }
-
-    /// `ORA_ID_CLAIM_UART`.
-    pub fn claim_uart(&self, uart: u32, flags: u32) -> OraResult {
-        OraResult::from(plugin_call!(
-            ffi::api_id_t_ORA_ID_CLAIM_UART,
-            ffi::ora_claim_uart_fn_t,
-            uart,
-            flags
-        ))
     }
 
     /// `ORA_ID_CLAIM_GPIO`.

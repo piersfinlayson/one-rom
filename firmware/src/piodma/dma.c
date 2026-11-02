@@ -150,7 +150,7 @@ void dma_copy(
     // Interrupt core 0 when the copy finishes.
     DMA_INTS0 = (1u << DMA_COPY_CHANNEL);
     DMA_INTE0 |= (1u << DMA_COPY_CHANNEL);
-    NVIC_ISER0 = (1u << DMA_IRQ_0);
+    NVIC_ISER0 = (1u << IRQ_DMA_IRQ_0);
 
     // Enable the DMA channel to start the copy
     dma_reg->ctrl_trig |= DMA_CTRL_TRIG_EN;

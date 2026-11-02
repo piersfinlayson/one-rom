@@ -116,6 +116,8 @@ ora_result_t ora_claim_pio(uint32_t *block,
                            uint32_t flags);
 
 void pio_release(uint8_t block, uint8_t sm, uint8_t first_instr, uint8_t num_instrs);
+uint8_t usb_reserve(const ora_plugin_header_t *header, ora_plugin_type_t plugin);
+uint8_t usb_reserved_by(ora_plugin_type_t plugin);
 
 // piorom.c
 extern int piorom2(void);
@@ -269,6 +271,8 @@ void irq_handler_timer0_irq_0(void);
 // TIMER0 alarm 1, which the LED engine owns.  Alarm 0 is left to plugins.
 void irq_handler_timer0_irq_1(void);
 void irq_handler_usbctrl_irq(void);
+void irq_handler_plugin(void);
+void irq_handler_io_bank0(void);
 ora_result_t ora_get_ram_slot_info(uint8_t ram_slot, uint32_t *addr_out, uint32_t *size_out, uint32_t *rom_type_out);
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out);
 uint32_t ora_get_clkref_mhz(void);

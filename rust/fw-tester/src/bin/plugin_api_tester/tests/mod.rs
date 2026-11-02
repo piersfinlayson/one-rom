@@ -3,6 +3,7 @@
 // MIT License
 
 pub mod claim;
+pub mod claim_hw;
 pub mod commissioning;
 pub mod context;
 pub mod gpio;

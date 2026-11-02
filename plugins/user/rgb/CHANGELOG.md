@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.3] - unreleased
+
+- Requires firmware v0.7.2.
+- Yields so the other plugin can enter exclusive mode.
+
 ## [0.1.2] - 2026-08-09
 
 - Discover the neopixel and status-LED GPIOs from device metadata at runtime

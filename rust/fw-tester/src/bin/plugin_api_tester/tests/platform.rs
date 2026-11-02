@@ -215,8 +215,8 @@ pub fn test_peripheral_and_irq_calls(emu: &Emulator, max_gpios: u8) -> Result<()
     emu.setup_adc();
 
     for irq in [
-        ffi::ora_irq_t_ORA_IRQ_TIMER0_IRQ_0,
-        ffi::ora_irq_t_ORA_IRQ_USBCTRL_IRQ,
+        onerom_metadata::onerom_irq_t::IRQ_TIMER0_IRQ_0.0,
+        onerom_metadata::onerom_irq_t::IRQ_USBCTRL_IRQ.0,
     ] {
         emu.register_irq(irq, Some(dummy_irq_handler));
         emu.enable_irq(irq, true);

@@ -58,6 +58,10 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
     .current_ram_slot = 0xFF,
     .usb_dpram_pool_offset = USB_DPRAM_SIZE,
     .dma_channel_claims = DMA_FIRMWARE_CHANNELS,
+    // TIMER0 alarm 1 drives the LEDs.  Alarm 0 is reserved for plugins that use
+    // the old ora_register_irq for TIMER0_IRQ_0, so it cannot be separately claimed.
+    .timer_alarm_claims = TIMER0_INT_ALARM0 | TIMER0_INT_ALARM1,
+    .spinlock_claims = SPINLOCK_FIRMWARE_CLAIMS | SPINLOCK_RP2350_E2_LOCKS,
     .rgb_led_pio = RGB_LED_PIO_NONE,
     .addr_monitor_pio = ADDR_MONITOR_PIO_NONE,
 };

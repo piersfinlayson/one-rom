@@ -6,9 +6,10 @@
 
 #include "plugin.h"
 
-ORA_DEFINE_USER_PLUGIN(
-    slot_colour_main,
-    0, 1, 0, 0,     // Plugin version
+ORA_USER_PLUGIN(
+    slot_colour_setup,
+    slot_colour_loop,
+    0, 1, 1, 0,     // Plugin version
     0, 7, 2         // Minimum One ROM firmware version required
 );
 
@@ -69,7 +70,7 @@ static void show_slot_colour(ora_lookup_fn_t ora_lookup_fn) {
     log("Slot colour: slot %u", (unsigned)slot);
 }
 
-void slot_colour_main(
+void slot_colour_setup(
     ora_lookup_fn_t ora_lookup_fn,
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
@@ -78,9 +79,8 @@ void slot_colour_main(
     (void)entry_args;
 
     show_slot_colour(ora_lookup_fn);
+}
 
-    // Don't return as that causes the firmware to log an error.
-    while (1) {
-        __asm volatile ("wfi");
-    }
+// The colour is set once in setup.
+void slot_colour_loop(void) {
 }

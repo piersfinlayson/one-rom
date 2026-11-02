@@ -1,7 +1,7 @@
 # One ROM RGB
 
 A user plugin that cycles One ROM's RGB LED through the hues. It runs on
-firmware v0.7.1 or later, on the models that have the LED, and it occupies the
+firmware v0.7.2 or later, on the models that have the LED, and it occupies the
 user plugin slot.
 
 ## Firmware RGB control supersedes this plugin

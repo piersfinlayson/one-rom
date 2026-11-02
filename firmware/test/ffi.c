@@ -111,6 +111,65 @@ void ffi_set_gpio_claims(uint64_t claims) {
     }
 }
 
+uint8_t ffi_hw_claims2(void) {
+    return RUNTIME->hw_claims2;
+}
+
+void ffi_set_hw_claims2(uint8_t claims) {
+    RUNTIME->hw_claims2 = claims;
+}
+
+uint8_t ffi_timer_alarm_claims(void) {
+    return RUNTIME->timer_alarm_claims;
+}
+
+void ffi_set_timer_alarm_claims(uint8_t claims) {
+    RUNTIME->timer_alarm_claims = claims;
+}
+
+uint32_t ffi_spinlock_claims(void) {
+    return RUNTIME->spinlock_claims;
+}
+
+void ffi_set_spinlock_claims(uint32_t claims) {
+    RUNTIME->spinlock_claims = claims;
+}
+
+uint16_t ffi_pwm_slice_claims(void) {
+    return RUNTIME->pwm_slice_claims;
+}
+
+void ffi_set_pwm_slice_claims(uint16_t claims) {
+    RUNTIME->pwm_slice_claims = claims;
+}
+
+static uint8_t *ffi_irq_claims_map(ora_plugin_type_t plugin) {
+    return (plugin == ORA_PLUGIN_TYPE_SYSTEM) ? RUNTIME->irq_claims_system
+                                              : RUNTIME->irq_claims_user;
+}
+
+uint64_t ffi_irq_claims(ora_plugin_type_t plugin) {
+    const uint8_t *map = ffi_irq_claims_map(plugin);
+    uint64_t claims = 0;
+    for (unsigned ii = 0; ii < sizeof(RUNTIME->irq_claims_system); ii++) {
+        claims |= (uint64_t)map[ii] << (ii * 8);
+    }
+    return claims;
+}
+
+void ffi_set_irq_claims(ora_plugin_type_t plugin, uint64_t claims) {
+    uint8_t *map = ffi_irq_claims_map(plugin);
+    for (unsigned ii = 0; ii < sizeof(RUNTIME->irq_claims_system); ii++) {
+        map[ii] = (uint8_t)(claims >> (ii * 8));
+    }
+}
+
+uint8_t ffi_usb_reserve(ora_plugin_type_t plugin, uint8_t properties1) {
+    ora_plugin_header_t header = {0};
+    header.properties1 = properties1;
+    return usb_reserve(&header, plugin);
+}
+
 uint32_t ffi_pio_instr_claims(uint8_t block) {
     return RUNTIME->pio_instr_claims[block];
 }

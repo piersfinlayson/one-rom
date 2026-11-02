@@ -6,9 +6,14 @@ All notable changes between versions are documented in this file.
 
 Headline changes in this release:
 - A One ROM can be updated, cloned to another One ROM and have its config and ROM images saved to a PC.
+- The plugin API has substantial enhancements, including allowing plugins to reserve nearly all types of RP2350 MCU hardware peripherals.
+- The USB plugin can now optionally expose a second serial interface, useful for some plugins.
+
+Very are a very few non-backwards compatible changes listed below - see `Breaking:` items.  These are all minor and unlikely to affect the vast majority of users so a decision has been made not to bump One ROM's minor version.
 
 In detail:
 - RBCP can now be tuned for machines with glitchy chip select lines, using the `addr_mon_min_cs_act_ns` firmware override.
+- The code optimisation of the core firmware binary has been modified to reduce the overall binary size, allowing new function to be squeezed into the 48KB maximum.  This has changed some timings in the firmware, with the changes focused on code that runs after ROM serving has been set up.
 - Fix: reboots requested over USB or by a plugin took up to 10 times longer than asked.
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
@@ -44,6 +49,11 @@ In detail:
   - Fix: selecting an unsupported chip type no longer hangs Lab.
   - `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
 - Plugins:
+  - blink 0.1.1
+    - Requires firmware 0.7.2.
+    - Yields so the other plugin can enter exclusive mode.
+  - ext-flash 0.1.1
+    - Sets `ORA_PROPERTY1_SUPPORTS_YIELD` so the other plugin can enter exclusive mode.
   - host-control 0.1.7
     - Requires firmware 0.8.1.
     - Supports RBCP's `REBOOT` command.
@@ -58,6 +68,12 @@ In detail:
     - REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
     - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
     - The GPIO query reply includes every use of each GPIO.
+    - Reserves the USB controller and its interrupt at launch.
+  - rgb 0.1.3
+    - Requires firmware 0.7.2.
+    - Yields so the other plugin can enter exclusive mode.
+  - slot-colour 0.1.1
+    - Yields so the other plugin can enter exclusive mode.
 - Plugin APIs:
   - Breaking: a second `ora_setup_address_monitor()` call now returns `ORA_RESULT_IN_USE`.
   - Breaking: new result codes may be added in future and applied to existing API calls.  Plugins should handle unexpected failure codes gracefully.
@@ -72,20 +88,37 @@ In detail:
   - New: `ora_alloc_mem()` allocates memory from a pool shared by both plugins.
   - New: log channels 2 and 3 when using plugin header fields `channel_2_size` and `channel_3_size`.
   - New: `ora_get_peer_data()` retrieves peer plugin data blocks.
-  - New: a plugin can claim hardware resources:
-    - DMA channel: `ora_claim_dma_channel()`
-    - UART: `ora_claim_uart()`
-    - GPIO: `ora_claim_gpio()`
-    - PIO state machine and instructions: `ora_claim_pio()`
+  - New: a plugin can claim hardware resources using `ora_claim_hw()`:
+    - DMA channel
+    - UART
+    - I2C
+    - SPI
+    - ADC
+    - USB
+    - SHA256
+    - TRNG
+    - Timer alarm
+    - Spinlock
+    - PWM slice
+    - IRQ
+  - New: a plugin can claim PIO state machines and instructions using `ora_claim_pio()`.
+  - New: a plugin can claim GPIOs using `ora_claim_gpio()`.
+  - New: the plugin header's `irq_handler` field points to the plugin's interrupt handler.  `ora_set_irq_enabled()` enables or disables an interrupt claimed by the plugin.
+  - New: with `ORA_PROPERTY1_RESERVE_USB` set, the firmware reserves the USB controller and its interrupt for the plugin at launch and sets `ORA_ENTRY_FLAG_USB_RESERVED`.
+  - New: `ORA_SYSTEM_PLUGIN` and `ORA_USER_PLUGIN` define a plugin from a setup function and a loop function.  The plugin yields to the other plugin after each loop call, and `ora_delay_ms()` yields until the delay ends.
   - New: `ora_gpio_info_t::uses`, a bitfield of every `ora_gpio_use_t` that applies to a GPIO.
   - New: the firmware starts clk_peri for the UARTs and SPIs before starting the plugins, and a plugin can read its frequency with `ORA_METADATA_KEY_CLK_PERI_HZ`.
   - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
   - Deprecated: `ORA_ID_ALLOC` and `ORA_ID_GET_FREE_MEM`, which never allocated memory.  Use `ORA_ID_ALLOC_MEM`.
+  - Deprecated: `ORA_ID_REGISTER_IRQ` and `ORA_ID_ENABLE_IRQ`.  Use `irq_handler` and `ORA_ID_SET_IRQ_ENABLED`.
+  - Deprecated: `ORA_DEFINE_SYSTEM_PLUGIN`, `ORA_DEFINE_USER_PLUGIN` and `ORA_DEFINE_PLUGIN_HEADER`.  Use `ORA_SYSTEM_PLUGIN` and `ORA_USER_PLUGIN`.
+  - Deprecated: `ORA_PROPERTY1_SUPPORTS_USB_RUNNING`, which has no effect.  Use `ORA_OVERRIDE1_DISABLE_VBUS_DETECT`.
 - Other:
   - Added manufacturer contact details to commissioning signing key tables.
   - The signing server accepts a size, revision and batch.
 - Fixes:
   - A slot overclocked to 800MHz now attempts to run at 800Mhz not 150MHz.
+  - Two plugins entering exclusive mode at the same time no longer hang both cores.
 
 To test:
 - One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
@@ -108,6 +141,10 @@ To publish:
 - One ROM Lab 0.4.1
 - host-control plugin 0.1.7
 - USB plugin 0.3.3
+- blink plugin 0.1.1
+- ext-flash plugin 0.1.1
+- rgb plugin 0.1.3
+- slot-colour plugin 0.1.1
 - one-rom-wasm 0.6.2: rebuild against the published Rust crates
 - one-rom-site: pick up wasm 0.6.2
 

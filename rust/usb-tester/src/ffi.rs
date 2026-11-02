@@ -106,6 +106,27 @@ unsafe extern "C" {
     /// What the last offer carried.  Returns the length the plugin declared,
     /// which may exceed `max_len`.
     pub fn usb_host_test_take_control_xfer(buf: *mut u8, max_len: u32) -> u32;
+
+    /// How many `ORA_ID_SET_IRQ_ENABLED` calls the plugin has made.
+    pub fn usb_host_test_irq_enabled_calls() -> u32;
+
+    /// The last `ORA_ID_SET_IRQ_ENABLED` call's interrupt, enable argument and
+    /// result, as `irq | (enable << 8) | (result << 16)`.
+    pub fn usb_host_test_last_irq_enabled() -> u32;
+
+    /// The plugin header's `properties1`.
+    pub fn usb_host_test_header_properties1() -> u8;
+
+    /// Calls the plugin header's `irq_handler` as the firmware does.
+    pub fn usb_host_test_header_irq(irq: u8);
+
+    /// How many times the stand-in for dcd_rp2040's `dcd_int_handler()` has
+    /// run.
+    pub fn usb_host_test_dcd_int_handler_calls() -> u32;
+
+    /// Enables or disables the USB controller interrupt through the plugin, as
+    /// tinyusb's dcd_rp2040 driver does.
+    pub fn usb_host_test_enable_usb_irq(enabled: u8);
 }
 
 // The descriptor callbacks tinyusb fetches from the plugin.

@@ -25,6 +25,7 @@ use crate::report::TestReport;
 
 const IN: u8 = PROPERTY1_EXCLUSIVE_SERIAL_IN;
 const FLAG_IN: u8 = ffi::ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN as u8;
+const FLAG_USB: u8 = ffi::ORA_ENTRY_FLAG_USB_RESERVED as u8;
 const LOG_SIZE: u32 = ffi::USB_DPRAM_LOG_SIZE;
 const MOVED_FLAG: u8 = onerom_firmware_flag_t::FIRMWARE_FLAG_LOG_IN_UP1;
 
@@ -416,9 +417,9 @@ fn check_entry_args() -> Result<(), String> {
             )
         };
         let base = ram(&Emulator::plugin_entry_args(plugin_type, 0));
-        for flags in [0, FLAG_IN, 0xFF] {
+        for flags in [0, FLAG_IN, FLAG_USB, FLAG_IN | FLAG_USB, 0xFF] {
             let args = Emulator::plugin_entry_args(plugin_type, flags);
-            let want = flags & FLAG_IN;
+            let want = flags & (FLAG_IN | FLAG_USB);
             if args.core != core || args.flags != want || ram(&args) != base {
                 return Err(format!(
                     "the {label} plugin's args with entry flags {flags:#04x}: core {}, \
