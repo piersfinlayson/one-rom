@@ -365,8 +365,10 @@ bool tud_vendor_control_xfer_cb(
 // Interrupt glue
 //
 // tinyusb's RP2040 device controller driver (dcd_rp2040) calls the IRQ
-// functions below.  The host test build doesn't include that driver so the USB
-// plugin tester calls them instead.
+// functions below.  The host test build doesn't include that driver, so the
+// USB plugin tester calls usb_irq_handler() and irq_set_enabled() instead.
+// irq_add_shared_handler() and irq_remove_handler() do nothing, so they are
+// left out of the host test build.
 // ---------------------------------------------------------------------------
 
 // The plugin header's interrupt handler.  The USB controller and its
@@ -381,6 +383,7 @@ static void usb_irq_handler(ora_irq_t irq) {
 // This plugin's versions of the Pico SDK IRQ functions.  tinyusb registers only
 // its USB controller interrupt handler, which dcd_int_handler() calls, so
 // registering and removing a handler do nothing.
+#if !defined(ORA_HOST_TEST)
 void irq_add_shared_handler(uint32_t num, ora_irq_handler_t handler, uint8_t order) {
     (void)num;
     (void)handler;
@@ -391,6 +394,7 @@ void irq_remove_handler(uint32_t num, ora_irq_handler_t handler) {
     (void)num;
     (void)handler;
 }
+#endif // !ORA_HOST_TEST
 
 void irq_set_enabled(uint32_t num, bool enabled) {
     ora_set_irq_enabled_fn_t set_irq_enabled = context.ora_lookup_fn(ORA_ID_SET_IRQ_ENABLED);

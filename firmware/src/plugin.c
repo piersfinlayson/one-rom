@@ -1415,12 +1415,19 @@ static void yield_pause(void) {
     // flash_rodata.ld
     size_t fn_size = __yield_wait_for_resume_end - __yield_wait_for_resume_start;
 
+    // volatile stops -O3 unrolling the copy.
     uint8_t buf[YIELD_BUF_SIZE] __attribute__((aligned(4)));
+    volatile uint8_t *dst = buf;
     for (size_t i = 0; i < fn_size; i++) {
-        buf[i] = ((const uint8_t *)fn_start)[i];
+        dst[i] = ((const uint8_t *)fn_start)[i];
     }
 
     ((void (*)(void))((uintptr_t)buf | 1u))();
+
+    // Uses buf after the call so it can't be a tail call.  A tail call frees
+    // buf before jumping into it, and an interrupt arriving before the stub
+    // disables interrupts would then overwrite the stub.
+    __asm volatile ("" : : "r" (buf));
 }
 
 #endif // !TEST_BUILD
