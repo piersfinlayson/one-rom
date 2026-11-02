@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 /// Configs the plugin API tester doesn't run in CI, each with the reason.
 const EXEMPT: &[(&str, &str)] = &[(
-    "onerom-config/test/24-multi-2332.json",
+    "onerom-config/test/24-multi-2332-unsupported.json",
     "Doesn't build for any Fire 24 board - a 2332's select GPIOs and X pins aren't contiguous",
 )];
 
