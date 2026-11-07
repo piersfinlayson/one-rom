@@ -27,6 +27,7 @@
 - `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
 - **Breaking** `program`'s `--config-name`, `--config-description`, `--save-config` and per-device overrides are rejected when used with `--firmware`. When used with `--base-firmware` these, `--plugin` and `--no-plugin` are rejected unless `--config` or `--slot` is used. Previously they were ignored.
 - **Breaking** `program --base-firmware` without `--config` or `--slot` requires `--no-config`.
+- Fix: **Breaking** `console --no-echo` requires `--raw`.
 
 ## v0.5.0 - 2026-10-06
 

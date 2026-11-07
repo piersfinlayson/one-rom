@@ -88,6 +88,7 @@ release, and never in a minor or a patch.
   used. Previously they were ignored.
 - `program --base-firmware` without `--config` or `--slot` requires
   `--no-config`.
+- `console --no-echo` requires `--raw`.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
@@ -1518,7 +1519,7 @@ echo 'LOAD "*",8' | onerom console
 | `--output, -o <FILE>` (alias `--out`) | Also write One ROM's output to this file, replacing its contents.  The file contains only what One ROM sends.  Output is still displayed. |
 | `--line-ending <ENDING>` | What Enter sends: `cr`, `lf` or `crlf`.  Default `cr`, which retro systems expect. |
 | `--raw` | Send each key as you press it, not a line at a time.  No line editing.  Enter sends the line ending.  Ctrl-C exits. |
-| `--no-echo` | Don't display what you type.  Use when the retro system echoes what it receives back.  Only applies with `--raw`.  In line mode the terminal displays the line as you edit it. |
+| `--no-echo` | Don't display what you type.  Use when the retro system echoes back what it receives.  Requires `--raw`. |
 | `--serial-port <PORT>` | Serial port to open: `1` or `2`.  Default `1`.  Port 1 is the USB plugin's default serial port.  Port 2 requires the USB plugin and a user plugin that supports it. |
 
 If stdin is not a terminal, its contents are sent unchanged, and the command
@@ -3413,6 +3414,7 @@ release. Newest release first.
   used. Previously they were ignored.
 - `program --base-firmware` without `--config` or `--slot` requires
   `--no-config`.
+- `console --no-echo` requires `--raw`.
 
 ### v0.5.0
 

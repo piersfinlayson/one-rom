@@ -51,9 +51,8 @@ pub struct ConsoleArgs {
 
     /// Don't display what you type.
     ///
-    /// Use when the retro system echoes it back.  Only applies with --raw.  In
-    /// line mode the terminal displays the line as you edit it.
-    #[arg(long)]
+    /// Use when the retro system echoes it back.  Requires --raw.
+    #[arg(long, requires = "raw")]
     pub no_echo: bool,
 
     /// Serial port to open: 1 or 2.  Default 1.

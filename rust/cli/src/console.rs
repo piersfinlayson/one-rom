@@ -326,6 +326,17 @@ mod tests {
     }
 
     #[test]
+    fn no_echo_requires_raw() {
+        use clap::Parser;
+        let parse = |words: &[&str]| crate::args::Cli::try_parse_from(words);
+        assert_eq!(
+            parse(&["onerom", "console", "--no-echo"]).unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(parse(&["onerom", "console", "--raw", "--no-echo"]).is_ok());
+    }
+
+    #[test]
     fn a_typed_line_gets_the_chosen_ending() {
         assert_eq!(with_ending("hello\n", LineEnding::Cr), b"hello\r");
         assert_eq!(with_ending("hello\r\n", LineEnding::Crlf), b"hello\r\n");

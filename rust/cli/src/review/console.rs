@@ -31,3 +31,8 @@ fn without_serial_port_2() {
 fn rejects_serial_port_3() {
     help(&["onerom", "console", "--serial-port", "3"]);
 }
+
+#[test]
+fn rejects_no_echo_without_raw() {
+    help(&["onerom", "console", "--no-echo"]);
+}
