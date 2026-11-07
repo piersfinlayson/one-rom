@@ -107,7 +107,7 @@ enum
 uint8_t const desc_configuration_no_serial_port[] =
 {
   // Config number, interface count, string index, total length, attribute, power in mA
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC, 0, CONFIG_NO_SERIAL_PORT_TOTAL_LEN, 0x80, 250),
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC, 0, CONFIG_NO_SERIAL_PORT_TOTAL_LEN, 0x80, 100),
   DUMMY_INTERFACE_DESCRIPTOR,
   VENDOR_INTERFACE_DESCRIPTOR,
 };
@@ -116,7 +116,7 @@ uint8_t const desc_configuration_no_serial_port[] =
 // tud_descriptor_string_cb() for its description in the second case.
 uint8_t const desc_configuration_one_serial_port[] =
 {
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC2, 0, CONFIG_ONE_SERIAL_PORT_TOTAL_LEN, 0x80, 250),
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC2, 0, CONFIG_ONE_SERIAL_PORT_TOTAL_LEN, 0x80, 100),
   DUMMY_INTERFACE_DESCRIPTOR,
   VENDOR_INTERFACE_DESCRIPTOR,
   SERIAL_PORT_1_DESCRIPTOR,
@@ -124,7 +124,7 @@ uint8_t const desc_configuration_one_serial_port[] =
 
 uint8_t const desc_configuration_two_serial_ports[] =
 {
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TWO_SERIAL_PORTS_TOTAL_LEN, 0x80, 250),
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TWO_SERIAL_PORTS_TOTAL_LEN, 0x80, 100),
   DUMMY_INTERFACE_DESCRIPTOR,
   VENDOR_INTERFACE_DESCRIPTOR,
   SERIAL_PORT_1_DESCRIPTOR,

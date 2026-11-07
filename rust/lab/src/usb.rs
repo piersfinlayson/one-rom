@@ -222,7 +222,7 @@ impl Usb {
         config.manufacturer = Some("piers.rocks");
         config.product = Some("One ROM");
         config.serial_number = Some(serial);
-        config.max_power = 250;
+        config.max_power = 100;
         config.max_packet_size_0 = 64;
         config.bcd_usb = UsbVersion::TwoOne;
         config.device_release = DEVICE_RELEASE;

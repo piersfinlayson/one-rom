@@ -14,6 +14,7 @@
 - `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
 - Fix: Lab no longer hangs reading a chip with fixed chip selects, for example the HM7641, and now drives its fourth chip select.
 - Fix: selecting an unsupported chip type no longer hangs Lab.
+- Lab now reports its max current draw as 100mA.
 
 ## v0.4.0 - 2026-10-06
 

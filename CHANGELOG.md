@@ -70,6 +70,7 @@ In detail:
     - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
     - The GPIO query reply includes every use of each GPIO.
     - Reserves the USB controller and its interrupt at launch.
+    - Now reports its max current draw as 100mA.
   - rgb 0.1.3
     - Requires firmware 0.7.2.
     - Yields so the other plugin can enter exclusive mode.
