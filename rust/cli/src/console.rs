@@ -330,7 +330,9 @@ mod tests {
         use clap::Parser;
         let parse = |words: &[&str]| crate::args::Cli::try_parse_from(words);
         assert_eq!(
-            parse(&["onerom", "console", "--no-echo"]).unwrap_err().kind(),
+            parse(&["onerom", "console", "--no-echo"])
+                .unwrap_err()
+                .kind(),
             clap::error::ErrorKind::MissingRequiredArgument
         );
         assert!(parse(&["onerom", "console", "--raw", "--no-echo"]).is_ok());
