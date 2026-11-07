@@ -33,7 +33,7 @@ In detail:
   - Fix/Breaking: `onerom console --no-echo` requires `--raw`.
 - Web Programmer:
   - Moves to logic shared with the CLI to combine and verify built firmware.
-  - The One ROM Builder tab's Load from Device and Load from File buttons copy the configuration and ROM images of a One ROM or firmware file into the One ROM Builder tab.
+  - One ROM Builder loads config and ROM images from a One ROM or firmware file.
   - The One ROM Builder tab's Save Image button saves a slot's ROM image to a file.
   - One ROM Builder no longer requires an image for a RAM slot.
 - Studio:
@@ -122,10 +122,6 @@ In detail:
 - Fixes:
   - A slot overclocked to 800MHz now attempts to run at 800Mhz not 150MHz.
   - Two plugins entering exclusive mode at the same time no longer hang both cores.
-
-To test:
-- One ROM Web: the One ROM Builder tab's Load from Device button with a One ROM connected.
-- Studio: the Analyse tab's Open in Create button with a One ROM connected.
 
 To publish:
 - Rust crates (in dependency order):
