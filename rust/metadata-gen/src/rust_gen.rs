@@ -635,7 +635,7 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
 
             if !nullable {
                 out.push_str(&format!(
-                    "{indent}if {name}_outer == 0 {{\n\
+                    "{indent}if {name}_outer == 0 || {name}_outer == 0xFFFF_FFFF {{\n\
                      {indent}    return Err(ParseError::NullPointer {{ field: \"{name}\" }});\n\
                      {indent}}}\n"
                 ));
@@ -643,7 +643,9 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
             out.push_str(&format!("{indent}let mut {name} = Vec::new();\n"));
 
             let li = if nullable {
-                out.push_str(&format!("{indent}if {name}_outer != 0 {{\n"));
+                out.push_str(&format!(
+                    "{indent}if {name}_outer != 0 && {name}_outer != 0xFFFF_FFFF {{\n"
+                ));
                 format!("{indent}    ")
             } else {
                 indent.to_string()

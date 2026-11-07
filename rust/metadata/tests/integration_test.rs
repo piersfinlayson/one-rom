@@ -23,7 +23,7 @@ use onerom_metadata::{
     OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig, OneromAlgOverrideConfig,
     OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides, OneromHardwareInfo,
     OneromInfo, OneromMetadataHeader, OneromRomInfo, OneromRomPinMap, OneromRomSlot, OverrideState,
-    Pointer, RomSlotType, Rp235xVariant, generate_host_metadata_c,
+    ParseError, Pointer, RomSlotType, Rp235xVariant, generate_host_metadata_c,
 };
 use onerom_metadata::{
     METADATA_BASE, METADATA_GENERATIONS, METADATA_SIZE, MIN_SCHEMA_VERSION, SerializeError,
@@ -730,6 +730,19 @@ fn error_count_overflow() {
             field: "rom_slot_count"
         }),
     );
+}
+
+/// A slot's `roms` pointer in erased flash is null, the same as 0.
+#[test]
+fn an_erased_roms_pointer_is_null() {
+    let mut buf = do_serialize(&minimal_header());
+    let slots_off = ptr_to_off(read_u32_le(&buf, 32), METADATA_BASE);
+    buf[slots_off + 8..slots_off + 12].fill(0xFF);
+    let view = DeviceMemoryView::new(&buf, METADATA_BASE);
+    assert!(matches!(
+        OneromMetadataHeader::parse(&view, METADATA_BASE, Generations::UNKNOWN),
+        Err(ParseError::NullPointer { field: "roms" })
+    ));
 }
 
 // ---------------------------------------------------------------------------
