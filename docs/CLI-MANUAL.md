@@ -75,21 +75,7 @@ breaks an existing command line lands in a minor release â€” v0.3.0 to v0.4.0 â€
 and never in a patch. From v1.0.0 onwards such a change lands in a major
 release, and never in a minor or a patch.
 
-- `program` and `firmware build` automatically add the USB plugin when a system
-  plugin isn't specified. Use `--no-plugin` to build without any plugins.
-- An unused signature from an earlier CLI fails with
-  `hardware commission --signature`. One ROMs already commissioned aren't
-  affected. Raise a new signing request, or sign again with `hardware sign`.
-- `hardware commission` and `hardware sign` fail with a manufacturer name
-  longer than <!--[const:COMMISSIONING_MANUFACTURER_MAX_LEN]-->32<!--[/]--> characters.
-- `--config-name`, `--config-description`, `--save-config` and the
-  [per-device overrides](#per-device-overrides) are rejected when used with
-  `program --firmware`. When used with `program --base-firmware` these,
-  `--plugin` and `--no-plugin` are rejected unless `--config` or `--slot` is
-  used. Previously they were ignored.
-- `program --base-firmware` without `--config` or `--slot` requires
-  `--no-config`.
-- `console --no-echo` requires `--raw`.
+None in this release.
 
 Every release's breaking changes are collected in
 [Appendix: Breaking Change History](#appendix-breaking-change-history), at the
