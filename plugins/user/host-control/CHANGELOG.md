@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.7] - unreleased
+## [0.1.7] - 2026-11-08
 
 Implements RBCP 0.1.4.
 - Supports the `REBOOT` command.

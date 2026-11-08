@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.3] - unreleased
+## [0.3.3] - 2026-11-08
 
 Requires firmware 0.8.1.
 

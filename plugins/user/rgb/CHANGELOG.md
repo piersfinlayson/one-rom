@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.3] - unreleased
+## [0.1.3] - 2026-11-08
 
 - Requires firmware v0.7.2.
 - Yields so the other plugin can enter exclusive mode.

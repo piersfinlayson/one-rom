@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.2.5 - unreleased
+## v0.2.5 - 2026-11-08
 
 - Moves to logic shared with the CLI to combine and verify built firmware.
 - The Analyse tab's Open in Create button copies the configuration and ROM images of a One ROM or firmware file into the Create tab.

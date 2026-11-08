@@ -80,6 +80,8 @@ release, and never in a minor or a patch.
 - An unused signature from an earlier CLI fails with
   `hardware commission --signature`. One ROMs already commissioned aren't
   affected. Raise a new signing request, or sign again with `hardware sign`.
+- `hardware commission` and `hardware sign` fail with a manufacturer name
+  longer than <!--[const:COMMISSIONING_MANUFACTURER_MAX_LEN]-->32<!--[/]--> characters.
 - `--config-name`, `--config-description`, `--save-config` and the
   [per-device overrides](#per-device-overrides) are rejected when used with
   `program --firmware`. When used with `program --base-firmware` these,
@@ -3405,6 +3407,8 @@ release. Newest release first.
 - An unused signature from an earlier CLI fails with
   `hardware commission --signature`. One ROMs already commissioned aren't
   affected. Raise a new signing request, or sign again with `hardware sign`.
+- `hardware commission` and `hardware sign` fail with a manufacturer name
+  longer than <!--[const:COMMISSIONING_MANUFACTURER_MAX_LEN]-->32<!--[/]--> characters.
 - `--config-name`, `--config-description`, `--save-config` and the
   [per-device overrides](#per-device-overrides) are rejected when used with
   `program --firmware`. When used with `program --base-firmware` these,

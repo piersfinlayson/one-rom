@@ -1,6 +1,6 @@
 # Lab Changelog
 
-## v0.4.1 - unreleased
+## v0.4.1 - 2026-11-08
 
 - Long running operations, like ROM reads, now run on the second core, so USB isn't impacted.
 - Execute performance critical processing from RAM.

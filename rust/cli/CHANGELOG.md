@@ -1,6 +1,6 @@
 # CLI Changelog
 
-## v0.6.0 - unreleased
+## v0.6.0 - 2026-11-08
 
 - **Breaking** `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
 - Reword several error messages and `board` output.
