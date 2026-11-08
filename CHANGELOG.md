@@ -9,24 +9,24 @@ Headline changes in this release:
 - The plugin API has substantial enhancements, including allowing plugins to reserve nearly all types of RP2350 MCU hardware peripherals.
 - The USB plugin can now optionally expose a second serial interface, useful for some plugins.
 
-Very are a very few non-backwards compatible changes listed below - see `Breaking:` items.  These are all minor and unlikely to affect the vast majority of users so a decision has been made not to bump One ROM's minor version.
+There are a very few non-backwards compatible changes listed below - see `Breaking:` items.  These are all minor and unlikely to affect the vast majority of users so a decision has been made not to bump One ROM's minor version.
 
 In detail:
 - RBCP can now be tuned for machines with glitchy chip select lines, using the `addr_mon_min_cs_act_ns` firmware override.
 - The code optimisation of the core firmware binary has been modified to reduce the overall binary size, allowing new function to be squeezed into the 48KB maximum.  This has changed some timings in the firmware, with the changes focused on code that runs after ROM serving has been set up.
-- Fix: reboots requested over USB or by a plugin took up to 10 times longer than asked.
 - CLI:
   - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
   - Add `onerom update`, `onerom clone` and `onerom save`.
   - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
   - Fix: a reboot no longer fails when the One ROM resets before the CLI reads its reply to the reboot command.
   - When the One ROM selected with `--serial` can't be opened the error message is now "could not be opened".
-  - `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
   - `onerom monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
   - `onerom inspect peek memory` can also read USB DPRAM.
   - `onerom console --serial-port 2` opens optional serial port 2.
   - `firmware inspect` displays each slot's firmware overrides.
+  - Breaking: `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
   - Breaking: `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
+  - Breaking: `hardware commission` and `hardware sign` fail with a manufacturer name longer than 32 characters.
   - `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
   - Breaking: `onerom program` fails on options it previously ignored when used with `--firmware` or `--base-firmware`, for example `--instance-name`.
   - Breaking: `onerom program --base-firmware` without `--config` or `--slot` requires `--no-config`.
@@ -120,8 +120,9 @@ In detail:
   - Added manufacturer contact details to commissioning signing key tables.
   - The signing server accepts a size, revision and batch.
 - Fixes:
-  - A slot overclocked to 800MHz now attempts to run at 800Mhz not 150MHz.
+  - A slot overclocked to 800MHz now attempts to run at 800MHz not 150MHz.
   - Two plugins entering exclusive mode at the same time no longer hang both cores.
+  - reboots requested over USB or by a plugin took up to 10 times longer than asked.
 
 To publish:
 - Rust crates (in dependency order):

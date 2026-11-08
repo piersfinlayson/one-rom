@@ -492,15 +492,15 @@ void setup_timer0(void) {
 }
 
 void usb_controller_out_of_reset(void) {
-    RESET_RESET &= ~RESET_USBCTRL;
+    RESET_RESET_CLR = RESET_USBCTRL;
     while (!(RESET_DONE & RESET_USBCTRL)) {}
 }
 
 // RESET_DONE isn't set until clk_usb runs.  USB DPRAM is accessible once the
 // reset bit is clear.
 void usb_controller_reset_and_release(void) {
-    RESET_RESET |= RESET_USBCTRL;
-    RESET_RESET &= ~RESET_USBCTRL;
+    RESET_RESET_SET = RESET_USBCTRL;
+    RESET_RESET_CLR = RESET_USBCTRL;
 }
 
 void setup_usb_controller(void) {
@@ -570,7 +570,7 @@ void setup_adc(void) {
     DEBUG("ADC clock enabled");
 
     // Take ADC out of reset
-    RESET_RESET &= ~(RESET_ADC);
+    RESET_RESET_CLR = RESET_ADC;
     while (!(RESET_DONE & RESET_ADC));
 
     // Enable ADC and temperature sensor

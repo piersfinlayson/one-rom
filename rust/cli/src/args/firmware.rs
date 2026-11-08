@@ -236,12 +236,11 @@ pub struct FirmwareBuildArgs {
     /// A user plugin requires a system plugin.
     /// System plugins are always placed in slot 0, user plugins in slot 1.
     ///
-    /// May be combined with --config: the plugins are inserted ahead of
-    /// the config's ROM slots (shifting them up). It is an error if the config
-    /// already defines a plugin of its own.
+    /// May be combined with --config if the config file doesn't contain a
+    /// plugin.
     ///
     /// The USB plugin is automatically added when a system plugin isn't
-    /// specified (and any config doesn't define a plugin).
+    /// specified.
     ///
     /// Forms:
     ///   --plugin usb                       latest compatible version by name

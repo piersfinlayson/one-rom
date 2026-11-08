@@ -17,7 +17,7 @@ use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::{Board, BoardSize, Model};
 use onerom_config::mcu::{Family, RP235X_BASE_FLASH, RP235X_BASE_SRAM, Variant};
 use onerom_fw_parser::readers::MemoryReader;
-use onerom_fw_parser::{ParsedDevice, Parser, SDRR_INFO_FW_OFFSET};
+use onerom_fw_parser::{ParsedDevice, Parser, SDRR_INFO_FW_OFFSET, SlotReadError};
 use onerom_gen::{Builder, ConfigOverrides, FIRMWARE_SIZE, FileData};
 use onerom_metadata::{
     FIRMWARE_RELEASE, FLASH_CS0_BASE_ADDR, FirmwareType, METADATA_BASE, METADATA_OFFSET,
@@ -299,6 +299,35 @@ fn an_unknown_value_fails_with_the_firmware_version() {
     assert_eq!(e, ReadBackError::FirmwareTooNew { version: VERSION });
     let e = block_on(read_slot_roms_file(&image, 0)).unwrap_err();
     assert_eq!(e, ReadBackError::FirmwareTooNew { version: VERSION });
+}
+
+/// A slot size larger than any One ROM's flash fails before its data is read.
+#[test]
+fn a_slot_larger_than_flash_fails() {
+    let mut image = image_2364();
+    let mut reader = MemoryReader::new(image.clone(), RP235X_BASE_FLASH);
+    let mut parsed = block_on(
+        Parser::with_base_flash_address(&mut reader, RP235X_BASE_FLASH, RP235X_BASE_SRAM)
+            .parse_device(),
+    );
+    let ParsedDevice::Schema(onerom) = &mut parsed else {
+        panic!("not schema firmware");
+    };
+    let metadata = onerom.metadata_mut().unwrap();
+    metadata.rom_slots[0].size = u32::MAX;
+    let mut buf = vec![0; METADATA_SIZE];
+    serialize(metadata, METADATA_BASE, &mut buf).unwrap();
+    let at = METADATA_OFFSET as usize;
+    image[at..at + METADATA_SIZE].copy_from_slice(&buf);
+
+    let e = block_on(read_back_file(&image)).unwrap_err();
+    assert!(
+        matches!(
+            e,
+            ReadBackError::Read(SlotReadError::TooLarge { size: u32::MAX, .. })
+        ),
+        "{e:?}"
+    );
 }
 
 /// Builds `path` on every board at the current release, so a config can use

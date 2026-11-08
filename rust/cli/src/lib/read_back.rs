@@ -70,18 +70,18 @@ pub fn inline_files(read_back: &ReadBack) -> Config {
 }
 
 /// The error for reading the firmware file `file` back.
-pub fn read_back_error<E: std::fmt::Debug>(file: &str, error: ReadBackError<E>) -> Error {
+pub fn read_back_error<E: std::fmt::Display>(file: &str, error: ReadBackError<E>) -> Error {
     read_error(file, file, error)
 }
 
 /// The error for reading the One ROM back.
-pub fn device_read_back_error<E: std::fmt::Debug>(error: ReadBackError<E>) -> Error {
+pub fn device_read_back_error<E: std::fmt::Display>(error: ReadBackError<E>) -> Error {
     read_error("the One ROM", "The One ROM", error)
 }
 
 /// The error for reading back `what`, which is `subject` at the start of a
 /// sentence.
-fn read_error<E: std::fmt::Debug>(what: &str, subject: &str, error: ReadBackError<E>) -> Error {
+fn read_error<E: std::fmt::Display>(what: &str, subject: &str, error: ReadBackError<E>) -> Error {
     match error {
         ReadBackError::NoSlot { slot, slots } => Error::NoSlot { slot, slots },
         ReadBackError::NoImage { slot } => Error::NoImage { slot },

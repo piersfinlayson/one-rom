@@ -10,6 +10,7 @@ use onerom_config::Error as ConfigError;
 use onerom_gen::Error as GenError;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     Config {
         details: String,
@@ -42,15 +43,6 @@ pub enum Error {
         error: SerdeJsonError,
     },
     ReleaseNotFound,
-    TooLarge {
-        portion: String,
-        size: usize,
-        max: usize,
-    },
-    FileWrite {
-        file: String,
-        error: std::io::Error,
-    },
     LicenseNotAccepted,
     Zip {
         file: String,
@@ -94,15 +86,6 @@ impl std::fmt::Display for Error {
                 write!(f, "Hit an error parsing the supplied JSON file.\n  {error}")
             }
             Error::ReleaseNotFound => write!(f, "Requested firmware release not found."),
-            Error::TooLarge { portion, size, max } => {
-                write!(
-                    f,
-                    "Hit an error: {portion} size {size} exceeds maximum of {max}."
-                )
-            }
-            Error::FileWrite { file, error } => {
-                write!(f, "Hit an error writing file {file}.\n  {error}")
-            }
             Error::LicenseNotAccepted => write!(f, "License not accepted by user"),
             Error::Zip { file, error } => {
                 write!(f, "Hit an error extracting zip file {file}.\n  {error}")
@@ -144,12 +127,6 @@ impl Error {
     }
     pub fn release_not_found() -> Self {
         Self::ReleaseNotFound
-    }
-    pub fn too_large(portion: String, size: usize, max: usize) -> Self {
-        Self::TooLarge { portion, size, max }
-    }
-    pub fn write(file: String, error: std::io::Error) -> Self {
-        Self::FileWrite { file, error }
     }
     pub fn license_not_accepted() -> Self {
         Self::LicenseNotAccepted

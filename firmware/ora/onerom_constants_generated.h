@@ -34,6 +34,19 @@
 // @since firmware 0.8.1
 #define ORA_COMMISSIONING_VERSION_KEY ((uint16_t)0xFFFF)
 
+// Longest OTP_KEY_COMMISSIONING_MANUFACTURER value in characters. A board
+// commissioned with a CLI before v0.6.0 may have a longer value.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_MANUFACTURER_MAX_LEN 0x20
+
+// Longest OTP_KEY_COMMISSIONING_REVISION value in characters.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_REVISION_MAX_LEN 0x10
+
+// Longest OTP_KEY_COMMISSIONING_BATCH value in characters.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_BATCH_MAX_LEN 0x10
+
 // Position of FLASH_DEVINFO's CS0_SIZE field.
 // @since firmware 0.8.0
 #define ORA_OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT ((uint16_t)8)

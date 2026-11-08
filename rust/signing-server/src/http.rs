@@ -28,6 +28,9 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use log::{debug, error, info, warn};
 use onerom_config::hw::{Board, BoardSize};
 use onerom_metadata::otp::{BuildError, CommissioningValues, parse_chip_id};
+use onerom_metadata::{
+    COMMISSIONING_BATCH_MAX_LEN, COMMISSIONING_MANUFACTURER_MAX_LEN, COMMISSIONING_REVISION_MAX_LEN,
+};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -171,7 +174,9 @@ impl Server {
             Err(BuildError::BadManufacturer) => {
                 return text(
                     StatusCode::BAD_REQUEST,
-                    "manufacturer must be printable ASCII without '*' or a leading or trailing space",
+                    format!(
+                        "manufacturer must be up to {COMMISSIONING_MANUFACTURER_MAX_LEN} printable ASCII characters without '*' or a leading or trailing space"
+                    ),
                 );
             }
             Err(BuildError::BadDate) => {
@@ -180,13 +185,17 @@ impl Server {
             Err(BuildError::BadRevision) => {
                 return text(
                     StatusCode::BAD_REQUEST,
-                    "revision must be non-empty printable ASCII without a leading or trailing space",
+                    format!(
+                        "revision must be 1 to {COMMISSIONING_REVISION_MAX_LEN} printable ASCII characters without a leading or trailing space"
+                    ),
                 );
             }
             Err(BuildError::BadBatch) => {
                 return text(
                     StatusCode::BAD_REQUEST,
-                    "batch must be non-empty printable ASCII without a leading or trailing space",
+                    format!(
+                        "batch must be 1 to {COMMISSIONING_BATCH_MAX_LEN} printable ASCII characters without a leading or trailing space"
+                    ),
                 );
             }
             Err(BuildError::DoesNotFit) => {

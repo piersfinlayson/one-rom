@@ -132,8 +132,9 @@ pub fn test_reboot_delay(emu: &Emulator) -> Result<(), String> {
     finish(errors)
 }
 
-/// A NULL request, a short size and an unknown mode fail, and a larger size
-/// than this firmware's structure is read as far as this firmware's fields go.
+/// A NULL request, a short size, a non-zero reserved byte and an unknown mode
+/// fail, and a larger size than this firmware's structure is read as far as
+/// this firmware's fields go.
 pub fn test_reboot_rejects(emu: &Emulator) -> Result<(), String> {
     let mut errors = Vec::new();
     emu.rom_reboot();
@@ -156,6 +157,19 @@ pub fn test_reboot_rejects(emu: &Emulator) -> Result<(), String> {
             &format!("size {size}"),
             result,
             OraResult::InvalidSize,
+            &mut errors,
+        );
+    }
+
+    for reserved in [[1u8, 0], [0, 1], [0xFF, 0xFF]] {
+        let mut req = request(NORMAL, DELAY_MS);
+        req.reserved = reserved;
+        let result = emu.reboot(&req);
+        expect_failed(
+            emu,
+            &format!("reserved {reserved:?}"),
+            result,
+            OraResult::InvalidArg,
             &mut errors,
         );
     }

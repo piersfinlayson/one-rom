@@ -110,7 +110,8 @@ pub async fn cmd_clone(options: &mut Options, args: &CloneArgs) -> Result<(), Er
     }
     let config = clone_config(&read_back, target.onerom());
     options.device = Some(target);
-    let board = resolve_board(options, &None)?.ok_or(Error::NoDevice)?;
+    let board_arg = args.board.map(|board| board.name().to_string());
+    let board = resolve_board(options, &board_arg)?.ok_or(Error::NoDevice)?;
     rebuild(
         options,
         Command::Clone,

@@ -146,7 +146,7 @@ pub enum ReadBackError<E> {
     },
 }
 
-impl<E: fmt::Debug> fmt::Display for ReadBackError<E> {
+impl<E: fmt::Display> fmt::Display for ReadBackError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FileNotOneRom => f.write_str("The file doesn't contain One ROM firmware"),
@@ -163,7 +163,7 @@ impl<E: fmt::Debug> fmt::Display for ReadBackError<E> {
             Self::Unparsed => f.write_str("The firmware's metadata is missing or doesn't parse"),
             Self::Read(error) => write!(f, "{error}"),
             Self::ReadFirmware { error } => {
-                write!(f, "The base firmware couldn't be read: {error:?}")
+                write!(f, "The base firmware couldn't be read: {error}")
             }
             Self::Recover(error) => write!(f, "{error}"),
             Self::NoSlot { slot, slots: 0 } => {
@@ -538,6 +538,8 @@ impl ReadBack {
 
     /// Lists each published plugin as the bytes read from its slot rather than
     /// by name, so a build retains the data the plugin stores there.
+    ///
+    /// Call it before changing `config.chip_sets`.
     ///
     /// Each slot becomes one of [`files`](Self::files). Its chip's label is
     /// the release's URL so the rebuilt image reads back with the plugin

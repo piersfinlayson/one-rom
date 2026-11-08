@@ -12,8 +12,6 @@
 
 #include "plugin.h"
 
-// Logic to allow this plugin to be built as either a system or user plugin,
-// based on the PLUGIN_TYPE passed in on make.
 ORA_USER_PLUGIN(
     c64_char_led_setup,
     c64_char_led_loop,

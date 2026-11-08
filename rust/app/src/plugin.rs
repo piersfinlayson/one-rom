@@ -53,7 +53,9 @@ use onerom_gen::plugin::{PLUGIN_SITE_BASE, file_stem, official_plugin, plugin_ch
 use onerom_gen::{
     Builder, ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, INLINE_BASE64, SizeHandling,
 };
-use onerom_metadata::{SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE};
+use onerom_metadata::{
+    PLUGIN_HEADER_PLUGIN_TYPE_OFFSET, PLUGIN_MAGIC, SYSTEM_PLUGIN_SIZE, USER_PLUGIN_SIZE,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, PluginError};
@@ -827,10 +829,6 @@ pub enum VerifyTarget<'a> {
 // Plugin binary header parsing and verification
 // ------------------------------------------------------------
 
-/// Magic value at the start of every One ROM plugin binary (`"ORA "`, little
-/// endian).
-const ORA_PLUGIN_MAGIC: u32 = 0x2041_524F;
-
 /// Size of the plugin header, in bytes. The full header must be present for the
 /// binary to be a valid plugin.
 const ORA_PLUGIN_HEADER_SIZE: usize = 256;
@@ -873,16 +871,15 @@ fn parse_plugin_header(data: &[u8], source: &str) -> Result<PluginHeader, Plugin
 
     // Magic guard: only trust the type byte if this is really a plugin binary.
     let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    if magic != ORA_PLUGIN_MAGIC {
+    if magic != PLUGIN_MAGIC {
         return Err(PluginError::InvalidMagic(
             source.into(),
             magic,
-            ORA_PLUGIN_MAGIC,
+            PLUGIN_MAGIC,
         ));
     }
 
-    // Type at offset 20 (`ora_plugin_type_t`: 0 = system, 1 = user, 2 = PIO).
-    let plugin_type = match data[20] {
+    let plugin_type = match data[PLUGIN_HEADER_PLUGIN_TYPE_OFFSET] {
         0 => PluginType::System,
         1 => PluginType::User,
         2 => return Err(PluginError::PioNotSupported(source.into())),
@@ -1767,11 +1764,7 @@ mod tests {
     /// correctly, so tests can exercise the magic guard.
     fn header(magic_ok: bool, type_byte: u8, ver: (u16, u16, u16, u16)) -> Vec<u8> {
         let mut buf = vec![0u8; ORA_PLUGIN_HEADER_SIZE];
-        let magic = if magic_ok {
-            ORA_PLUGIN_MAGIC
-        } else {
-            0xDEAD_BEEF
-        };
+        let magic = if magic_ok { PLUGIN_MAGIC } else { 0xDEAD_BEEF };
         buf[0..4].copy_from_slice(&magic.to_le_bytes());
         buf[8..10].copy_from_slice(&ver.0.to_le_bytes());
         buf[10..12].copy_from_slice(&ver.1.to_le_bytes());

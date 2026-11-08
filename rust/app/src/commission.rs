@@ -14,7 +14,7 @@
 
 use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
@@ -26,9 +26,10 @@ use onerom_metadata::otp::{
     NewCommissioningInstance, RowWrite, StoreEntry, board_size, white_label,
 };
 use onerom_metadata::{
-    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_FLASH_DEVINFO_ROW,
-    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OTP_USB_WHITE_LABEL_ROW, OneromBoardSize,
-    OneromOtpEntry,
+    COMMISSIONING_BATCH_MAX_LEN, COMMISSIONING_MANUFACTURER_MAX_LEN,
+    COMMISSIONING_REVISION_MAX_LEN, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
+    OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_FLASH_DEVINFO_ROW, OTP_FLASH_PARTITION_SLOT_SIZE_ROW,
+    OTP_PAGE_ROWS, OTP_USB_WHITE_LABEL_ROW, OneromBoardSize, OneromOtpEntry,
 };
 
 use crate::otp::{
@@ -44,6 +45,8 @@ use crate::size::known_size;
 // Request
 // ---------------------------------------------------------------------------
 
+// Not #[non_exhaustive]. The CLI builds a Request field by field, and a new
+// field is released in a minor version of onerom-app.
 /// A request to commission a board.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
@@ -114,6 +117,8 @@ impl fmt::Display for RowValue {
     }
 }
 
+// Not #[non_exhaustive]. A new variant is released in a minor version of
+// onerom-app.
 /// Why commissioning a board or setting its size stopped.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommissionError {
@@ -287,25 +292,25 @@ fn configured_text(size: OneromBoardSize) -> &'static str {
 }
 
 /// The text for a [`BuildError`]. `BuildError` doesn't implement `Display`.
-fn build_error_text(error: &BuildError) -> &'static str {
+fn build_error_text(error: &BuildError) -> String {
     match error {
-        BuildError::EmptyManufacturer => "the manufacturer's name is empty",
-        BuildError::BadManufacturer => {
-            "the manufacturer's name must be printable ASCII without '*' or a leading or trailing space"
-        }
-        BuildError::BadDate => "the date isn't 8 digits",
-        BuildError::BadSigner => "signer ID 0 is invalid",
+        BuildError::EmptyManufacturer => "the manufacturer's name is empty".to_string(),
+        BuildError::BadManufacturer => format!(
+            "the manufacturer's name must be up to {COMMISSIONING_MANUFACTURER_MAX_LEN} printable ASCII characters without '*' or a leading or trailing space"
+        ),
+        BuildError::BadDate => "the date isn't 8 digits".to_string(),
+        BuildError::BadSigner => "signer ID 0 is invalid".to_string(),
         BuildError::BadFirstRow => {
-            "the instance's first row isn't a page boundary in the commissioning area"
+            "the instance's first row isn't a page boundary in the commissioning area".to_string()
         }
-        BuildError::BadRevision => {
-            "the revision must be non-empty printable ASCII without a leading or trailing space"
-        }
-        BuildError::BadBatch => {
-            "the batch must be non-empty printable ASCII without a leading or trailing space"
-        }
-        BuildError::DoesNotFit => "the instance doesn't fit in the commissioning area",
-        _ => "the commissioning values are invalid",
+        BuildError::BadRevision => format!(
+            "the revision must be 1 to {COMMISSIONING_REVISION_MAX_LEN} printable ASCII characters without a leading or trailing space"
+        ),
+        BuildError::BadBatch => format!(
+            "the batch must be 1 to {COMMISSIONING_BATCH_MAX_LEN} printable ASCII characters without a leading or trailing space"
+        ),
+        BuildError::DoesNotFit => "the instance doesn't fit in the commissioning area".to_string(),
+        _ => "the commissioning values are invalid".to_string(),
     }
 }
 

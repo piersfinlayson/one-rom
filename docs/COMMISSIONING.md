@@ -94,7 +94,7 @@ form, for example `One ROM`, `OneROM` or `onerom`.
 
 A request must include a contact for each manufacturer string. A contact is an
 email address or URL at which the manufacturer can be contacted, for example
-`https://github.com/acme-retro`. Contacts are published with in the ONE ROM
+`https://github.com/acme-retro`. Contacts are published in the One ROM
 repository's signing key table,
 [`rust/app/signing-keys.json`](/rust/app/signing-keys.json).
 

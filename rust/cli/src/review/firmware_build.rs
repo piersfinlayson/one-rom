@@ -98,6 +98,15 @@ fn help() {
     super::help(&["onerom", "firmware", "build", "--help"]);
 }
 
+/// `--no-plugin` with a `--slot` that places a plugin. The CLI refuses before
+/// it reads a file.
+#[tokio::test]
+async fn no_plugin_with_a_slot_plugin() {
+    let files = Files::new(8, 1);
+    let line = "onerom firmware build --board fire-24-f --base-firmware base.bin --slot file=plugin.bin,type=SystemPlugin --slot file=0.bin,type=27C400 --no-plugin";
+    build(line, &files).await;
+}
+
 /// `--size L` for fire-24-f, which doesn't support external flash. The CLI
 /// refuses before it reads a file.
 #[tokio::test]

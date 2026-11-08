@@ -572,6 +572,31 @@ value = 2
 comment = "Length of an OTP_KEY_COMMISSIONING_SIZE value."
 
 [[constants]]
+name = "COMMISSIONING_MANUFACTURER_MAX_LEN"
+type = "usize"
+value = 32
+ora_api = true
+first_release = "0.8.1"
+comment = """Longest OTP_KEY_COMMISSIONING_MANUFACTURER value in characters. A board
+commissioned with a CLI before v0.6.0 may have a longer value."""
+
+[[constants]]
+name = "COMMISSIONING_REVISION_MAX_LEN"
+type = "usize"
+value = 16
+ora_api = true
+first_release = "0.8.1"
+comment = "Longest OTP_KEY_COMMISSIONING_REVISION value in characters."
+
+[[constants]]
+name = "COMMISSIONING_BATCH_MAX_LEN"
+type = "usize"
+value = 16
+ora_api = true
+first_release = "0.8.1"
+comment = "Longest OTP_KEY_COMMISSIONING_BATCH value in characters."
+
+[[constants]]
 name = "OTP_BOOT_FLAGS0_ROW"
 type = "u16"
 value = 0x048

@@ -99,6 +99,8 @@
 
 // Reset registers
 #define RESET_RESET     (*((volatile uint32_t *)(RESETS_BASE + 0x00)))
+#define RESET_RESET_SET (*((volatile uint32_t *)(RESETS_BASE + 0x00 + 0x2000)))
+#define RESET_RESET_CLR (*((volatile uint32_t *)(RESETS_BASE + 0x00 + 0x3000)))
 #define RESET_WDSEL     (*((volatile uint32_t *)(RESETS_BASE + 0x04)))
 #define RESET_DONE      (*((volatile uint32_t *)(RESETS_BASE + 0x08)))
 

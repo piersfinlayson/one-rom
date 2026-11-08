@@ -370,6 +370,17 @@ static ora_result_t pio_setup_address_monitor_pios(void) {
         pio_release((uint8_t)cs_block, (uint8_t)cs_sm, (uint8_t)cs_first, cs_monitor_instrs);
         return rc;
     }
+    uint8_t addr_monitor_pio = (uint8_t)(
+        (addr_claim_block << ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT) |
+        (addr_sm << ADDR_MONITOR_PIO_ADDR_SM_SHIFT) |
+        (cs_block << ADDR_MONITOR_PIO_CS_BLOCK_SHIFT) |
+        (cs_sm << ADDR_MONITOR_PIO_CS_SM_SHIFT));
+    if (!addr_monitor_pio_record(addr_monitor_pio)) {
+        pio_release((uint8_t)cs_block, (uint8_t)cs_sm, (uint8_t)cs_first, cs_monitor_instrs);
+        pio_release((uint8_t)addr_claim_block, (uint8_t)addr_sm, (uint8_t)addr_first,
+                    MONITOR_ADDR_INSTRS);
+        return ORA_RESULT_IN_USE;
+    }
 
     APIO_SET_BLOCK_FROM_VAR(cs_block, cs_first);
 
@@ -702,12 +713,6 @@ static ora_result_t pio_setup_address_monitor_pios(void) {
 
     APIO_END_BLOCK_FROM(addr_first);
 
-    RUNTIME->addr_monitor_pio = (uint8_t)(
-        (addr_claim_block << ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT) |
-        (addr_sm << ADDR_MONITOR_PIO_ADDR_SM_SHIFT) |
-        (cs_block << ADDR_MONITOR_PIO_CS_BLOCK_SHIFT) |
-        (cs_sm << ADDR_MONITOR_PIO_CS_SM_SHIFT));
-
     return ORA_RESULT_OK;
 }
 
@@ -814,9 +819,6 @@ ora_result_t pio_setup_address_monitor(
         return ORA_RESULT_INVALID_SIZE;
     }
 
-    if (RUNTIME->addr_monitor_pio != ADDR_MONITOR_PIO_NONE) {
-        return ORA_RESULT_IN_USE;
-    }
     ora_result_t rc = pio_setup_address_monitor_pios();
     if (rc != ORA_RESULT_OK) {
         return rc;

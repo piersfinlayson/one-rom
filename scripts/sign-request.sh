@@ -41,9 +41,9 @@ REPO="piersfinlayson/one-rom"
 MANUFACTURER="onerom.org"
 KEY_ID=2
 
-# The oldest CLI whose requests are signed. An older CLI doesn't write the
-# board size when commissioning, so a signature made here fails to commission
-# with it.
+# The oldest CLI that signs, and whose requests are signed. A CLI before v0.6.0
+# leaves the board size out of the signed data, so a signature fails to
+# commission where one CLI is before v0.6.0 and the other isn't.
 MIN_CLI_VERSION="0.6.0"
 
 # The issue form's labels. GitHub writes each field's value beneath its label
@@ -105,6 +105,12 @@ done
     echo "$(command -v "$ONEROM") doesn't support \`hardware sign\`." >&2
     exit 1
 }
+version=$("$ONEROM" --version | awk '{print $2}')
+version=${version#v}
+printf '%s\n' "$MIN_CLI_VERSION" "$version" | sort -V -C || {
+    echo "$(command -v "$ONEROM") is $version. Signing requires $MIN_CLI_VERSION or later." >&2
+    exit 1
+}
 [ -n "${ONEROM_GITHUB_TOKEN:-}" ] || {
     echo "ONEROM_GITHUB_TOKEN isn't set." >&2
     exit 1
@@ -118,14 +124,16 @@ done
 github() {
     local args=(-sS -w '\n%{http_code}' -X "$2"
         -H "Accept: application/vnd.github+json"
-        -H "Authorization: Bearer $ONEROM_GITHUB_TOKEN"
         -H "X-GitHub-Api-Version: 2022-11-28")
     [ $# -lt 4 ] || args+=(--data "$4")
     local response error
     # curl's own error, for example a host it couldn't resolve, goes into the
     # message rather than above it.
     error=$(mktemp)
-    response=$(curl "${args[@]}" "https://api.github.com/repos/$REPO/issues/$ISSUE$3" 2>"$error") || {
+    # The token is read from a pipe so it isn't on curl's command line.
+    response=$(curl "${args[@]}" \
+        -H @<(printf 'Authorization: Bearer %s\n' "$ONEROM_GITHUB_TOKEN") \
+        "https://api.github.com/repos/$REPO/issues/$ISSUE$3" 2>"$error") || {
         echo "Failed to $1: $(sed 's/^curl: //' "$error")" >&2
         rm -f "$error"
         exit 1

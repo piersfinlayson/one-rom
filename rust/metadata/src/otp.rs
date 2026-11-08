@@ -32,15 +32,16 @@ use serde::ser::SerializeStruct;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    DeviceMemoryView, Generations, MaybeKnown, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
-    OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_COMMISSIONING_SIG_LEN,
-    OTP_COMMISSIONING_SIGNER_LEN, OTP_COMMISSIONING_SIZE_LEN, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT,
-    OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT, OTP_FLASH_DEVINFO_SIZE_BITS, OTP_FLASH_DEVINFO_SIZE_UNIT,
-    OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
-    OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_KEY_NONE, OTP_PAGE_ROWS, OTP_STORE_MAGIC,
-    OTP_STORE_VERSION, OneromBoardSize, OneromFlashSize, OneromOtpEntry, OneromOtpKey,
-    SerializeContext, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, USB_BOOTLOADER_PID,
-    USB_BOOTLOADER_VID,
+    COMMISSIONING_BATCH_MAX_LEN, COMMISSIONING_MANUFACTURER_MAX_LEN,
+    COMMISSIONING_REVISION_MAX_LEN, DeviceMemoryView, Generations, MaybeKnown,
+    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_COMMISSIONING_AREA_FIRST_ROW,
+    OTP_COMMISSIONING_AREA_LAST_ROW, OTP_COMMISSIONING_SIG_LEN, OTP_COMMISSIONING_SIGNER_LEN,
+    OTP_COMMISSIONING_SIZE_LEN, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_SIZE_BITS, OTP_FLASH_DEVINFO_SIZE_UNIT, OTP_GENERAL_STORE_FIRST_ROW,
+    OTP_GENERAL_STORE_TERMINATOR_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_KEY_NONE,
+    OTP_PAGE_ROWS, OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize, OneromFlashSize,
+    OneromOtpEntry, OneromOtpKey, SerializeContext, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M,
+    USB_BOOTLOADER_PID, USB_BOOTLOADER_VID,
 };
 
 pub use pico_otp;
@@ -95,14 +96,16 @@ pub struct RowWrite {
 pub enum BuildError {
     /// The manufacturer's name is empty.
     EmptyManufacturer,
-    /// The manufacturer's name isn't printable ASCII, contains `*` or has a
-    /// leading or trailing space.
+    /// The manufacturer's name is longer than
+    /// [`COMMISSIONING_MANUFACTURER_MAX_LEN`], isn't printable ASCII, contains
+    /// `*` or has a leading or trailing space.
     BadManufacturer,
-    /// The revision is empty, isn't printable ASCII or has a leading or
-    /// trailing space.
+    /// The revision is empty, is longer than
+    /// [`COMMISSIONING_REVISION_MAX_LEN`], isn't printable ASCII or has a
+    /// leading or trailing space.
     BadRevision,
-    /// The batch is empty, isn't printable ASCII or has a leading or trailing
-    /// space.
+    /// The batch is empty, is longer than [`COMMISSIONING_BATCH_MAX_LEN`],
+    /// isn't printable ASCII or has a leading or trailing space.
     BadBatch,
     /// The date isn't 8 ASCII digits.
     BadDate,
@@ -114,31 +117,37 @@ pub enum BuildError {
     DoesNotFit,
 }
 
-/// Checks `name` is a valid `COMMISSIONING_MANUFACTURER` value. It must be
-/// printable ASCII without `*` or a leading or trailing space.
+/// Checks `name` is a valid `COMMISSIONING_MANUFACTURER` value. It must be up
+/// to [`COMMISSIONING_MANUFACTURER_MAX_LEN`] printable ASCII characters
+/// without `*` or a leading or trailing space.
 pub fn check_manufacturer(name: &str) -> Result<(), BuildError> {
     if name.is_empty() {
         return Err(BuildError::EmptyManufacturer);
     }
-    if name.contains('*') || !is_trimmed_printable(name) {
+    if name.len() > COMMISSIONING_MANUFACTURER_MAX_LEN
+        || name.contains('*')
+        || !is_trimmed_printable(name)
+    {
         return Err(BuildError::BadManufacturer);
     }
     Ok(())
 }
 
-/// Checks `revision` is a valid `COMMISSIONING_REVISION` value. It must be
-/// non-empty printable ASCII without a leading or trailing space.
+/// Checks `revision` is a valid `COMMISSIONING_REVISION` value. It must be 1 to
+/// [`COMMISSIONING_REVISION_MAX_LEN`] printable ASCII characters without a
+/// leading or trailing space.
 pub fn check_revision(revision: &str) -> Result<(), BuildError> {
-    if !is_trimmed_printable(revision) {
+    if revision.len() > COMMISSIONING_REVISION_MAX_LEN || !is_trimmed_printable(revision) {
         return Err(BuildError::BadRevision);
     }
     Ok(())
 }
 
-/// Checks `batch` is a valid `COMMISSIONING_BATCH` value. It must be
-/// non-empty printable ASCII without a leading or trailing space.
+/// Checks `batch` is a valid `COMMISSIONING_BATCH` value. It must be 1 to
+/// [`COMMISSIONING_BATCH_MAX_LEN`] printable ASCII characters without a
+/// leading or trailing space.
 pub fn check_batch(batch: &str) -> Result<(), BuildError> {
-    if !is_trimmed_printable(batch) {
+    if batch.len() > COMMISSIONING_BATCH_MAX_LEN || !is_trimmed_printable(batch) {
         return Err(BuildError::BadBatch);
     }
     Ok(())

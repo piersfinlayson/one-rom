@@ -14,6 +14,9 @@ use onerom_app::BoardSize;
 use onerom_config::hw::{Board, Model};
 use onerom_gen::board_supports_size;
 use onerom_metadata::otp::{BuildError, check_batch, check_manufacturer, check_revision};
+use onerom_metadata::{
+    COMMISSIONING_BATCH_MAX_LEN, COMMISSIONING_MANUFACTURER_MAX_LEN, COMMISSIONING_REVISION_MAX_LEN,
+};
 use time::{Date, Month, OffsetDateTime};
 
 use crate::args::{CommandTrait, arg_error};
@@ -542,11 +545,10 @@ fn fire_board(text: &str, ice: &str) -> Result<Board, String> {
 fn parse_manufacturer(text: &str) -> Result<String, String> {
     match check_manufacturer(text) {
         Ok(()) => Ok(text.to_string()),
-        Err(BuildError::EmptyManufacturer) => Err("manufacturer is empty".to_string()),
-        Err(_) => Err(
-            "the manufacturer must be printable ASCII without '*' or a leading or trailing space"
-                .to_string(),
-        ),
+        Err(BuildError::EmptyManufacturer) => Err("the manufacturer's name is empty".to_string()),
+        Err(_) => Err(format!(
+            "the manufacturer's name must be up to {COMMISSIONING_MANUFACTURER_MAX_LEN} printable ASCII characters without '*' or a leading or trailing space"
+        )),
     }
 }
 
@@ -555,10 +557,9 @@ fn parse_manufacturer(text: &str) -> Result<String, String> {
 fn parse_revision(text: &str) -> Result<String, String> {
     match check_revision(text) {
         Ok(()) => Ok(text.to_string()),
-        Err(_) => Err(
-            "the revision must be non-empty printable ASCII without a leading or trailing space"
-                .to_string(),
-        ),
+        Err(_) => Err(format!(
+            "the revision must be 1 to {COMMISSIONING_REVISION_MAX_LEN} printable ASCII characters without a leading or trailing space"
+        )),
     }
 }
 
@@ -567,10 +568,9 @@ fn parse_revision(text: &str) -> Result<String, String> {
 fn parse_batch(text: &str) -> Result<String, String> {
     match check_batch(text) {
         Ok(()) => Ok(text.to_string()),
-        Err(_) => Err(
-            "the batch must be non-empty printable ASCII without a leading or trailing space"
-                .to_string(),
-        ),
+        Err(_) => Err(format!(
+            "the batch must be 1 to {COMMISSIONING_BATCH_MAX_LEN} printable ASCII characters without a leading or trailing space"
+        )),
     }
 }
 
@@ -710,10 +710,24 @@ mod tests {
             "piers\nrocks",
             "\u{1b}[2J",
             "tab\there",
+            &"x".repeat(COMMISSIONING_MANUFACTURER_MAX_LEN + 1),
         ] {
             let refused = parse_manufacturer(text).unwrap_err();
             assert_ne!(refused, empty, "{text:?}");
         }
+        let longest = "x".repeat(COMMISSIONING_MANUFACTURER_MAX_LEN);
+        assert_eq!(parse_manufacturer(&longest).unwrap(), longest);
+    }
+
+    /// A revision and a batch are refused beyond their maximum lengths.
+    #[test]
+    fn a_revision_and_batch_have_maximum_lengths() {
+        let revision = "r".repeat(COMMISSIONING_REVISION_MAX_LEN);
+        let batch = "b".repeat(COMMISSIONING_BATCH_MAX_LEN);
+        assert_eq!(parse_revision(&revision).unwrap(), revision);
+        assert_eq!(parse_batch(&batch).unwrap(), batch);
+        assert!(parse_revision(&format!("{revision}r")).is_err());
+        assert!(parse_batch(&format!("{batch}b")).is_err());
     }
 
     /// Each Fire board needs `--size` exactly when its config sets an external

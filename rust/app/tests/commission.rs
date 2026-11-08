@@ -16,7 +16,10 @@ use onerom_metadata::otp::{
     AreaIssue, BuildError, CommissioningInstance, CommissioningValues, NewCommissioningInstance,
     RowWrite, white_label,
 };
-use onerom_metadata::{MaybeKnown, OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize};
+use onerom_metadata::{
+    COMMISSIONING_MANUFACTURER_MAX_LEN, MaybeKnown, OTP_STORE_MAGIC, OTP_STORE_VERSION,
+    OneromBoardSize,
+};
 use serde_json::json;
 
 /// CHIPID from rows 0x000–0x003 of an RP2350 A4.
@@ -899,10 +902,10 @@ async fn values_that_cant_make_an_instance_are_refused() {
         ),
         (
             Request {
-                manufacturer: "x".repeat(1941),
+                manufacturer: "x".repeat(COMMISSIONING_MANUFACTURER_MAX_LEN + 1),
                 ..m.clone()
             },
-            BuildError::DoesNotFit,
+            BuildError::BadManufacturer,
         ),
     ];
     for (request, error) in cases {

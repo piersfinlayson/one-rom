@@ -65,8 +65,8 @@
  * external systems, flash the status LED, or even bitbang a protocol of
  * your own, all while One ROM is serving a ROM image to the target device.
  * 
- * Some example plugins are provided in `sdrr/ora/examples` to demonstrate the
- * API and build process.  A sample Makefile and linker script are also
+ * Some example plugins are provided in `firmware/ora/examples` to demonstrate
+ * the API and build process.  A sample Makefile and linker script are also
  * provided.
  * 
  * Detailed guidelines for writing plugins:
@@ -167,9 +167,7 @@
  *             function yields to the other plugin.
  *
  * Places an @ref ora_plugin_header_t in the @c .plugin_header section with
- * the correct magic, version, and main function offset.  Not normally used
- * directly — prefer @ref ORA_DEFINE_SYSTEM_PLUGIN or
- * @ref ORA_DEFINE_USER_PLUGIN.
+ * the correct magic, version, and main function offset.
  *
  * This should only be used for simple plugins.  For complex plugins, which
  * use statically allocated RAM, overrides, etc, define the @ref
@@ -257,6 +255,7 @@
 
 /**
  * @brief Define the header for a One ROM PIO plugin
+ * @deprecated The firmware doesn't run PIO plugins.
  *
  * Place this macro at the top of your plugin's main source file, passing the
  * name of your main function.  It generates the @ref ora_plugin_header_t

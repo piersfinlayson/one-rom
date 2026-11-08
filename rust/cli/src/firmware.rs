@@ -39,7 +39,7 @@ use onerom_cli::plugin::{
 use onerom_cli::slot::{
     ConfirmationsRequired, GlobalConfig, check_slot_chip_types, check_slot_confirmations,
     defines_plugin, inject_plugins_into_config, parse_slots, save_config, saved_config_json,
-    slots_to_config_json,
+    slots_define_plugin, slots_to_config_json,
 };
 use onerom_cli::{Error, Options};
 
@@ -564,6 +564,7 @@ pub async fn cmd_build(
         &args.plugin,
         args.no_plugin,
         config.as_deref(),
+        slots_define_plugin(&args.slot, &board)?,
         &version,
         &onerom_cli::CliFetch,
     )
@@ -1306,12 +1307,14 @@ const DEFAULT_PLUGIN: &str = "usb";
 /// USB plugin when a system plugin isn't specified. Returns the specs and the
 /// plugins in the same order.
 ///
-/// The USB plugin isn't added with `no_plugin`, when `config` defines a plugin
-/// or doesn't parse, or when it doesn't have a version that supports `version`.
+/// The USB plugin isn't added with `no_plugin`, when `config` or a `--slot`
+/// defines a plugin, when `config` doesn't parse, or when it doesn't have a
+/// version that supports `version`.
 pub(crate) async fn resolve_build_plugins<F: LocalFetch<Error = onerom_fw::Error>>(
     raw: &[String],
     no_plugin: bool,
     config: Option<&str>,
+    slot_has_plugin: bool,
     version: &FirmwareVersion,
     fetch: &F,
 ) -> Result<(Vec<PluginSpec>, Vec<ResolvedPlugin>), Error> {
@@ -1325,6 +1328,12 @@ pub(crate) async fn resolve_build_plugins<F: LocalFetch<Error = onerom_fw::Error
             "--no-plugin".to_string(),
             "The config file defines a plugin. Remove it from the config or drop --no-plugin."
                 .to_string(),
+        ));
+    }
+    if no_plugin && slot_has_plugin {
+        return Err(Error::InvalidArgument(
+            "--no-plugin".to_string(),
+            "Cannot be used with a plugin specified with --slot.".to_string(),
         ));
     }
 
@@ -1343,7 +1352,7 @@ pub(crate) async fn resolve_build_plugins<F: LocalFetch<Error = onerom_fw::Error
     }
 
     let has_system = plugins.iter().any(|p| p.plugin_type == PluginType::System);
-    if !no_plugin && !config_has_plugin && config_parses && !has_system {
+    if !no_plugin && !config_has_plugin && !slot_has_plugin && config_parses && !has_system {
         let spec = PluginSpec::Named {
             name: DEFAULT_PLUGIN.to_string(),
             plugin_type: Some(PluginType::System),
@@ -2097,7 +2106,7 @@ mod tests {
     #[tokio::test]
     async fn the_usb_plugin_is_added_where_no_plugin_is_specified() {
         let (_, served) = published_plugin(PluginType::System, "usb");
-        let (specs, plugins) = resolve_build_plugins(&[], false, None, &V0_8_0, &served)
+        let (specs, plugins) = resolve_build_plugins(&[], false, None, false, &V0_8_0, &served)
             .await
             .unwrap();
         assert_eq!(names(&plugins), [(PluginType::System, "usb")]);
@@ -2116,6 +2125,7 @@ mod tests {
             &raw(&["user/host-control"]),
             false,
             None,
+            false,
             &V0_8_0,
             &Files(served),
         )
@@ -2135,25 +2145,48 @@ mod tests {
     #[tokio::test]
     async fn no_plugin_is_added_where_a_system_plugin_is_specified() {
         let (_, served) = published_plugin(PluginType::System, "other");
-        let (_, plugins) =
-            resolve_build_plugins(&raw(&["system/other"]), false, None, &V0_8_0, &served)
-                .await
-                .unwrap();
+        let (_, plugins) = resolve_build_plugins(
+            &raw(&["system/other"]),
+            false,
+            None,
+            false,
+            &V0_8_0,
+            &served,
+        )
+        .await
+        .unwrap();
         assert_eq!(names(&plugins), [(PluginType::System, "other")]);
     }
 
     #[tokio::test]
     async fn no_plugin_is_added_where_the_config_defines_one() {
         let (_, plugins) =
-            resolve_build_plugins(&[], false, Some(PLUGIN_CONFIG), &V0_8_0, &NoFetch)
+            resolve_build_plugins(&[], false, Some(PLUGIN_CONFIG), false, &V0_8_0, &NoFetch)
                 .await
                 .unwrap();
         assert!(plugins.is_empty());
     }
 
     #[tokio::test]
+    async fn no_plugin_is_added_where_a_slot_defines_one() {
+        let (_, plugins) = resolve_build_plugins(&[], false, None, true, &V0_8_0, &NoFetch)
+            .await
+            .unwrap();
+        assert!(plugins.is_empty());
+    }
+
+    #[tokio::test]
+    async fn no_plugin_with_a_slot_that_defines_one_fails() {
+        let result = resolve_build_plugins(&[], true, None, true, &V0_8_0, &NoFetch).await;
+        assert!(
+            matches!(&result, Err(Error::InvalidArgument(option, _)) if option == "--no-plugin"),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn no_plugin_leaves_out_the_usb_plugin() {
-        let (_, plugins) = resolve_build_plugins(&[], true, None, &V0_8_0, &NoFetch)
+        let (_, plugins) = resolve_build_plugins(&[], true, None, false, &V0_8_0, &NoFetch)
             .await
             .unwrap();
         assert!(plugins.is_empty());
@@ -2161,7 +2194,8 @@ mod tests {
 
     #[tokio::test]
     async fn no_plugin_with_a_config_that_defines_one_fails() {
-        let result = resolve_build_plugins(&[], true, Some(PLUGIN_CONFIG), &V0_8_0, &NoFetch).await;
+        let result =
+            resolve_build_plugins(&[], true, Some(PLUGIN_CONFIG), false, &V0_8_0, &NoFetch).await;
         assert!(
             matches!(&result, Err(Error::InvalidArgument(option, _)) if option == "--no-plugin"),
             "{result:?}"
@@ -2172,17 +2206,24 @@ mod tests {
     #[tokio::test]
     async fn the_usb_plugin_is_left_out_where_no_version_supports_the_firmware() {
         let (_, served) = published_plugin(PluginType::System, "usb");
-        let (specs, plugins) =
-            resolve_build_plugins(&[], false, None, &FirmwareVersion::new(0, 6, 0, 0), &served)
-                .await
-                .unwrap();
+        let (specs, plugins) = resolve_build_plugins(
+            &[],
+            false,
+            None,
+            false,
+            &FirmwareVersion::new(0, 6, 0, 0),
+            &served,
+        )
+        .await
+        .unwrap();
         assert!(specs.is_empty() && plugins.is_empty());
     }
 
     /// The error includes the option that builds without the plugin.
     #[tokio::test]
     async fn a_usb_plugin_that_cant_be_fetched_fails() {
-        let result = resolve_build_plugins(&[], false, None, &V0_8_0, &Files(Vec::new())).await;
+        let result =
+            resolve_build_plugins(&[], false, None, false, &V0_8_0, &Files(Vec::new())).await;
         let Err(e) = result else {
             panic!("{result:?}");
         };

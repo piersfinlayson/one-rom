@@ -116,6 +116,7 @@ ora_result_t ora_claim_pio(uint32_t *block,
                            uint32_t flags);
 
 void pio_release(uint8_t block, uint8_t sm, uint8_t first_instr, uint8_t num_instrs);
+uint8_t addr_monitor_pio_record(uint8_t addr_monitor_pio);
 uint8_t usb_reserve(const ora_plugin_header_t *header, ora_plugin_type_t plugin);
 uint8_t usb_reserved_by(ora_plugin_type_t plugin);
 

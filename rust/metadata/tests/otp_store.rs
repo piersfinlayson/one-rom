@@ -13,10 +13,11 @@ use onerom_metadata::otp::{
     check_revision,
 };
 use onerom_metadata::{
-    MaybeKnown, OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW,
-    OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_LAST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
-    OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromBoardSize,
-    OneromOtpEntry, SerializeContext,
+    COMMISSIONING_BATCH_MAX_LEN, COMMISSIONING_MANUFACTURER_MAX_LEN,
+    COMMISSIONING_REVISION_MAX_LEN, MaybeKnown, OTP_COMMISSIONING_AREA_FIRST_ROW,
+    OTP_COMMISSIONING_AREA_LAST_ROW, OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_LAST_ROW,
+    OTP_GENERAL_STORE_TERMINATOR_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_STORE_MAGIC,
+    OTP_STORE_VERSION, OneromBoardSize, OneromOtpEntry, SerializeContext,
 };
 use serde_json::json;
 
@@ -198,23 +199,36 @@ fn an_instance_must_end_before_the_general_store() {
     );
 }
 
-/// The area's 1024 rows hold fire-24-f's 54 rows and a manufacturer of up to
-/// 1940 bytes. The values are refused before they're placed.
+/// A manufacturer's name longer than COMMISSIONING_MANUFACTURER_MAX_LEN is
+/// refused before the values are built.
 #[test]
-fn values_too_long_for_the_area_are_refused() {
+fn a_manufacturer_longer_than_its_maximum_is_refused() {
     let values = |len| CommissioningValues::new(Board::Fire24F, &"x".repeat(len), "20260926", 1);
-    assert!(values(1940).is_ok());
-    assert_eq!(values(1941).err(), Some(BuildError::DoesNotFit));
+    assert!(values(COMMISSIONING_MANUFACTURER_MAX_LEN).is_ok());
+    assert_eq!(
+        values(COMMISSIONING_MANUFACTURER_MAX_LEN + 1).err(),
+        Some(BuildError::BadManufacturer)
+    );
 }
 
 /// A revision and a batch are non-empty printable ASCII without a leading or
-/// trailing space. Unlike a manufacturer's name they may contain `*`.
+/// trailing space, up to their maximum lengths. Unlike a manufacturer's name
+/// they may contain `*`.
 #[test]
 fn a_revision_and_batch_are_checked() {
+    let revision = "r".repeat(COMMISSIONING_REVISION_MAX_LEN);
+    let batch = "b".repeat(COMMISSIONING_BATCH_MAX_LEN);
     for text in ["A1", "a", "Y1-2345*", "rev 2"] {
         assert_eq!(check_revision(text), Ok(()), "{text:?}");
         assert_eq!(check_batch(text), Ok(()), "{text:?}");
     }
+    assert_eq!(check_revision(&revision), Ok(()));
+    assert_eq!(check_batch(&batch), Ok(()));
+    assert_eq!(
+        check_revision(&format!("{revision}r")),
+        Err(BuildError::BadRevision)
+    );
+    assert_eq!(check_batch(&format!("{batch}b")), Err(BuildError::BadBatch));
     for text in ["", " ", " A1", "A1 ", "A\t1", "Café", "\u{7f}"] {
         assert_eq!(
             check_revision(text),

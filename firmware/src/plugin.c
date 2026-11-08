@@ -338,6 +338,10 @@ ora_result_t ora_reboot(const ora_reboot_request_t *req) {
         return ORA_RESULT_INVALID_SIZE;
     }
 
+    if ((req->reserved[0] != 0u) || (req->reserved[1] != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
     if (req->mode > ORA_REBOOT_MODE_BOOTLOADER) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
@@ -515,7 +519,7 @@ ora_result_t ora_alloc_mem(const ora_alloc_request_t *req, uint32_t *addr_out) {
     if (req->size < ALLOC_REQUEST_MIN_SIZE) {
         return ORA_RESULT_INVALID_SIZE;
     }
-    if (req->bytes == 0u) {
+    if ((req->reserved[0] != 0u) || (req->bytes == 0u)) {
         return ORA_RESULT_INVALID_ARG;
     }
 
@@ -2405,12 +2409,12 @@ STATIC_ASSERT(UART_COUNT == 2, "One claim bit per UART");
 
 // Both plugins can claim hardware so a spinlock is used to guard the claims
 // between cores.  See ora_log_lock() for why interrupts are masked while it is
-// held.
+// held.  The lock functions are noinline to save flash.
 #if defined(TEST_BUILD)
 static uint32_t hw_claim_lock(void) { return 0u; }
 static void hw_claim_unlock(uint32_t primask) { (void)primask; }
 #else
-static uint32_t hw_claim_lock(void) {
+static __attribute__((noinline)) uint32_t hw_claim_lock(void) {
     uint32_t primask;
 
     __asm volatile ("mrs %0, primask \n\t"
@@ -2424,7 +2428,7 @@ static uint32_t hw_claim_lock(void) {
     return primask;
 }
 
-static void hw_claim_unlock(uint32_t primask) {
+static __attribute__((noinline)) void hw_claim_unlock(uint32_t primask) {
     __asm volatile ("dmb" ::: "memory");
     SIO_SPINLOCK(SPINLOCK_HW_CLAIM) = 0u;
     __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
@@ -2833,6 +2837,18 @@ void pio_release(uint8_t block, uint8_t sm, uint8_t first_instr, uint8_t num_ins
     RUNTIME->pio_block_claims &= (uint16_t)~((1u << sm) << PIO_CLAIM_SMS_SHIFT(block));
     RUNTIME->pio_instr_claims[block] &= ~pio_instr_run(first_instr, num_instrs);
     hw_claim_unlock(primask);
+}
+
+// Both plugins can set up the address monitor at once.  Only the first call
+// records its state machines.
+uint8_t addr_monitor_pio_record(uint8_t addr_monitor_pio) {
+    uint32_t primask = hw_claim_lock();
+    uint8_t recorded = (RUNTIME->addr_monitor_pio == ADDR_MONITOR_PIO_NONE);
+    if (recorded) {
+        RUNTIME->addr_monitor_pio = addr_monitor_pio;
+    }
+    hw_claim_unlock(primask);
+    return recorded;
 }
 
 void *ora_fn_lookup(api_id_t id) {

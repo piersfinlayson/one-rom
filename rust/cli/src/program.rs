@@ -116,6 +116,7 @@ async fn build_and_assemble(
         &args.plugin,
         args.no_plugin,
         config.as_deref(),
+        slot::slots_define_plugin(&args.slot, board)?,
         &version,
         &onerom_cli::CliFetch,
     )

@@ -882,6 +882,13 @@ pub fn defines_plugin(config: &Config) -> bool {
         .any(|chip| chip.chip_type.resolved().is_plugin())
 }
 
+/// Whether any of the `--slot` values `slots` places a plugin.
+pub fn slots_define_plugin(slots: &[String], board: &Board) -> Result<bool, Error> {
+    Ok(parse_slots(slots, board)?
+        .iter()
+        .any(|slot| slot.chip_type.resolved().is_plugin()))
+}
+
 /// Whether the config places a system plugin, and so gives the device a USB
 /// stack of its own to serve with.
 pub fn has_system_plugin(config: &Config) -> bool {

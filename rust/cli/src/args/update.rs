@@ -5,9 +5,10 @@
 //! Argument definitions for `onerom update` and `onerom clone`.
 
 use crate::args::CommandTrait;
-use crate::utils::parse_u8;
+use crate::utils::{get_supported_boards, parse_u8};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
+use onerom_config::hw::Board;
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
@@ -36,7 +37,8 @@ pub enum UpdateCommands {
     /// a One ROM's firmware and programs the One ROM with another firmware
     /// version built from them.
     ///
-    /// Each published plugin is updated to its latest compatible release.
+    /// Each published plugin is updated to its latest compatible release and
+    /// any stored plugin data is reset.
     ///
     /// Examples:
     ///
@@ -202,8 +204,19 @@ pub struct CloneArgs {
     #[arg(long, value_name = "DEVICE")]
     pub to: String,
 
+    /// Board type of the destination One ROM. Required for an uncommissioned One
+    /// ROM without One ROM firmware.
+    #[arg(long, short, value_name = "BOARD", value_parser = parse_board)]
+    pub board: Option<Board>,
+
     #[command(flatten)]
     pub rebuild: RebuildArgs,
+}
+
+/// Parse a board's name.
+fn parse_board(text: &str) -> Result<Board, String> {
+    Board::try_from_str(text)
+        .ok_or_else(|| format!("unknown board\n  Boards: {}", get_supported_boards()))
 }
 
 impl CommandTrait for CloneArgs {

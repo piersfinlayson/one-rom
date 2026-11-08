@@ -733,7 +733,7 @@ async fn refused_otp() {
     let m = "onerom hardware commission --board fire-24-f --manufacturer piers.rocks --key key.pem --date 20260101 --dry-run";
     let l = "onerom hardware commission --board fire-40-a --size L --manufacturer piers.rocks --key key.pem --date 20260101 --dry-run";
     type Case = (&'static str, &'static str, fn(&mut MemoryOtp));
-    let cases: [Case; 11] = [
+    let cases: [Case; 10] = [
         ("a bootloader string's row holds another value", m, |otp| {
             otp.set_raw(0xed0, ecc_encode(0x1234))
         }),
@@ -773,21 +773,12 @@ async fn refused_otp() {
             l,
             |otp| otp.set_raw(0x055, 0x000001),
         ),
-        ("the manufacturer's name is too long", "", |_| {}),
     ];
     for (name, line, set_up) in cases {
         println!("### {name}");
         let mut otp = blank_board();
         set_up(&mut otp);
-        if line.is_empty() {
-            let long = "x".repeat(2100);
-            let line = format!(
-                "onerom hardware commission --board fire-24-f --manufacturer {long} --key key.pem --date 20260101"
-            );
-            commission(&mut otp, &line, "").await;
-        } else {
-            commission(&mut otp, line, "").await;
-        }
+        commission(&mut otp, line, "").await;
         println!();
     }
 

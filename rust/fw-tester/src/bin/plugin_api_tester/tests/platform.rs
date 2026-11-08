@@ -119,6 +119,16 @@ pub fn test_alloc_mem(emu: &Emulator) -> Result<(), String> {
         alloc_request(0),
         OraResult::InvalidArg,
     ));
+    for reserved in [1u8, 0xFF] {
+        refused.push((
+            format!("reserved {reserved:#x}"),
+            ffi::ora_alloc_request_t {
+                reserved: [reserved],
+                ..req
+            },
+            OraResult::InvalidArg,
+        ));
+    }
     for bit in [
         ffi::ORA_MEM_ACCEPT_ALIGNED_ONLY,
         ffi::ORA_MEM_ACCEPT_NO_EXEC,

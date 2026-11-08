@@ -456,11 +456,18 @@ impl ParsedDevice {
         let Some(addr) = slots.get(slot).and_then(|rom_slot| rom_slot.data.addr()) else {
             return Ok(None);
         };
-        let mut data = vec![0; slots[slot].size as usize];
+        let size = slots[slot].size;
+        if size as usize > TOTAL_FLASH_SIZE_L {
+            return Err(SlotReadError::TooLarge {
+                slot: SlotName::of(slots, slot),
+                size,
+            });
+        }
+        let mut data = vec![0; size as usize];
         reader
             .read(addr, &mut data)
             .await
-            .map_err(|error| SlotReadError {
+            .map_err(|error| SlotReadError::Read {
                 slot: SlotName::of(slots, slot),
                 addr,
                 error,
@@ -559,22 +566,34 @@ pub fn image_file_reader(data: &[u8], first: Range<u32>) -> MemoryReader {
 
 /// A slot whose data [`ParsedDevice::read_slots`] couldn't read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SlotReadError<E> {
-    /// The slot.
-    pub slot: SlotName,
-    /// The slot's data address.
-    pub addr: u32,
-    /// The reader's error.
-    pub error: E,
+#[non_exhaustive]
+pub enum SlotReadError<E> {
+    /// The reader failed.
+    Read {
+        /// The slot.
+        slot: SlotName,
+        /// The slot's data address.
+        addr: u32,
+        /// The reader's error.
+        error: E,
+    },
+    /// The slot's size is larger than any One ROM's flash.
+    TooLarge {
+        /// The slot.
+        slot: SlotName,
+        /// The slot's size in bytes.
+        size: u32,
+    },
 }
 
-impl<E: fmt::Debug> fmt::Display for SlotReadError<E> {
+impl<E: fmt::Display> fmt::Display for SlotReadError<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}'s data at {:#010x} couldn't be read: {:?}",
-            self.slot, self.addr, self.error
-        )
+        match self {
+            Self::Read { slot, addr, error } => {
+                write!(f, "{slot}'s data at {addr:#010x} couldn't be read: {error}")
+            }
+            Self::TooLarge { slot, size } => write!(f, "{slot} is too large: {size} bytes"),
+        }
     }
 }
 

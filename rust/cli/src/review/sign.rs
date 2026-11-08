@@ -335,10 +335,6 @@ async fn refused() {
         ..Server::test_key()
     };
     sign_run(&line, "y\n", &table, Some(&records_another)).await;
-    println!();
-    println!("### a manufacturer too long to fit in OTP");
-    let long = KEY_FILE_LINE.replace("piers.rocks", &"x".repeat(2100));
-    sign_run(&long, "y\n", &table, None).await;
 }
 
 /// A manufacturer key 1 doesn't allow, with a key file and then a signing
