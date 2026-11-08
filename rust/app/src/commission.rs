@@ -12,8 +12,9 @@
 //! - [`plan_size`] reads the board and lists the rows setting its size.
 //! - [`Plan::execute`] writes the rows and reads each one back.
 
+use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
@@ -25,9 +26,10 @@ use onerom_metadata::otp::{
     NewCommissioningInstance, RowWrite, StoreEntry, board_size, white_label,
 };
 use onerom_metadata::{
-    OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_FLASH_DEVINFO_ROW,
-    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OTP_USB_WHITE_LABEL_ROW, OneromBoardSize,
-    OneromOtpEntry,
+    COMMISSIONING_BATCH_MAX_LEN, COMMISSIONING_MANUFACTURER_MAX_LEN,
+    COMMISSIONING_REVISION_MAX_LEN, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
+    OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_FLASH_DEVINFO_ROW, OTP_FLASH_PARTITION_SLOT_SIZE_ROW,
+    OTP_PAGE_ROWS, OTP_USB_WHITE_LABEL_ROW, OneromBoardSize, OneromOtpEntry,
 };
 
 use crate::otp::{
@@ -37,17 +39,20 @@ use crate::otp::{
     bootloader_lock, codeword, flash_devinfo, holds, is_unwritten, lock1_row, read_area,
     read_chip_id, read_ecc_rows, read_locks, read_raw_rows,
 };
+use crate::size::known_size;
 
 // ---------------------------------------------------------------------------
 // Request
 // ---------------------------------------------------------------------------
 
+// Not #[non_exhaustive]. The CLI builds a Request field by field, and a new
+// field is released in a minor version of onerom-app.
 /// A request to commission a board.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
     /// The board. The instance's `COMMISSIONING_BOARD` holds its name.
     pub board: Board,
-    /// The board's size.
+    /// The board's size. `COMMISSIONING_SIZE` holds it.
     pub size: BoardSize,
     /// The manufacturer's name. `COMMISSIONING_MANUFACTURER` holds it.
     pub manufacturer: String,
@@ -56,6 +61,12 @@ pub struct Request {
     /// The ID of the key signing the instance. `COMMISSIONING_SIGNER` holds
     /// it.
     pub signer: u16,
+    /// The board's revision. `COMMISSIONING_REVISION` holds it where it's
+    /// `Some`.
+    pub revision: Option<String>,
+    /// The board's manufacturing batch. `COMMISSIONING_BATCH` holds it where
+    /// it's `Some`.
+    pub batch: Option<String>,
     /// Whether to go ahead despite:
     /// - a current instance holding other values
     /// - FLASH_DEVINFO written or enabled by a BOOT_FLAGS0 copy on a board OTP
@@ -106,6 +117,8 @@ impl fmt::Display for RowValue {
     }
 }
 
+// Not #[non_exhaustive]. A new variant is released in a minor version of
+// onerom-app.
 /// Why commissioning a board or setting its size stopped.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CommissionError {
@@ -139,20 +152,11 @@ pub enum CommissionError {
     },
 
     /// The current instance holds values other than the request's.
-    #[error(
-        "the board is already commissioned as {board} by {manufacturer} on {date} with signer {signer}"
-    )]
+    #[error("{}", already_commissioned_text(.current))]
     AlreadyCommissioned {
-        /// The current instance's first row.
-        row: u16,
-        /// The current instance's board.
-        board: String,
-        /// The current instance's manufacturer.
-        manufacturer: String,
-        /// The current instance's `YYYYMMDD` date.
-        date: String,
-        /// The ID of the key that signed the current instance.
-        signer: u16,
+        /// The current instance. It's valid so it has every value an
+        /// instance requires.
+        current: Box<CommissioningInstance>,
         /// Whether the date is the only value that differs.
         only_date_differs: bool,
     },
@@ -263,6 +267,17 @@ fn contents(raw: u32, value: RowValue) -> String {
     }
 }
 
+/// The text for [`CommissionError::AlreadyCommissioned`] with `current`.
+fn already_commissioned_text(current: &CommissioningInstance) -> String {
+    format!(
+        "the board is already commissioned as {} by {} on {} with signer {}",
+        current.board().unwrap_or_default(),
+        current.manufacturer().unwrap_or_default(),
+        current.date().unwrap_or_default(),
+        current.signer().unwrap_or_default(),
+    )
+}
+
 /// The text for a size OTP configures, as [`CommissionError::SizeAlreadySet`]
 /// shows it.
 fn configured_text(size: OneromBoardSize) -> &'static str {
@@ -277,18 +292,25 @@ fn configured_text(size: OneromBoardSize) -> &'static str {
 }
 
 /// The text for a [`BuildError`]. `BuildError` doesn't implement `Display`.
-fn build_error_text(error: &BuildError) -> &'static str {
+fn build_error_text(error: &BuildError) -> String {
     match error {
-        BuildError::EmptyManufacturer => "the manufacturer's name is empty",
-        BuildError::BadManufacturer => {
-            "the manufacturer's name must be printable ASCII without '*' or a leading or trailing space"
-        }
-        BuildError::BadDate => "the date isn't 8 digits",
-        BuildError::BadSigner => "signer ID 0 is invalid",
+        BuildError::EmptyManufacturer => "the manufacturer's name is empty".to_string(),
+        BuildError::BadManufacturer => format!(
+            "the manufacturer's name must be up to {COMMISSIONING_MANUFACTURER_MAX_LEN} printable ASCII characters without '*' or a leading or trailing space"
+        ),
+        BuildError::BadDate => "the date isn't 8 digits".to_string(),
+        BuildError::BadSigner => "signer ID 0 is invalid".to_string(),
         BuildError::BadFirstRow => {
-            "the instance's first row isn't a page boundary in the commissioning area"
+            "the instance's first row isn't a page boundary in the commissioning area".to_string()
         }
-        BuildError::DoesNotFit => "the instance doesn't fit in the commissioning area",
+        BuildError::BadRevision => format!(
+            "the revision must be 1 to {COMMISSIONING_REVISION_MAX_LEN} printable ASCII characters without a leading or trailing space"
+        ),
+        BuildError::BadBatch => format!(
+            "the batch must be 1 to {COMMISSIONING_BATCH_MAX_LEN} printable ASCII characters without a leading or trailing space"
+        ),
+        BuildError::DoesNotFit => "the instance doesn't fit in the commissioning area".to_string(),
+        _ => "the commissioning values are invalid".to_string(),
     }
 }
 
@@ -342,7 +364,8 @@ fn at(row: u16) -> impl FnOnce(OtpError) -> CommissionError {
 /// - a USB_BOOT_FLAGS copy that is neither 0 nor One ROM's flags
 /// - a row to write on page 1, 59 or 60 where the bootloader's lock on the
 ///   page refuses writes
-/// - values [`CommissioningValues::new`] refuses
+/// - values [`CommissioningValuesBuilder::build`](onerom_metadata::otp::CommissioningValuesBuilder::build)
+///   refuses
 /// - values [`NewCommissioningInstance::new`] refuses at row `0x0c0`
 pub async fn prepare<O: LocalOtpAccess>(
     otp: &mut O,
@@ -382,9 +405,7 @@ pub async fn prepare<O: LocalOtpAccess>(
     check_area(&area)?;
     let current = area.current();
     let (date, date_from_current_instance) = choose_date(request, current);
-    let values =
-        CommissioningValues::new(request.board, &request.manufacturer, &date, request.signer)
-            .map_err(CommissionError::Build)?;
+    let values = request_values(request, &date).map_err(CommissionError::Build)?;
     NewCommissioningInstance::new(&values, OTP_COMMISSIONING_AREA_FIRST_ROW)
         .map_err(CommissionError::Build)?;
     // Whether `force` let the request's values differ from the current
@@ -462,6 +483,20 @@ fn check_version(area: &CommissioningArea) -> Result<(), CommissionError> {
     Ok(())
 }
 
+/// The values of `request`'s instance with date `date`.
+fn request_values(request: &Request, date: &str) -> Result<CommissioningValues, BuildError> {
+    let mut builder =
+        CommissioningValues::builder(request.board, &request.manufacturer, date, request.signer)
+            .size(request.size);
+    if let Some(revision) = &request.revision {
+        builder = builder.revision(revision);
+    }
+    if let Some(batch) = &request.batch {
+        builder = builder.batch(batch);
+    }
+    builder.build()
+}
+
 /// How an instance's values compare with a request's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Comparison {
@@ -472,9 +507,16 @@ enum Comparison {
 
 /// How `instance` compares with `request` when the request's date is `date`.
 fn compare(instance: &CommissioningInstance, request: &Request, date: &str) -> Comparison {
+    let size = instance
+        .size()
+        .and_then(|size| size.known().copied())
+        .and_then(known_size);
     let others_match = instance.board() == Some(request.board.name())
         && instance.manufacturer() == Some(request.manufacturer.as_str())
-        && instance.signer() == Some(request.signer);
+        && instance.signer() == Some(request.signer)
+        && instance.revision() == request.revision.as_deref()
+        && instance.batch() == request.batch.as_deref()
+        && size == Some(request.size);
     match (others_match, instance.date() == Some(date)) {
         (true, true) => Comparison::Same,
         (true, false) => Comparison::OnlyDate,
@@ -508,13 +550,8 @@ fn check_current(
     if comparison == Comparison::Same {
         return Ok(());
     }
-    // The current instance is valid so it has every value.
     Err(CommissionError::AlreadyCommissioned {
-        row: current.first_row(),
-        board: current.board().unwrap_or_default().into(),
-        manufacturer: current.manufacturer().unwrap_or_default().into(),
-        date: current.date().unwrap_or_default().into(),
-        signer: current.signer().unwrap_or_default(),
+        current: Box::new(current.clone()),
         only_date_differs: comparison == Comparison::OnlyDate,
     })
 }
@@ -896,6 +933,11 @@ impl Prepared {
     /// The message the instance's signature covers.
     pub fn message(&self) -> &[u8] {
         &self.message
+    }
+
+    /// The instance's values.
+    pub fn values(&self) -> &CommissioningValues {
+        &self.values
     }
 
     /// Places the instance holding `signature` and lists every row to write.

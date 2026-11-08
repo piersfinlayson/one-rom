@@ -584,17 +584,27 @@ fn a_marker_on_an_array_is_accepted() {
     ));
 }
 
-/// Only a u8 array, which is the only element type anything writes down.
 #[test]
-fn a_marker_on_an_array_of_anything_else_is_refused() {
+fn a_marker_on_an_array_of_u16_is_accepted() {
+    accepted(&schema_toml(
+        "\n[[structs.fields]]\nname = \"words\"\nkind = \"inline_array\"\n\
+         element = \"u16\"\ncount = 2\n\
+         since_metadata_version = 3\ndefault_if_absent = [1, 65535]",
+        "",
+    ));
+}
+
+/// The parser reads a two-dimensional array as bytes.
+#[test]
+fn a_marker_on_a_two_dimensional_array_of_u16_is_refused() {
     refused(
         &schema_toml(
-            "\n[[structs.fields]]\nname = \"words\"\nkind = \"inline_array\"\n\
-             element = \"u16\"\ncount = 2\n\
+            "\n[[structs.fields]]\nname = \"words\"\nkind = \"inline_array2d\"\n\
+             element = \"u16\"\nrows = 2\ncols = 2\n\
              since_metadata_version = 3\ndefault_if_absent = 0",
             "",
         ),
-        "a generation marker on an array of u16",
+        "a two-dimensional array with a generation marker must be u8 not u16",
     );
 }
 
@@ -679,7 +689,20 @@ fn a_two_dimensional_default_of_the_wrong_shape_is_refused() {
 fn an_array_default_element_too_large_is_refused() {
     refused(
         &array_field_toml("since_metadata_version = 3\ndefault_if_absent = 256"),
-        "has 256 in its default_if_absent, which a u8 cannot hold",
+        "default_if_absent 256 is too large for a u8",
+    );
+}
+
+#[test]
+fn a_u16_array_default_element_too_large_is_refused() {
+    refused(
+        &schema_toml(
+            "\n[[structs.fields]]\nname = \"words\"\nkind = \"inline_array\"\n\
+             element = \"u16\"\ncount = 2\n\
+             since_metadata_version = 3\ndefault_if_absent = 65536",
+            "",
+        ),
+        "default_if_absent 65536 is too large for a u16",
     );
 }
 

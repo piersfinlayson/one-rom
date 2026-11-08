@@ -6,15 +6,17 @@
 
 #include "plugin.h"
 
-// Logic to allow this plugin to be built as either a system or user plugin,
-// based on the PLUGIN_TYPE passed in on make.
-ORA_DEFINE_USER_PLUGIN(
-    blink_main,
-    0, 1, 0, 0,     // Plugin version
-    0, 6, 7         // Minimum One ROM firmware version required
+ORA_USER_PLUGIN(
+    blink_setup,
+    blink_loop,
+    0, 1, 1, 0,     // Plugin version
+    0, 7, 2         // Minimum One ROM firmware version required
 );
 
-void blink_main(
+static ora_set_status_led_fn_t set_status_led;
+static uint8_t on;
+
+void blink_setup(
     ora_lookup_fn_t ora_lookup_fn,
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
@@ -24,16 +26,16 @@ void blink_main(
     (void)entry_args;
 
     // Look up the status LED control function.
-    ora_set_status_led_fn_t set_status_led = ora_lookup_fn(ORA_ID_SET_STATUS_LED);
+    set_status_led = ora_lookup_fn(ORA_ID_SET_STATUS_LED);
+}
 
-    uint8_t on = 0;
-    while (1) {
-        // Blink the LED
-        set_status_led(on);
-        on = !on;
-
-        // This for loop will delay different amounts depending on the clock
-        // speed.  A future version of the plugin API may provide a timer API.
-        for (volatile int i = 0; i < 10000000; i++);
+void blink_loop(void) {
+    if (set_status_led == NULL) {
+        return;
     }
+
+    // Blink the LED
+    set_status_led(on);
+    on = !on;
+    ora_delay_ms(500);
 }

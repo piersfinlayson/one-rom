@@ -15,9 +15,13 @@
 //! fine and fails somewhere else entirely, so most scenarios below assert one
 //! file against another rather than a field against a constant.
 
-use crate::device::Device;
-use crate::{Ctx, Scenario};
-use onerom_metadata::{USB_PLUGIN_PID, USB_PLUGIN_VID};
+use crate::device::{self, Device};
+use crate::{Ctx, Scenario, ffi};
+use onerom_fw_emulator::{Emulator, OraResult, ffi as fw_ffi};
+use onerom_metadata::{
+    FLASH_CS0_BASE_ADDR, SYSTEM_PLUGIN_OFFSET, USB_PLUGIN_PID, USB_PLUGIN_VID, USER_PLUGIN_OFFSET,
+    USER_PLUGIN_SIZE,
+};
 use onerom_plugin_tester::run::Outcome;
 
 // Control transfer stages, from tinyusb's tusb_types.h.
@@ -50,6 +54,29 @@ const MS_OS_20_WINDEX: u16 = 7;
 /// The interface picoboot must be given, because picotool will not look
 /// anywhere else when a device has more than one.
 const PICOBOOT_INTERFACE: u8 = 1;
+
+/// `bInterfaceClass` of a serial port's communication interface.
+const CLASS_CDC: u8 = 0x02;
+
+/// String indexes of the serial ports' descriptions, from `usb_descriptors.c`.
+const STRING_SERIAL_PORT_1: u8 = 6;
+const STRING_SERIAL_PORT_2: u8 = 7;
+
+/// The USBc format, from `usb_peer.h`.
+const USB_PEER_USBC_FORMAT: u32 = 0x6342_5355;
+pub(crate) const USB_PEER_USBC_SERIAL_PORT_1: u32 = 1 << 0;
+pub(crate) const USB_PEER_USBC_SERIAL_PORT_2: u32 = 1 << 1;
+/// The USBi format, from `usb_peer.h`.
+const USB_PEER_USBI_FORMAT: u32 = 0x6942_5355;
+const USB_PEER_USBI_SERIAL_PORT_1: u32 = 1 << 0;
+const USB_PEER_USBI_SERIAL_PORT_2: u32 = 1 << 1;
+
+/// A format the USB plugin doesn't read.
+const OTHER_FORMAT: u32 = 0x3158_595A;
+
+const USB_PEER_SERIAL_PORT_1_DESC: &str = "One ROM Serial";
+const USB_PEER_SERIAL_PORT_2_DESC: &str = "One ROM Serial 2";
+const USB_PEER_SERIAL_PORT_DESC_MAX_LEN: usize = 31;
 
 /// The chip ID the shim reports, which is what the serial is derived from.
 const CHIP_ID: &str = "0123456789ABCDEF";
@@ -354,6 +381,375 @@ fn the_device_asks_for_usb_2_1(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, 
         ));
     }
 
+    Ok(Outcome::Pass)
+}
+
+// ---------------------------------------------------------------------------
+// Serial port 2
+// ---------------------------------------------------------------------------
+
+/// Address of the user plugin's peer data block, past its header.
+const PEER_DATA_ADDR: u32 = FLASH_CS0_BASE_ADDR + USER_PLUGIN_OFFSET + 0x200;
+
+/// Write a version 1 USBc block with `flags` and the descriptions' addresses as words
+/// 3 to 5, followed by the 0 word, and point the user plugin's header at it.
+fn set_peer_data(flags: u32, port_1_desc: u32, port_2_desc: u32) {
+    Emulator::set_flash_words(
+        PEER_DATA_ADDR,
+        &[
+            USB_PEER_USBC_FORMAT,
+            24,
+            1,
+            flags,
+            port_1_desc,
+            port_2_desc,
+            0,
+        ],
+    );
+    Emulator::set_plugin_peer_data(1, PEER_DATA_ADDR);
+}
+
+/// Enable the serial ports in `flags`, with descriptions at `port_1_desc` and
+/// `port_2_desc`, from the user plugin's peer data block.  `channel_3_size` is
+/// the user plugin's channel 3 size.
+pub(crate) fn request_serial_ports(
+    emu: &Emulator,
+    flags: u32,
+    port_1_desc: u32,
+    port_2_desc: u32,
+    channel_3_size: u16,
+) {
+    if device::install_plugin_slots(emu, 0) {
+        for index in [0, 1] {
+            Emulator::set_plugin_min_fw_version(index, 0, 8, 1);
+        }
+        Emulator::set_plugin_channel_sizes(1, 0x100, channel_3_size);
+        set_peer_data(flags, port_1_desc, port_2_desc);
+    }
+    emu.launch_usb_dpram(0);
+}
+
+/// Enable both serial ports, with serial port 2's description at `desc`.
+pub(crate) fn request_serial_port_2(emu: &Emulator, desc: u32, channel_3_size: u16) {
+    request_serial_ports(
+        emu,
+        USB_PEER_USBC_SERIAL_PORT_1 | USB_PEER_USBC_SERIAL_PORT_2,
+        0,
+        desc,
+        channel_3_size,
+    );
+}
+
+fn arrange_serial_port_2(emu: &Emulator) {
+    request_serial_port_2(emu, 0, 0x40);
+}
+
+fn arrange_serial_port_2_only(emu: &Emulator) {
+    request_serial_ports(emu, USB_PEER_USBC_SERIAL_PORT_2, 0, 0, 0x40);
+}
+
+fn arrange_no_serial_port(emu: &Emulator) {
+    request_serial_ports(emu, 0, 0, 0, 0x40);
+}
+
+/// A block shorter than its version's size, which is then ignored.
+fn arrange_short_peer_data(emu: &Emulator) {
+    request_serial_ports(emu, USB_PEER_USBC_SERIAL_PORT_2, 0, 0, 0x40);
+    Emulator::set_flash_words(PEER_DATA_ADDR + 4, &[20]);
+}
+
+/// Another format's block before a USBc block that enables both serial ports.
+fn arrange_usbc_after_another_block(emu: &Emulator) {
+    request_serial_port_2(emu, 0, 0x40);
+    if device::plugin_slots_installed() {
+        Emulator::set_flash_words(
+            PEER_DATA_ADDR,
+            &[
+                OTHER_FORMAT,
+                16,
+                1,
+                0,
+                USB_PEER_USBC_FORMAT,
+                24,
+                1,
+                USB_PEER_USBC_SERIAL_PORT_1 | USB_PEER_USBC_SERIAL_PORT_2,
+                0,
+                0,
+                0,
+            ],
+        );
+    }
+}
+
+/// A block with version 0, which is then ignored.
+fn arrange_version_0_peer_data(emu: &Emulator) {
+    request_serial_ports(emu, USB_PEER_USBC_SERIAL_PORT_2, 0, 0, 0x40);
+    Emulator::set_flash_words(PEER_DATA_ADDR + 8, &[0]);
+}
+
+/// The description is in the system plugin's region, not the user plugin's.
+fn arrange_serial_port_2_misplaced_description(emu: &Emulator) {
+    request_serial_port_2(emu, FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET, 0x40);
+}
+
+/// A skip if the config has fewer than two ROM slots for the plugin headers.
+pub(crate) fn serial_port_2_requested() -> Result<Option<Outcome>, String> {
+    if !device::plugin_slots_installed() {
+        return Ok(Some(Outcome::Skip(
+            "the config has fewer than two ROM slots for the plugin headers".to_string(),
+        )));
+    }
+    if !Emulator::user_plugin_to_start() {
+        return Err("the firmware doesn't start the installed user plugin".to_string());
+    }
+    Ok(None)
+}
+
+/// The configuration's interface count and its serial ports' communication
+/// interfaces as (interface number, string index).
+fn serial_ports(dev: &Device) -> Result<(u8, Vec<(u8, u8)>), String> {
+    let cfg = dev.configuration_descriptor(0)?;
+    let items = split(&cfg)?;
+    let ports = items
+        .iter()
+        .filter(|i| i.kind == DESC_INTERFACE && i.bytes[5] == CLASS_CDC)
+        .map(|i| (i.bytes[2], i.bytes[8]))
+        .collect();
+    Ok((cfg[4], ports))
+}
+
+fn serial_port_2_absent_without_a_request(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    let (interfaces, ports) = serial_ports(dev)?;
+    if interfaces != 4 || ports != [(2, STRING_SERIAL_PORT_1)] {
+        return Err(format!(
+            "{interfaces} interfaces with serial ports {ports:?}, not 4 with only serial port 1"
+        ));
+    }
+    Ok(Outcome::Pass)
+}
+
+/// Host tools identify the two serial ports by interface order.
+fn serial_port_2_follows_serial_port_1(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    let (interfaces, ports) = serial_ports(dev)?;
+    let ordered = matches!(
+        ports.as_slice(),
+        [(first, STRING_SERIAL_PORT_1), (second, STRING_SERIAL_PORT_2)] if second > first
+    );
+    if interfaces != 6 || !ordered {
+        return Err(format!(
+            "{interfaces} interfaces with serial ports {ports:?}, not 6 with serial port 2 \
+             after serial port 1"
+        ));
+    }
+    Ok(Outcome::Pass)
+}
+
+/// The description at string `index`.
+fn port_desc(dev: &Device, index: u8) -> Result<String, String> {
+    let units = dev
+        .string_descriptor(index)?
+        .ok_or(format!("the device doesn't have string {index}"))?;
+    String::from_utf16(&units[1..]).map_err(|e| e.to_string())
+}
+
+fn check_desc(dev: &Device, index: u8, want: &str) -> Result<Outcome, String> {
+    let desc = port_desc(dev, index)?;
+    if desc != want {
+        return Err(format!("string {index} is {desc:?}, not {want:?}"));
+    }
+    Ok(Outcome::Pass)
+}
+
+fn check_default_desc(dev: &Device) -> Result<Outcome, String> {
+    check_desc(dev, STRING_SERIAL_PORT_2, USB_PEER_SERIAL_PORT_2_DESC)
+}
+
+fn serial_port_2_has_the_default_description(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    check_default_desc(dev)
+}
+
+fn serial_port_1_has_the_default_description(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    check_desc(dev, STRING_SERIAL_PORT_1, USB_PEER_SERIAL_PORT_1_DESC)
+}
+
+/// Without serial port 2 the string is still available and is the default description.
+fn serial_port_2_description_without_a_user_plugin(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    check_default_desc(dev)
+}
+
+/// Check the description at peer data word `word` against string `index` for each case.
+/// The description is read from the user plugin's flash on each request, so the cases
+/// change the peer data and the flash between requests.  `default` is the
+/// description that replaces a bad one.
+fn check_descs(dev: &Device, word: usize, index: u8, default: &str) -> Result<Outcome, String> {
+    let region = FLASH_CS0_BASE_ADDR + USER_PLUGIN_OFFSET;
+    let end = region + USER_PLUGIN_SIZE as u32;
+    let at = region + 0x100;
+    let longest = "x".repeat(USB_PEER_SERIAL_PORT_DESC_MAX_LEN);
+    let too_long = "x".repeat(USB_PEER_SERIAL_PORT_DESC_MAX_LEN + 1);
+    let cases: [(&str, u32, Vec<u8>, &str); 6] = [
+        (
+            "a description",
+            at,
+            b"Bus Monitor\0".to_vec(),
+            "Bus Monitor",
+        ),
+        (
+            "the longest description",
+            at,
+            [longest.as_bytes(), b"\0"].concat(),
+            &longest,
+        ),
+        (
+            "a description too long",
+            at,
+            [too_long.as_bytes(), b"\0"].concat(),
+            default,
+        ),
+        ("an empty description", at, b"\0".to_vec(), default),
+        (
+            "a control character",
+            at,
+            b"Bus\tMonitor\0".to_vec(),
+            default,
+        ),
+        (
+            "a description running past the region",
+            end - 4,
+            b"abcd".to_vec(),
+            default,
+        ),
+    ];
+
+    let mut result = Ok(Outcome::Pass);
+    for (label, addr, bytes, want) in cases {
+        Emulator::clear_flash();
+        for (offset, byte) in (0..).zip(bytes) {
+            Emulator::set_flash_byte(addr + offset, byte);
+        }
+        let mut descs = [0u32; 2];
+        descs[word - 4] = addr;
+        set_peer_data(
+            USB_PEER_USBC_SERIAL_PORT_1 | USB_PEER_USBC_SERIAL_PORT_2,
+            descs[0],
+            descs[1],
+        );
+        match port_desc(dev, index) {
+            Ok(desc) if desc == want => {}
+            Ok(desc) => {
+                result = Err(format!("{label}: string {index} is {desc:?}, not {want:?}"));
+                break;
+            }
+            Err(e) => {
+                result = Err(format!("{label}: {e}"));
+                break;
+            }
+        }
+    }
+    Emulator::clear_flash();
+    result
+}
+
+fn serial_port_1_descriptions(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    check_descs(dev, 4, STRING_SERIAL_PORT_1, USB_PEER_SERIAL_PORT_1_DESC)
+}
+
+fn serial_port_2_descriptions(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    check_descs(dev, 5, STRING_SERIAL_PORT_2, USB_PEER_SERIAL_PORT_2_DESC)
+}
+
+/// If only serial port 2 is enabled it is one serial port at interfaces 2 and
+/// 3, with serial port 2's description at serial port 1's string index.
+fn serial_port_2_only_takes_serial_port_1s_place(
+    dev: &mut Device,
+    _ctx: &Ctx,
+) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    let (interfaces, ports) = serial_ports(dev)?;
+    if interfaces != 4 || ports != [(2, STRING_SERIAL_PORT_1)] {
+        return Err(format!(
+            "{interfaces} interfaces with serial ports {ports:?}, not 4 with one serial port \
+             at interface 2"
+        ));
+    }
+    check_desc(dev, STRING_SERIAL_PORT_1, USB_PEER_SERIAL_PORT_2_DESC)
+}
+
+/// The USB plugin's peer data is one USBi block with both serial ports set,
+/// followed by the 0 word.  A user plugin receives the block by its format.
+fn the_usbi_block_is_found_by_format(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    let want = [
+        USB_PEER_USBI_FORMAT,
+        16,
+        1,
+        USB_PEER_USBI_SERIAL_PORT_1 | USB_PEER_USBI_SERIAL_PORT_2,
+        0,
+    ];
+    // SAFETY: the plugin's peer data is a USBi block and the 0 word, 5 words,
+    // which a _Static_assert in usb_main.c checks.
+    let words = unsafe { std::slice::from_raw_parts(ffi::onerom_usb_test_peer_data(), want.len()) }
+        .to_vec();
+    if words != want {
+        return Err(format!("the peer data is {words:08x?}, not {want:08x?}"));
+    }
+
+    // As on a device, the system plugin's header contains the address.
+    let addr = FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET + 0x200;
+    Emulator::set_flash_words(addr, &words);
+    Emulator::set_plugin_peer_data(0, addr);
+    let emu = dev.emulator();
+    emu.set_calling_plugin(fw_ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_USER);
+    let (result, block) = emu.get_peer_data(USB_PEER_USBI_FORMAT, 0);
+    emu.set_calling_plugin(fw_ffi::ora_plugin_type_t_ORA_PLUGIN_TYPE_SYSTEM);
+    Emulator::set_plugin_peer_data(0, 0);
+    if result != OraResult::Ok || block != want[..4] {
+        return Err(format!(
+            "the user plugin received {result:?} {block:08x?}, not {:08x?}",
+            &want[..4]
+        ));
+    }
+    Ok(Outcome::Pass)
+}
+
+fn no_serial_port_is_enabled(dev: &mut Device, _ctx: &Ctx) -> Result<Outcome, String> {
+    if let Some(skip) = serial_port_2_requested()? {
+        return Ok(skip);
+    }
+    let (interfaces, ports) = serial_ports(dev)?;
+    if interfaces != 2 || !ports.is_empty() {
+        return Err(format!(
+            "{interfaces} interfaces with serial ports {ports:?}, not 2 with none"
+        ));
+    }
     Ok(Outcome::Pass)
 }
 
@@ -937,5 +1333,131 @@ pub static SCENARIOS: &[Scenario] = &[
         about: "the plugin answers only what picoboot has declined",
         run: picoboot_sees_a_control_request_first,
         before_start: None,
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_absent_without_a_request",
+        about: "without a peer data block from the user plugin only serial port 1 is enabled",
+        run: serial_port_2_absent_without_a_request,
+        before_start: None,
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_follows_serial_port_1",
+        about: "serial port 2's interfaces come after serial port 1's",
+        run: serial_port_2_follows_serial_port_1,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_configuration_declares_its_length",
+        about: "with serial port 2 the configuration's wTotalLength is the bytes it sends",
+        run: the_configuration_declares_the_length_it_sends,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_interface_strings_exist",
+        about: "with serial port 2 every interface's string can be read",
+        run: every_interface_names_a_string_that_exists,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_uses_no_endpoint_twice",
+        about: "serial port 2's endpoints are its own",
+        run: no_endpoint_is_used_twice,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_has_the_default_description",
+        about: "without a description in the peer data serial port 2 has the default description",
+        run: serial_port_2_has_the_default_description,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_description_without_a_user_plugin",
+        about: "without a user plugin serial port 2's string is the default description",
+        run: serial_port_2_description_without_a_user_plugin,
+        before_start: None,
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_descriptions",
+        about: "a description in the user plugin's flash is used, and the default replaces a bad one",
+        run: serial_port_2_descriptions,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_description_outside_the_user_plugin_is_replaced",
+        about: "a description outside the user plugin's flash region is replaced by the default",
+        run: serial_port_2_has_the_default_description,
+        before_start: Some(arrange_serial_port_2_misplaced_description),
+    },
+    Scenario {
+        name: "descriptors.a_short_block_is_ignored",
+        about: "a peer data block shorter than its version's size is ignored",
+        run: serial_port_2_absent_without_a_request,
+        before_start: Some(arrange_short_peer_data),
+    },
+    Scenario {
+        name: "descriptors.a_usbc_block_after_another_block_is_used",
+        about: "a USBc block after another format's block enables the serial ports it sets",
+        run: serial_port_2_follows_serial_port_1,
+        before_start: Some(arrange_usbc_after_another_block),
+    },
+    Scenario {
+        name: "descriptors.the_usbi_block_is_found_by_format",
+        about: "the USB plugin's peer data is a USBi block with both serial ports, found by its format",
+        run: the_usbi_block_is_found_by_format,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.a_version_0_block_is_ignored",
+        about: "a peer data block with version 0 is ignored",
+        run: serial_port_2_absent_without_a_request,
+        before_start: Some(arrange_version_0_peer_data),
+    },
+    Scenario {
+        name: "descriptors.serial_port_1_has_the_default_description",
+        about: "without a description in the peer data serial port 1 has the default description",
+        run: serial_port_1_has_the_default_description,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_1_descriptions",
+        about: "serial port 1's description in the user plugin's flash is used, and the default replaces a bad one",
+        run: serial_port_1_descriptions,
+        before_start: Some(arrange_serial_port_2),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_only_takes_serial_port_1s_place",
+        about: "with only serial port 2 enabled it uses serial port 1's interfaces and serial port 2's description",
+        run: serial_port_2_only_takes_serial_port_1s_place,
+        before_start: Some(arrange_serial_port_2_only),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_only_configuration_declares_its_length",
+        about: "with only serial port 2 the configuration's wTotalLength is the bytes it sends",
+        run: the_configuration_declares_the_length_it_sends,
+        before_start: Some(arrange_serial_port_2_only),
+    },
+    Scenario {
+        name: "descriptors.serial_port_2_only_interface_strings_exist",
+        about: "with only serial port 2 every interface's string can be read",
+        run: every_interface_names_a_string_that_exists,
+        before_start: Some(arrange_serial_port_2_only),
+    },
+    Scenario {
+        name: "descriptors.no_serial_port_is_enabled",
+        about: "with neither serial port in the peer data there is no serial port",
+        run: no_serial_port_is_enabled,
+        before_start: Some(arrange_no_serial_port),
+    },
+    Scenario {
+        name: "descriptors.no_serial_port_configuration_declares_its_length",
+        about: "with no serial port the configuration's wTotalLength is the bytes it sends",
+        run: the_configuration_declares_the_length_it_sends,
+        before_start: Some(arrange_no_serial_port),
+    },
+    Scenario {
+        name: "descriptors.no_serial_port_interface_strings_exist",
+        about: "with no serial port every interface's string can be read",
+        run: every_interface_names_a_string_that_exists,
+        before_start: Some(arrange_no_serial_port),
     },
 ];

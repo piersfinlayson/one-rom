@@ -17,6 +17,8 @@ pub mod hexfile;
 pub mod ihex;
 pub mod image;
 pub mod meta;
+pub mod plugin;
+mod recover;
 pub mod srec;
 pub mod transform;
 pub mod v1;
@@ -38,6 +40,9 @@ pub use image::{MAX_IMAGE_SIZE, PAD_BLANK_BYTE, PAD_NO_CHIP_BYTE};
 pub use image::{num_excess_addr_lines, requires_half_select_cs1};
 pub use meta::{MAX_METADATA_LEN, Metadata, PAD_METADATA_BYTE};
 use onerom_config::mcu::{Family, Variant};
+pub use recover::{
+    ChipData, RecoverError, RecoveredConfig, RecoveryProblem, SlotName, check_known, recover_config,
+};
 pub use srec::{SrecError, decode_srec, encode_srec};
 pub use transform::{
     TRANSFORM_LIST_SEPARATOR, Transform, TransformError, apply_transforms, format_transform_list,
@@ -52,6 +57,7 @@ use onerom_config::fw::{FirmwareVersion, ServeAlg};
 
 use onerom_config::hw::{Board, BoardSize};
 use onerom_config::pin::{Pin, ReservedPins};
+use onerom_metadata::{ADDR_MON_MIN_CS_ACT_NOT_SET, ADDR_MON_MIN_CS_ACT_UNIT_NS};
 pub use v1::MAX_SUPPORTED_FIRMWARE_VERSION as MAX_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::MIN_SUPPORTED_FIRMWARE_VERSION as MIN_SUPPORTED_FIRMWARE_VERSION_V1;
 pub use v1::SUPPORTED_CHIP_TYPES as SUPPORTED_CHIP_TYPES_V1;
@@ -63,6 +69,7 @@ pub use v2::UNSUPPORTED_FIRMWARE_VERSIONS as UNSUPPORTED_FIRMWARE_VERSIONS_V2;
 pub use v2::alg_preference::{AddrAlgPreference, CsAlgPreference, DataAlgPreference};
 pub use v2::gpio_use::used_gpios;
 pub use v2::slot_context::socket_pin_offset;
+pub use v2::unscramble::{UnscrambleError, unscramble_slot};
 
 /// Version of metadata produced by this version of the crate
 pub const METADATA_VERSION: u32 = 1;
@@ -102,6 +109,16 @@ pub const MIN_FIRMWARE_OVERRIDES_VERSION: FirmwareVersion = FirmwareVersion::new
 ///
 /// A config that reserves pins fails to build for older firmware.
 pub const MIN_RESERVED_PINS_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
+
+/// The oldest firmware that supports [`Config::addr_mon_min_cs_act_ns`] and
+/// [`FireConfig::addr_mon_min_cs_act_ns`].
+///
+/// A config that sets either fails to build for older firmware.
+pub const MIN_ADDR_MON_MIN_CS_ACT_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 1, 0);
+
+/// The highest `addr_mon_min_cs_act_ns` a config can set.
+pub const MAX_ADDR_MON_MIN_CS_ACT_NS: u16 =
+    (ADDR_MON_MIN_CS_ACT_NOT_SET as u16 - 1) * ADDR_MON_MIN_CS_ACT_UNIT_NS as u16;
 
 const RESERVED_PINS_RULE: &str = "Only image select pins and X pins can be reserved.";
 
@@ -366,6 +383,31 @@ pub enum Error {
         slot: usize,
         /// The pin, as on the silkscreen.
         pin: String,
+    },
+    /// An `addr_mon_min_cs_act_ns` is above [`MAX_ADDR_MON_MIN_CS_ACT_NS`].
+    AddrMonMinCsActOutOfRange {
+        /// The slot's index among ROM slots, as numbered by `inspect slots`,
+        /// or `None` for the global key.
+        slot: Option<usize>,
+        /// The value.
+        ns: u16,
+    },
+    /// A plugin has its own `addr_mon_min_cs_act_ns`.
+    AddrMonMinCsActOnPlugin {
+        /// The plugin's name from the config, or else from its URL or file name.
+        plugin: String,
+    },
+    /// The board doesn't support a ROM slot.
+    SlotUnsupported {
+        /// The slot's index among ROM slots, as numbered by `inspect slots`.
+        slot: usize,
+        /// The slot's chip type.
+        chip_type: ChipType,
+        /// The board.
+        board: Board,
+        /// Why the board doesn't support the slot. `None` where the reason only
+        /// repeats that the board doesn't support it.
+        reason: Option<String>,
     },
 }
 type Result<T> = core::result::Result<T, Error>;
@@ -678,6 +720,32 @@ impl core::fmt::Display for Error {
                 f,
                 "Slot {slot} uses reserved pin {pin}.\n  Do not reserve {pin} or remove slot {slot}."
             ),
+            Error::AddrMonMinCsActOutOfRange { slot, ns } => {
+                match slot {
+                    Some(slot) => write!(f, "Slot {slot}'s ")?,
+                    None => write!(f, "The global ")?,
+                }
+                write!(
+                    f,
+                    "addr_mon_min_cs_act_ns of {ns}ns is above the maximum of {MAX_ADDR_MON_MIN_CS_ACT_NS}ns."
+                )
+            }
+            Error::AddrMonMinCsActOnPlugin { plugin } => write!(
+                f,
+                "Cannot set addr_mon_min_cs_act_ns on the {plugin} plugin."
+            ),
+            Error::SlotUnsupported {
+                slot,
+                chip_type,
+                board,
+                reason,
+            } => {
+                write!(f, "{board} doesn't support slot {slot}'s {chip_type}.")?;
+                match reason {
+                    Some(reason) => write!(f, "\n  {reason}"),
+                    None => Ok(()),
+                }
+            }
         }
     }
 }
@@ -855,6 +923,20 @@ pub struct Config {
         deserialize_with = "deserialize_reserved_pins"
     )]
     pub reserved_pins: Vec<Pin>,
+
+    /// Minimum time in nanoseconds chip select has to stay active for the
+    /// address monitor to capture an access.  A pulse slightly longer than
+    /// this may also not be captured.  Unset, a pulse of 40ns or less isn't
+    /// captured, or 20ns or less for a 23QL384, at the default CPU frequency
+    /// of 150MHz.  With a lower value, shorter pulses can be captured.  The
+    /// value may need tuning for a particular host.  A per-slot value overrides
+    /// it.  Requires firmware v0.8.1 or later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schemars",
+        schemars(range(max = MAX_ADDR_MON_MIN_CS_ACT_NS))
+    )]
+    pub addr_mon_min_cs_act_ns: Option<u16>,
 }
 
 impl Config {
@@ -880,6 +962,7 @@ impl Config {
             swd_enabled: default_swd_enabled(),
             turbo_boot: default_turbo_boot(),
             reserved_pins: Vec::new(),
+            addr_mon_min_cs_act_ns: None,
         }
     }
 
@@ -1158,8 +1241,21 @@ impl ChipConfig {
         }
     }
 
+    /// The chip's [`file`](Self::file) for display. A file inlined as base64 is
+    /// replaced by its label, or as in [`file_for_display`] without one.
+    pub fn file_for_display(&self) -> &str {
+        if !self.file.starts_with(INLINE_BASE64) {
+            return &self.file;
+        }
+        self.label
+            .as_deref()
+            .filter(|label| !label.is_empty())
+            .map_or(INLINE_BASE64_SHOWN, file_for_display)
+    }
+
     // Constructs the filename string for metadata.  Note label will be used
-    // in metadata instead if specified.
+    // in metadata instead if specified.  Errors include it too, so an inlined
+    // file's bytes are left out.
     fn filename(&self) -> String {
         if let Some(label) = &self.label {
             // Return label if we have one
@@ -1167,10 +1263,11 @@ impl ChipConfig {
         }
 
         // Base of filename is "file|extract" or just "file"
+        let file = file_for_display(&self.file);
         let filename_base = if let Some(extract) = &self.extract {
-            format!("{}|{}", self.file, extract)
+            format!("{file}|{extract}")
         } else {
-            self.file.clone()
+            file.to_string()
         };
 
         // If location specified, append "|start=0x...,length=0x..."
@@ -1195,6 +1292,25 @@ impl ChipConfig {
                 format_transform_list(&self.transform)
             )
         }
+    }
+}
+
+/// The prefix of a chip's [`file`](ChipConfig::file) holding the file's
+/// base64-encoded bytes rather than its path or URL.
+pub const INLINE_BASE64: &str = "base64:";
+
+/// The display text for a file inlined as base64.
+const INLINE_BASE64_SHOWN: &str = "base64:...";
+
+/// `file`, a chip's [`file`](ChipConfig::file) or a name made from one, for
+/// display. A file inlined as base64 is replaced by a placeholder.
+/// [`ChipConfig::file_for_display`] uses an inlined file's label where it has
+/// one.
+pub fn file_for_display(file: &str) -> &str {
+    if file.starts_with(INLINE_BASE64) {
+        INLINE_BASE64_SHOWN
+    } else {
+        file
     }
 }
 

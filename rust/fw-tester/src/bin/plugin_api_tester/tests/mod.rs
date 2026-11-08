@@ -2,6 +2,9 @@
 //
 // MIT License
 
+pub mod claim;
+pub mod claim_hw;
+pub mod commissioning;
 pub mod context;
 pub mod gpio;
 pub mod info;
@@ -9,7 +12,9 @@ pub mod led;
 pub mod log;
 pub mod lookup;
 pub mod mapping;
+pub mod peer;
 pub mod platform;
+pub mod reboot;
 pub mod reprogram;
 pub mod slots;
 pub mod standby;

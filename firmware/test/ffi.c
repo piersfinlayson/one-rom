@@ -69,6 +69,159 @@ uint8_t ffi_firmware_flags(void) {
     return RUNTIME->firmware_flags;
 }
 
+void ffi_set_firmware_flags(uint8_t flags) {
+    RUNTIME->firmware_flags = flags;
+}
+
+uint16_t ffi_usb_dpram_pool_offset(void) {
+    return RUNTIME->usb_dpram_pool_offset;
+}
+
+uint16_t ffi_log_channel_claims(void) {
+    return RUNTIME->log_channel_claims;
+}
+
+uint16_t ffi_dma_channel_claims(void) {
+    return RUNTIME->dma_channel_claims;
+}
+
+void ffi_set_dma_channel_claims(uint16_t claims) {
+    RUNTIME->dma_channel_claims = claims;
+}
+
+uint8_t ffi_hw_claims(void) {
+    return RUNTIME->hw_claims;
+}
+
+void ffi_set_hw_claims(uint8_t claims) {
+    RUNTIME->hw_claims = claims;
+}
+
+uint64_t ffi_gpio_claims(void) {
+    uint64_t claims = 0;
+    for (unsigned ii = 0; ii < sizeof(RUNTIME->gpio_claims); ii++) {
+        claims |= (uint64_t)RUNTIME->gpio_claims[ii] << (ii * 8);
+    }
+    return claims;
+}
+
+void ffi_set_gpio_claims(uint64_t claims) {
+    for (unsigned ii = 0; ii < sizeof(RUNTIME->gpio_claims); ii++) {
+        RUNTIME->gpio_claims[ii] = (uint8_t)(claims >> (ii * 8));
+    }
+}
+
+uint8_t ffi_hw_claims2(void) {
+    return RUNTIME->hw_claims2;
+}
+
+void ffi_set_hw_claims2(uint8_t claims) {
+    RUNTIME->hw_claims2 = claims;
+}
+
+uint8_t ffi_timer_alarm_claims(void) {
+    return RUNTIME->timer_alarm_claims;
+}
+
+void ffi_set_timer_alarm_claims(uint8_t claims) {
+    RUNTIME->timer_alarm_claims = claims;
+}
+
+uint32_t ffi_spinlock_claims(void) {
+    return RUNTIME->spinlock_claims;
+}
+
+void ffi_set_spinlock_claims(uint32_t claims) {
+    RUNTIME->spinlock_claims = claims;
+}
+
+uint16_t ffi_pwm_slice_claims(void) {
+    return RUNTIME->pwm_slice_claims;
+}
+
+void ffi_set_pwm_slice_claims(uint16_t claims) {
+    RUNTIME->pwm_slice_claims = claims;
+}
+
+static uint8_t *ffi_irq_claims_map(ora_plugin_type_t plugin) {
+    return (plugin == ORA_PLUGIN_TYPE_SYSTEM) ? RUNTIME->irq_claims_system
+                                              : RUNTIME->irq_claims_user;
+}
+
+uint64_t ffi_irq_claims(ora_plugin_type_t plugin) {
+    const uint8_t *map = ffi_irq_claims_map(plugin);
+    uint64_t claims = 0;
+    for (unsigned ii = 0; ii < sizeof(RUNTIME->irq_claims_system); ii++) {
+        claims |= (uint64_t)map[ii] << (ii * 8);
+    }
+    return claims;
+}
+
+void ffi_set_irq_claims(ora_plugin_type_t plugin, uint64_t claims) {
+    uint8_t *map = ffi_irq_claims_map(plugin);
+    for (unsigned ii = 0; ii < sizeof(RUNTIME->irq_claims_system); ii++) {
+        map[ii] = (uint8_t)(claims >> (ii * 8));
+    }
+}
+
+uint8_t ffi_usb_reserve(ora_plugin_type_t plugin, uint8_t properties1) {
+    ora_plugin_header_t header = {0};
+    header.properties1 = properties1;
+    return usb_reserve(&header, plugin);
+}
+
+uint32_t ffi_pio_instr_claims(uint8_t block) {
+    return RUNTIME->pio_instr_claims[block];
+}
+
+void ffi_set_pio_instr_claims(uint8_t block, uint32_t claims) {
+    RUNTIME->pio_instr_claims[block] = claims;
+}
+
+uint16_t ffi_pio_block_claims(void) {
+    return RUNTIME->pio_block_claims;
+}
+
+void ffi_set_pio_block_claims(uint16_t claims) {
+    RUNTIME->pio_block_claims = claims;
+}
+
+uint8_t ffi_rgb_led_pio(void) {
+    return RUNTIME->rgb_led_pio;
+}
+
+void ffi_set_rgb_led_pio(uint8_t pio) {
+    RUNTIME->rgb_led_pio = pio;
+}
+
+uint8_t ffi_addr_monitor_pio(void) {
+    return RUNTIME->addr_monitor_pio;
+}
+
+// See Emulator::poison_unclaimed_pio().
+void ffi_poison_unclaimed_pio(uint8_t irq) {
+    for (uint8_t block = 0; block < APIO_MAX_PIO_BLOCKS; block++) {
+        for (uint8_t instr = 0; instr < APIO_MAX_PIO_INSTRS; instr++) {
+            if (!(RUNTIME->pio_instr_claims[block] & (1u << instr))) {
+                _apio_emulated_pio.instr[block][instr] = APIO_IRQ_SET_WAIT(irq);
+            }
+        }
+    }
+}
+
+// See Emulator::unclaimed_pio_used().
+int8_t ffi_unclaimed_pio_written(uint8_t irq) {
+    for (uint8_t block = 0; block < APIO_MAX_PIO_BLOCKS; block++) {
+        for (uint8_t instr = 0; instr < APIO_MAX_PIO_INSTRS; instr++) {
+            if (!(RUNTIME->pio_instr_claims[block] & (1u << instr)) &&
+                (_apio_emulated_pio.instr[block][instr] != APIO_IRQ_SET_WAIT(irq))) {
+                return (int8_t)block;
+            }
+        }
+    }
+    return -1;
+}
+
 // See ffi.h.  gen-config.c defines the host build's metadata root, and leaves
 // it writable so the harness can stand where the CLI does on a device.
 extern onerom_metadata_header_t _metadata_start;
@@ -117,15 +270,36 @@ uint8_t ffi_check_plugin_valid(
 // See ffi.h.
 static ora_plugin_header_t plugin_headers[2];
 
+static onerom_rom_info_t plugin_roms[2] = {
+    {
+        .rom_type = "system_plugin",
+        .chip_size = SYSTEM_PLUGIN_SIZE,
+        .rbcp_rom_type = CHIP_TYPE_SYSTEM_PLUGIN,
+    },
+    {
+        .rom_type = "user_plugin",
+        .chip_size = USER_PLUGIN_SIZE,
+        .rbcp_rom_type = CHIP_TYPE_USER_PLUGIN,
+    },
+};
+static const onerom_rom_info_t *const plugin_rom_ptrs[2][1] = {
+    { &plugin_roms[0] },
+    { &plugin_roms[1] },
+};
+
 static const onerom_rom_slot_t plugin_slots[2] = {
     {
         .data = (const uint8_t *)&plugin_headers[0],
         .size = SYSTEM_PLUGIN_SIZE,
+        .roms = plugin_rom_ptrs[0],
+        .rom_count = 1,
         .slot_type = ROM_SLOT_TYPE_PLUGIN_SYSTEM,
     },
     {
         .data = (const uint8_t *)&plugin_headers[1],
         .size = USER_PLUGIN_SIZE,
+        .roms = plugin_rom_ptrs[1],
+        .rom_count = 1,
         .slot_type = ROM_SLOT_TYPE_PLUGIN_USER,
     },
 };
@@ -178,6 +352,26 @@ void ffi_restore_rom_slots(void) {
         metadata_rom_slot_count;
 }
 
+// See ffi.h.
+void ffi_set_rom_slot_no_image(uint8_t index) {
+    uint8_t count = METADATA->rom_slot_count;
+    assert(index < count);
+    save_rom_slots();
+    memcpy(override_slots, metadata_rom_slots, count * sizeof(onerom_rom_slot_t));
+    override_slots[index].data = (const uint8_t *)(uintptr_t)ROM_SLOT_NO_IMAGE;
+    _metadata_start.rom_slots = override_slots;
+}
+
+// See ffi.h.
+void ffi_overlay_plugin_slots(void) {
+    uint8_t count = METADATA->rom_slot_count;
+    assert(count >= 3);
+    save_rom_slots();
+    memcpy(override_slots, metadata_rom_slots, count * sizeof(onerom_rom_slot_t));
+    memcpy(override_slots, plugin_slots, sizeof(plugin_slots));
+    _metadata_start.rom_slots = override_slots;
+}
+
 void ffi_set_plugin_header(
     uint8_t index,
     uint32_t entry,
@@ -194,6 +388,99 @@ void ffi_set_plugin_header(
         (index == 0) ? ORA_PLUGIN_TYPE_SYSTEM : ORA_PLUGIN_TYPE_USER;
     header->overrides1 = overrides1;
     header->properties1 = properties1;
+}
+
+// See ffi.h.
+void ffi_set_plugin_boot_slot_addr(uint8_t index, uint32_t addr) {
+    assert(index < 2);
+    plugin_headers[index].boot_slot_addr = addr;
+}
+
+void ffi_set_plugin_usb_controller_dpram_size(uint8_t index, uint16_t size) {
+    assert(index < 2);
+    plugin_headers[index].usb_controller_dpram_size = size;
+}
+
+void ffi_set_plugin_channel_sizes(uint8_t index, uint16_t channel_2,
+                                  uint16_t channel_3) {
+    assert(index < 2);
+    plugin_headers[index].channel_2_size = channel_2;
+    plugin_headers[index].channel_3_size = channel_3;
+}
+
+void ffi_set_plugin_peer_data(uint8_t index, uint32_t addr) {
+    assert(index < 2);
+    plugin_headers[index].peer_data = addr;
+}
+
+void ffi_set_plugin_magic(uint8_t index, uint32_t magic) {
+    assert(index < 2);
+    plugin_headers[index].magic = magic;
+}
+
+void ffi_set_plugin_api_version(uint8_t index, uint32_t api_version) {
+    assert(index < 2);
+    plugin_headers[index].api_version = api_version;
+}
+
+void ffi_set_plugin_min_fw_version(
+    uint8_t index,
+    uint16_t major,
+    uint16_t minor,
+    uint16_t patch
+) {
+    assert(index < 2);
+    ora_plugin_header_t *header = &plugin_headers[index];
+    header->min_fw_major_version = major;
+    header->min_fw_minor_version = minor;
+    header->min_fw_patch_version = patch;
+}
+
+// See ffi.h.
+void ffi_set_plugin_filename(uint8_t index, const char *filename) {
+    assert(index < 2);
+    plugin_roms[index].filename = filename;
+}
+
+// See ffi.h.
+void ffi_set_rom_slot_count(uint8_t count) {
+    assert(count <= METADATA->rom_slot_count);
+    *(uint8_t *)(uintptr_t)&_metadata_start.rom_slot_count = count;
+}
+
+uint8_t ffi_user_plugin_to_start(void) {
+    return (user_plugin_to_start() != NULL) ? 1u : 0u;
+}
+
+uint8_t ffi_system_plugin_to_launch(void) {
+    return (system_plugin_to_launch() != NULL) ? 1u : 0u;
+}
+
+uint8_t ffi_user_plugin_to_launch(uint8_t system_launched) {
+    return (user_plugin_to_launch(system_launched) != NULL) ? 1u : 0u;
+}
+
+// See ffi.h.
+uint8_t ffi_rtt_up(uint8_t index, ffi_rtt_up_t *out) {
+    assert(index < ONEROM_RTT_MAX_UP_BUFFERS);
+    const onerom_rtt_ring_t *ring = &_SEGGER_RTT.up[index];
+    if (ring->buffer == NULL) {
+        return 0u;
+    }
+    out->is_usb_dpram_log = (ring->buffer == stub_usb_dpram_log()) ? 1u : 0u;
+    out->size = ring->size;
+    out->write_offset = ring->write_offset;
+    out->read_offset = ring->read_offset;
+    return 1u;
+}
+
+// See ffi.h.
+uint32_t ffi_log_write(const uint8_t *buf, uint32_t len) {
+    return onerom_rtt_write(ONEROM_RTT_CH_BOOT, buf, len);
+}
+
+uint32_t ffi_log_read(uint8_t *buf, uint32_t max_len) {
+    return onerom_rtt_read(ONEROM_RTT_CH_BOOT, buf, max_len);
 }
 
 // See ffi.h.  base_addr_pin is an offset within the PIO's GPIOBASE window, so

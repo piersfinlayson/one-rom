@@ -963,8 +963,12 @@ fn emit_struct_write_field_body(
                 let a = addr_expr(byte_off);
                 out.push_str(&format!("{ind}ctx.write_bytes({a}, &self.{name});\n"));
             } else {
+                let (method, size) = scalar_write(elem);
+                let a = addr_expr(byte_off);
                 out.push_str(&format!(
-                    "{ind}compile_error!(\"non-u8 inline_array write not implemented for `{name}`\");\n"
+                    "{ind}for (i, e) in self.{name}.iter().enumerate() {{\n\
+                     {ind}    ctx.{method}({a} + (i as u32 * {size}u32), *e);\n\
+                     {ind}}}\n"
                 ));
             }
         }

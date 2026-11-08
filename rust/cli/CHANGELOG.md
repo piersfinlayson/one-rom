@@ -1,5 +1,35 @@
 # CLI Changelog
 
+## v0.6.0 - unreleased
+
+- **Breaking** `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
+- Reword several error messages and `board` output.
+- `--config` on `program` and `firmware build` can be an http(s) URL.
+- Add the address monitor's minimum CS-active time to `program` and `firmware build` as `--addr-mon-min-cs-act-ns` and the `--slot` key `addr-mon-min-cs-act-ns`. `scan --slots`, `inspect slots` and `firmware inspect` display it.
+- `firmware inspect` displays each slot's firmware overrides.
+- `firmware inspect`, `scan --slots` and `inspect slots` display a slot's `force-16-bit` setting.
+- Add `update` which updates a One ROM's firmware version, one ROM image or a plugin.
+- Add `clone`, which copies a One ROM or firmware file to another One ROM.
+- Add `save`, which saves a One ROM's or firmware file's configuration and ROM images to a PC.
+- `firmware inspect` prints `Chip N` instead of `ROM N`.
+- Remove `inspect image`, which wasn't implemented. Use `save`.
+- Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
+- Fix: a reboot no longer fails when the One ROM resets before the CLI reads its reply to the reboot command, for example after `program --verify`.
+- When the One ROM selected with `--serial` can't be opened the error is now "could not be opened", not "not found".
+- `program` and `firmware build` fail when a plugin's boot slot address is outside its region.
+- `monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
+- `inspect peek memory` can also read USB DPRAM.
+- `console --serial-port 2` opens serial port 2.
+- `hardware validate` displays the manufacturer's contact.
+- `inspect gpio` displays a GPIO claimed by a plugin as `plugin`.
+- **Breaking** `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
+- `hardware validate`, `inspect otp` and `inspect info` display the size a One ROM was commissioned as where it differs from its current size. `hardware validate` fails where a One ROM was commissioned as L but its size isn't L.
+- **Breaking** `hardware commission` and `hardware sign` fail with a manufacturer name longer than 32 characters.
+- `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
+- **Breaking** `program`'s `--config-name`, `--config-description`, `--save-config` and per-device overrides are rejected when used with `--firmware`. When used with `--base-firmware` these, `--plugin` and `--no-plugin` are rejected unless `--config` or `--slot` is used. Previously they were ignored.
+- **Breaking** `program --base-firmware` without `--config` or `--slot` requires `--no-config`.
+- Fix: **Breaking** `console --no-echo` requires `--raw`.
+
 ## v0.5.0 - 2026-10-06
 
 - **Breaking** With a One ROM and a Lab both connected, a command that uses a device requires `--serial`. `scan`, `inspect info` and `firmware inspect` display Lab.

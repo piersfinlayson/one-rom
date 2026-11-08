@@ -9,7 +9,7 @@ OBJDUMP := $(if $(TOOLCHAIN),$(TOOLCHAIN)/arm-none-eabi-objdump,arm-none-eabi-ob
 
 MAJOR_VERSION := 0
 MINOR_VERSION := 3
-PATCH_VERSION := 2
+PATCH_VERSION := 3
 BUILD_VERSION := 0
 
 TINYUSB_DIR   := tinyusb
@@ -18,7 +18,7 @@ PICO_SDKLESS_DIR := pico-sdkless
 
 # Version of picobootx to build against.  Remove the picobootx/ directory after
 # changing this, so it is re-cloned.
-PICOBOOTX_VERSION ?= v0.6.0
+PICOBOOTX_VERSION ?= v0.7.0
 
 # Version of pico-sdkless to build against.  Remove the pico-sdkless/ directory
 # after changing this, so it is re-cloned.
@@ -27,7 +27,7 @@ PICO_SDKLESS_VERSION ?= v0.1.1
 # Commit of the One ROM tinyusb fork to build against.  A commit rather than a
 # tag, because the fork tracks a project this one does not version.  Remove the
 # tinyusb/ directory after changing this, so it is re-cloned.
-TINYUSB_COMMIT ?= 05fb334d0
+TINYUSB_COMMIT ?= ec528d6aa
 
 ORA_DIR := ../../../firmware/ora
 ORA_INCLUDE := -I$(ORA_DIR)

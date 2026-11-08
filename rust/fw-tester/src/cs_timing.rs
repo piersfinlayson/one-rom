@@ -226,12 +226,12 @@ impl Algs {
 ///
 /// The free-running address loop has to come round and re-sample before the
 /// DMA and data machines can run, which dominates the figure.
-pub const CS_REFETCH: u32 = 13;
+pub const CS_REFETCH: u32 = 14;
 
 /// Cycles from CS assertion to valid data when no control line is inside the
 /// address window, so the fetch is already in flight and CS only enables the
 /// output drivers.
-pub const CS_OUTPUT_ENABLE: u32 = 7;
+pub const CS_OUTPUT_ENABLE: u32 = 8;
 
 /// As [`CS_OUTPUT_ENABLE`], for `AlgData0` driving a 16-bit word (a
 /// `force_16_bit` slot, which ignores `/BYTE` entirely).
@@ -291,7 +291,7 @@ pub fn expected_cs_to_data(algs: Algs, mode: u8, cs_in_window: bool, drive_addr:
     match (algs.cs, algs.data, mode) {
         // Direct output: the byte is already fetched, so this is the cost of
         // turning the drivers on.  Word mode writes both lanes in one go and
-        // is a cycle or two quicker than the 8-bit path.
+        // is quicker than the 8-bit path.
         (CsAlg::Cs0, DataAlg::Data0, 16) => CS_OUTPUT_ENABLE_WORD,
         (CsAlg::Cs1, DataAlg::Data0, 16) => CS_OUTPUT_ENABLE_WORD,
         (CsAlg::Cs2, DataAlg::Data0, 16) => CS_OUTPUT_ENABLE_WORD,
@@ -317,7 +317,7 @@ pub fn expected_cs_to_data(algs: Algs, mode: u8, cs_in_window: bool, drive_addr:
 /// The address loop is a handful of cycles long and free-running, so where CS
 /// assertion lands within it shifts the latency by up to a full period.  A
 /// cycle count only counts as sufficient if it serves correctly at every phase;
-/// checking one phase understates the requirement (measurably — 11 against 13
+/// checking one phase understates the requirement (measurably — 11 against 14
 /// on a 2364).
 ///
 /// A read cycle's own length is not a multiple of the loop period, so where the

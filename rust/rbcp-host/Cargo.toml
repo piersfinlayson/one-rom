@@ -1,0 +1,18 @@
+[package]
+name = "onerom-rbcp-host"
+version = "0.1.0"
+edition = "2024"
+# Workspace-internal: used by One ROM Lab and onerom-rbcp-tester.
+publish = false
+authors = ["Piers Finlayson <piers@piers.rocks>"]
+license = "MIT"
+description = "RBCP host for talking to a One ROM over its ROM socket"
+repository = "https://github.com/piersfinlayson/one-rom"
+homepage = "https://onerom.org"
+keywords = ["retro", "rom", "embedded", "no_std"]
+categories = ["embedded", "hardware-support", "no-std"]
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -30,13 +30,32 @@
 
 #define VERSION_MAJOR 0u
 #define VERSION_MINOR 1u
-#define VERSION_PATCH 0u
+#define VERSION_PATCH 1u
 
-ORA_DEFINE_USER_PLUGIN(
-    ext_flash_main,
-    VERSION_MAJOR, VERSION_MINOR, VERSION_PATCH, 0,
-    0, 8, 0         // Firmware 0.8.0 first shipped the FLASH_DEVINFO constants
+void ext_flash_main(
+    ora_lookup_fn_t ora_lookup_fn,
+    ora_plugin_type_t plugin_type,
+    const ora_entry_args_t *entry_args
 );
+
+// ext_flash_main() yields wherever it waits.
+ORA_SECTION(".plugin_header")
+const ora_plugin_header_t ora_plugin_header = {
+    .magic = ORA_PLUGIN_MAGIC,
+    .api_version = ORA_PLUGIN_VERSION_1,
+    .major_version = VERSION_MAJOR,
+    .minor_version = VERSION_MINOR,
+    .patch_version = VERSION_PATCH,
+    .build_version = 0,
+    .entry = ext_flash_main,
+    .plugin_type = ORA_PLUGIN_TYPE_USER,
+    .sam_usage = 255,
+    .properties1 = ORA_PROPERTY1_SUPPORTS_YIELD,
+    // Firmware 0.8.0 first shipped the FLASH_DEVINFO constants
+    .min_fw_major_version = 0,
+    .min_fw_minor_version = 8,
+    .min_fw_patch_version = 0,
+};
 
 // The size of an L board's external flash, from the FLASH_DEVINFO size field
 // One ROM writes for it.  The bootrom reads a size field n as 4KB << n.

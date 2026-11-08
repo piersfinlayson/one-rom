@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
+use onerom_app::ReadBack;
 #[allow(unused_imports)]
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::Variant as McuVariant;
@@ -20,6 +21,7 @@ use crate::analyse::device::{
     stop_device,
 };
 use crate::analyse::file::{fw_file_chooser, load_file};
+use crate::analyse::read_back::{read_back_result, use_in_create};
 use crate::analyse::{Analyse, Source};
 use crate::app::AppMessage;
 use crate::device::BoardDetails;
@@ -55,6 +57,10 @@ pub enum Message {
     StopDevice,
     RunDevice,
     DeviceRebootComplete(Result<(), String>),
+
+    // Read the file or device back and pass the config to Create
+    UseInCreate,
+    ReadBackResult(Result<ReadBack, String>),
 }
 
 impl std::fmt::Display for Message {
@@ -76,6 +82,8 @@ impl std::fmt::Display for Message {
             Message::StopDevice => write!(f, "StopDevice"),
             Message::RunDevice => write!(f, "RunDevice"),
             Message::DeviceRebootComplete(_) => write!(f, "DeviceRebootComplete(...)"),
+            Message::UseInCreate => write!(f, "UseInCreate"),
+            Message::ReadBackResult(_) => write!(f, "ReadBackResult(...)"),
         }
     }
 }
@@ -83,7 +91,7 @@ impl std::fmt::Display for Message {
 /// Analyse Message handler
 pub fn message(
     analyse: &mut Analyse,
-    _runtime_info: &RuntimeInfo,
+    runtime_info: &RuntimeInfo,
     msg: Message,
 ) -> Task<AppMessage> {
     match msg {
@@ -170,5 +178,8 @@ pub fn message(
         Message::StopDevice => stop_device(analyse),
         Message::RunDevice => run_device(analyse),
         Message::DeviceRebootComplete(result) => device_reboot_complete(analyse, result),
+
+        Message::UseInCreate => use_in_create(analyse),
+        Message::ReadBackResult(result) => read_back_result(analyse, runtime_info, result),
     }
 }

@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.3] - unreleased
+
+Requires firmware 0.8.1.
+
+Reserves its USB DPRAM in the plugin header and reduces its usage by 128 bytes.
+
+Fix: a host request to halt an unused endpoint no longer reads past the end of tinyusb's endpoint table.
+
+With firmware 0.8.1, a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the serial port.  The USB plugin then sends only that plugin's output without any banner.  Logging can instead be retrieved using picoboot.
+
+USB DPRAM can be read over picobootx.
+
+A user plugin can disable/enable both of this plugin's serial ports 1 and 2 and set their descriptions in its peer data block.  The USB plugin's own peer data block contains the serial ports it supports.  See `usb_peer.h`.
+
+REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
+
+If the reboot fails, REBOOT2 now returns an error instead of success.
+
+The GPIO query reply includes all uses of every GPIO.  This feature has its own capability bit, and the extension version is now 1.2.
+
+Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
+
 ## [0.3.2] - 2026-10-06
 
 Windows Device Manager no longer shows an exclamation mark against One ROM.  The first USB interface, which exists for picotool, now has WinUSB bound to it.

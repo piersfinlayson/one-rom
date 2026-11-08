@@ -29,7 +29,7 @@
     "latest_app_version": {
       "description": "Latest application version available",
       "type": "string",
-      "default": "0.2.4"
+      "default": "0.2.5"
     },
     "link_urls": {
       "description": "Links used by the application within the UI",
@@ -101,7 +101,7 @@
           "default": {
             "major": 0,
             "minor": 2,
-            "patch": 4
+            "patch": 5
           }
         },
         "max_buildable_firmware_version": {
@@ -297,7 +297,7 @@
         "patch": {
           "type": "integer",
           "format": "uint16",
-          "default": 4,
+          "default": 5,
           "maximum": 65535,
           "minimum": 0
         }

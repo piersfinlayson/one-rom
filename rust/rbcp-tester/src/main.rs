@@ -16,6 +16,9 @@
 //! - `conformance` — does the device obey the RBCP specification?  One group
 //!   of scenarios per specification section, each asserting what the spec
 //!   requires rather than what this implementation happens to do.
+//! - `extensions` — does the device obey host-control's EXTENSIONS.md?
+//! - `host` — does `onerom-rbcp-host`, the host One ROM Lab uses, work
+//!   against the device?
 //! - `integration` — does a realistic application work end to end?  Whole
 //!   flows, modelled on the specification's worked example and the 6502
 //!   reference host.
@@ -48,8 +51,9 @@ use std::path::{Path, PathBuf};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_fw_emulator::{Emulator, OraResult};
+use onerom_fw_tester::min_cs_act;
 use onerom_fw_tester::pin_cache::PinCache;
-use onerom_fw_tester::timing;
+use onerom_fw_tester::{geometry, timing};
 use onerom_gen::{ChipSetConfig, Config};
 use onerom_plugin_tester::run::{Filters, Tally, suite_header};
 use onerom_plugin_tester::{ffi, harness::Plugin};
@@ -58,12 +62,18 @@ unsafe extern "C" {
     /// Clear the plugin's claims and the firmware's claim table, as a reboot
     /// does.  Declared here because only this tester's shim defines it.
     fn rbcp_host_test_reset_plugin();
+
+    /// Put the shim's metadata stand-in in front of the firmware's metadata
+    /// calls, with an array key and its elements, or remove it with a count of
+    /// 0.  Declared here because only this tester's shim defines it.
+    fn rbcp_host_test_metadata_stand_in(key: u32, elems: *const u32, count: u32);
 }
 
 mod driver;
+mod lab_host;
 mod suites;
 
-use driver::Bus;
+use driver::{Bus, CsCycles};
 
 /// Where the plugin's capture ring is placed in emulated SRAM: above the
 /// served region, aligned to the ring's own size.
@@ -91,6 +101,19 @@ pub struct Ctx {
     pub active_ram_slot: u8,
     /// Size of the device's dedicated NV storage, in bytes.
     pub nv_size: u32,
+    /// The served slot's CS monitor.
+    pub monitor: Monitor,
+}
+
+/// The served slot's CS monitor, as the firmware sets it up.
+#[derive(Debug, Clone)]
+pub struct Monitor {
+    /// The CS algorithm, from the slot's metadata, or why it isn't known.
+    pub cs: Result<min_cs_act::Cs, String>,
+    /// The minimum CS-active time in PIO cycles, where the slot has one.
+    pub min_cycles: Option<u32>,
+    /// The clock the slot runs at.
+    pub mhz: u16,
 }
 
 impl Ctx {
@@ -249,6 +272,13 @@ fn main() {
         .unwrap_or_else(|e| panic!("Failed to parse config '{config_path}': {e}"));
 
     let modes = modes_to_run(&config);
+    let monitor = monitor(&config, board, &base_dir, log_enabled)
+        .unwrap_or_else(|e| panic!("Failed to work out the chip select timing: {e}"));
+    let slot = Slot {
+        cs: cs_cycles(&monitor)
+            .unwrap_or_else(|e| panic!("Failed to work out the chip select timing: {e}")),
+        monitor,
+    };
 
     let mut tally = Tally::new();
 
@@ -273,7 +303,7 @@ fn main() {
             // once per mode the chip supports, as the PIO tester does.
             for &mode in modes {
                 let label = format!("{} [{mode}-bit]", sc.name);
-                let result = run_scenario(sc, board, &config, &base_dir, log_enabled, mode);
+                let result = run_scenario(sc, board, &config, &base_dir, log_enabled, mode, &slot);
                 tally.record(&label, sc.spec_ref, result);
             }
         }
@@ -358,6 +388,54 @@ fn native_word_size(config: &Config) -> u8 {
         .unwrap_or(8)
 }
 
+/// The served slot's CS monitor.
+fn monitor(
+    config: &Config,
+    board: Board,
+    base_dir: &Path,
+    log_enabled: bool,
+) -> Result<Monitor, String> {
+    let set = served_set(config).ok_or("config has no chip sets")?;
+    let mhz = min_cs_act::slot_sysclk_mhz(set.firmware_overrides.as_ref());
+    let cs = (|| -> Result<min_cs_act::Cs, String> {
+        let version = geometry::firmware_version(board, log_enabled)?;
+        let header = geometry::build_header(config, board, version, base_dir)?;
+        let alg = header
+            .rom_slots
+            .get(plugin_sets(config) + SEL_IMAGE as usize)
+            .and_then(|slot| slot.alg.as_ref())
+            .ok_or("the metadata doesn't have the served slot's CS configuration")?;
+        min_cs_act::Cs::from_metadata(&alg.alg_cs)
+    })();
+    Ok(Monitor {
+        cs,
+        min_cycles: min_cs_act::slot_min_cs_act_ns(config, set)
+            .map(|ns| min_cs_act::min_cycles(ns, u32::from(mhz))),
+        mhz,
+    })
+}
+
+/// How long the host holds chip select each way for one read.  A served
+/// slot's minimum CS-active time can lengthen the hold past
+/// [`driver::CS_ACTIVE_CYCLES`], and the break so the CS monitor is sampling
+/// for the next read in time.
+fn cs_cycles(monitor: &Monitor) -> Result<CsCycles, String> {
+    let Some(min_cycles) = monitor.min_cycles else {
+        return Ok(CsCycles::DEFAULT);
+    };
+    let cs = monitor.cs.clone()?;
+    Ok(CsCycles {
+        active: driver::CS_ACTIVE_CYCLES.max(min_cs_act::access_cycles(cs, Some(min_cycles))),
+        inactive: min_cs_act::break_cycles(cs, Some(min_cycles)),
+    })
+}
+
+/// The served slot's bus timing.
+struct Slot {
+    cs: CsCycles,
+    monitor: Monitor,
+}
+
 /// Why the RBCP driver cannot exercise a chip type, if it cannot.
 ///
 /// A hand-maintained list keyed on the chip type, following the address
@@ -387,6 +465,7 @@ fn run_scenario(
     base_dir: &Path,
     log_enabled: bool,
     word_size: u8,
+    slot: &Slot,
 ) -> Result<Outcome, String> {
     let plugin_sets = plugin_sets(config);
     let set_idx = plugin_sets + SEL_IMAGE as usize;
@@ -398,6 +477,11 @@ fn run_scenario(
     if let Some(reason) = rbcp_skip_reason(chip_type) {
         return Ok(Outcome::Skip(format!("{} — {reason}", chip_type.name())));
     }
+
+    // OTP is process-global in the emulator and survives a reboot, so what one
+    // scenario wrote would still be there for the next.  Cleared before boot
+    // as the firmware reads OTP while booting.
+    Emulator::clear_otp();
 
     Emulator::set_logging(log_enabled);
     Emulator::set_rp_variant(board.rp_variant());
@@ -427,6 +511,17 @@ fn run_scenario(
     let withheld = suites::withheld_api(sc.name);
     // SAFETY: the slice outlives the call, which copies what it needs.
     unsafe { ffi::ora_host_test_withhold_api(withheld.as_ptr(), withheld.len() as u32) };
+
+    // Set for every scenario for the same reason.
+    let elems = suites::metadata_stand_in(sc.name);
+    // SAFETY: the slice outlives the call, which copies it.
+    unsafe {
+        rbcp_host_test_metadata_stand_in(
+            suites::extensions::device_info::STAND_IN_KEY,
+            elems.as_ptr(),
+            elems.len() as u32,
+        )
+    };
 
     // SAFETY: `emu` outlives `plugin`, which is dropped at the end of this fn.
     // Before the plugin starts, so every scenario claims from a clean table.
@@ -484,10 +579,13 @@ fn run_scenario(
         ram_slot_count: emu.get_ram_slot_count(),
         active_ram_slot,
         nv_size,
+        monitor: slot.monitor.clone(),
     };
 
     let cache = PinCache::build(chip_type, chip, board);
-    let mut bus = Bus::new(&emu, &plugin, &cache, chip_type, unobserved, word_size);
+    let mut bus = Bus::new(
+        &emu, &plugin, &cache, chip_type, unobserved, word_size, slot.cs,
+    );
 
     // Settle before the first access, as the other testers do.
     emu.step_cycles(timing::CYCLES_BEFORE_START);

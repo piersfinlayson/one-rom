@@ -93,6 +93,8 @@ async fn refused_otp() {
         manufacturer: MANUFACTURER.to_string(),
         date: RequestDate::Given("20260101".to_string()),
         signer: KEY_ID,
+        revision: None,
+        batch: None,
         force: false,
     };
     let prepared = prepare(&mut otp, &request).await.unwrap();

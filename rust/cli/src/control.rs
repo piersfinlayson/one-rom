@@ -267,7 +267,7 @@ pub async fn cmd_reboot(
         println!("Rebooting device...");
     }
     let serial = device.serial.clone();
-    reboot(device, &reboot_args).await?;
+    reboot(device, &reboot_args, options).await?;
     println!("Rebooted device into {} mode", reboot_args.mode);
 
     if options.verbose {
@@ -343,6 +343,10 @@ fn describe_use(gpio_use: GpioUse, standby: bool) -> (&'static str, &'static str
             "Driving it will disturb whatever the board uses it for.",
         ),
         GpioUse::InputForced => ("ROM serving ignores it", ""),
+        GpioUse::Plugin => (
+            "a plugin has claimed it",
+            "Driving it will disturb whatever the plugin uses it for.",
+        ),
     }
 }
 
@@ -478,7 +482,7 @@ async fn vet_gpio(options: &Options, req: &DriveRequest<'_>) -> Result<Option<Ca
             return Err(gpio_in_use(&name, gpio_use, standby, req.force_hint));
         }
         let (doing, consequence) = describe_use(gpio_use, standby);
-        println!("Warning: {name} is in use by One ROM: {doing}.");
+        println!("Warning: {name} is in use: {doing}.");
         println!("  {consequence}");
     }
 
@@ -1057,7 +1061,7 @@ async fn ensure_stopped(options: &mut Options) -> Result<(), Error> {
         println!("Device is running, rebooting into stopped mode...");
     }
     let serial = device.serial.clone();
-    reboot(device, &RebootArgs::stopped(false, false)).await?;
+    reboot(device, &RebootArgs::stopped(false, false), options).await?;
 
     let selector = serial.as_deref();
     let new_device = select_device(selector, options).await?;
@@ -1093,7 +1097,7 @@ async fn reboot_after_erase(
     let device = options.device.as_ref().unwrap();
 
     let reboot_args = args.into();
-    reboot(device, &reboot_args).await?;
+    reboot(device, &reboot_args, options).await?;
     if !reboot_args.is_none() {
         println!("Rebooted device into {} mode", reboot_args.mode);
     }
@@ -1202,7 +1206,7 @@ mod tests {
 
     /// The ROM slots an image of 2364 `sets` for `board` has using `pin`.
     async fn slots_using(board: Board, sets: &[&str], pin: &str) -> Vec<usize> {
-        let image = image_2364_sets(board, sets, &[]);
+        let image = image_2364_sets(board, sets, &[]).await;
         let image = onerom_cli::image::parse_firmware(&image).await;
         let pin = parse_pin(pin).unwrap().resolve(Some(&board)).unwrap();
         onerom_cli::image::slots_using(&image, pin.gpio())
@@ -1243,7 +1247,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_reset_pin_a_slot_uses_is_refused() {
-        let image = image_2364_sets(board(), &["single", "banked", "banked"], &[]);
+        let image = image_2364_sets(board(), &["single", "banked", "banked"], &[]).await;
         let image = onerom_cli::image::parse_firmware(&image).await;
         let pin = |name: &str| parse_pin(name).unwrap().resolve(Some(&board())).unwrap();
 
@@ -1336,5 +1340,6 @@ mod tests {
         assert!(needs_force(GpioUse::ServingRead));
         assert!(needs_force(GpioUse::ServingDriven));
         assert!(needs_force(GpioUse::SystemPin));
+        assert!(needs_force(GpioUse::Plugin));
     }
 }

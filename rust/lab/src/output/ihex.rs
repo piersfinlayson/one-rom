@@ -29,10 +29,6 @@
 //!   DD   data bytes
 //!   CC   checksum: two's complement of (LL + AH + AL + TT + sum(DD))
 //! ```
-//!
-//! Control lines are asserted and deasserted around each 16-byte read so
-//! that the executor can be yielded between records without holding a mutable
-//! borrow across an `.await` point.
 
 use embassy_time::Timer;
 
@@ -70,6 +66,7 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
     let mut addr = start;
     let mut current_upper: Option<u16> = None;
 
+    reader.begin_lines();
     while addr < end {
         let chunk_len = (end - addr).min(16);
         let mut chunk = [0u8; 16];
@@ -82,12 +79,7 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
             current_upper = Some(upper);
         }
 
-        // Assert control lines, read one record's worth of bytes, deassert.
-        reader.begin_read(8);
-        for (i, byte) in chunk.iter_mut().enumerate().take(chunk_len) {
-            *byte = reader.read_byte_at(addr + i, 8);
-        }
-        reader.end_read();
+        reader.read_line(addr, &mut chunk[..chunk_len]);
 
         send_data_record(addr as u32, &chunk[..chunk_len])?;
 
@@ -96,6 +88,7 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
         // Yield to the executor so the USB task can send buffered data.
         Timer::after_millis(1).await;
     }
+    reader.end_lines();
 
     send_eof_record()
 }

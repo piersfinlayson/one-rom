@@ -66,9 +66,13 @@ void disable_swd(void);
 void setup_status_led(void);
 void blink_pattern(uint32_t on_time, uint32_t off_time, uint8_t repeats);
 void enter_bootloader(void);
+uint8_t rom_reboot(uint8_t bootloader, uint32_t delay_ms);
 void platform_logging(void);
 void setup_usb_controller(void);
+void usb_controller_out_of_reset(void);
+void usb_controller_reset_and_release(void);
 void setup_usb_pll(void);
+void setup_clk_peri(void);
 void setup_timer0(void);
 void setup_adc(void);
 void setup_status_led(void);
@@ -79,7 +83,10 @@ uint32_t otp_read_raw(uint16_t row);
 void otp_lock(void);
 
 // otp.c
+uint8_t otp_commissioning_value(uint16_t key, uint16_t *row_out, uint16_t *len_out);
+uint8_t otp_commissioning_instance(uint16_t *row_out, uint16_t *len_out);
 uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out);
+uint8_t otp_chip_id_byte(uint32_t index, uint8_t *byte_out);
 uint8_t otp_board_mismatch(const char *hw_rev);
 void otp_flash_sizes(onerom_flash_size_t *cs0, onerom_flash_size_t *cs1);
 uint32_t flash_size_bytes(onerom_flash_size_t size);
@@ -94,6 +101,24 @@ void pio_disable_sms(uint8_t block, uint8_t sms);
 
 // Run instr on a state machine at once, whether or not it is enabled.
 void pio_sm_exec(uint8_t block, uint8_t sm, uint16_t instr);
+
+void pio_set_gpiobase(uint8_t block, ora_pio_gpiobase_t gpio_base);
+void pio_gpio_to_block(uint8_t gpio, uint8_t block);
+
+// plugin.c
+
+// The plugin call, declared here because the firmware also calls it.
+ora_result_t ora_claim_pio(uint32_t *block,
+                           uint32_t *sm,
+                           uint32_t *first_instr,
+                           uint32_t num_instrs,
+                           ora_pio_gpiobase_t gpio_base,
+                           uint32_t flags);
+
+void pio_release(uint8_t block, uint8_t sm, uint8_t first_instr, uint8_t num_instrs);
+uint8_t addr_monitor_pio_record(uint8_t addr_monitor_pio);
+uint8_t usb_reserve(const ora_plugin_header_t *header, ora_plugin_type_t plugin);
+uint8_t usb_reserved_by(ora_plugin_type_t plugin);
 
 // piorom.c
 extern int piorom2(void);
@@ -127,6 +152,8 @@ ora_result_t pio_led_get(uint8_t led, ora_led_state_t *state_out);
 // report, and restore a beacon to.  Nothing is scheduled here, so this reads no
 // clock and touches no timer.
 void pio_led_boot(void);
+
+void pio_led_launch(void);
 
 // Advance every LED whose mode repeats and end any hold that has expired.
 // Called from the TIMER0 alarm 1 handler, which it re-arms for whichever LED
@@ -222,6 +249,20 @@ uint8_t check_plugin_valid(
     uint8_t index
 );
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins);
+
+const ora_plugin_header_t *system_plugin_to_start(void);
+const ora_plugin_header_t *user_plugin_to_start(void);
+uint8_t plugin_entry_flags(void);
+
+uint8_t plugin_boot_slot(uint8_t num_plugins, uint8_t *slot_out);
+uint8_t launch_usb_dpram(uint8_t entry_flags);
+const ora_entry_args_t *plugin_entry_args(
+    ora_plugin_type_t plugin_type,
+    uint8_t entry_flags
+);
+const ora_plugin_header_t *system_plugin_to_launch(void);
+const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched);
+uint8_t launch_prepare(void);
 #if defined(TEST_BUILD)
 int other_core_yield_capability_from(uint32_t this_core);
 #endif // TEST_BUILD
@@ -231,6 +272,8 @@ void irq_handler_timer0_irq_0(void);
 // TIMER0 alarm 1, which the LED engine owns.  Alarm 0 is left to plugins.
 void irq_handler_timer0_irq_1(void);
 void irq_handler_usbctrl_irq(void);
+void irq_handler_plugin(void);
+void irq_handler_io_bank0(void);
 ora_result_t ora_get_ram_slot_info(uint8_t ram_slot, uint32_t *addr_out, uint32_t *size_out, uint32_t *rom_type_out);
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out);
 uint32_t ora_get_clkref_mhz(void);

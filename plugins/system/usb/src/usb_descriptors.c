@@ -70,31 +70,88 @@ enum
   ITF_NUM_VENDOR,
   ITF_NUM_CDC,
   ITF_NUM_CDC_DATA,
+  ITF_NUM_CDC2,
+  ITF_NUM_CDC2_DATA,
   ITF_NUM_TOTAL
 };
 
-#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_VENDOR_DESC_LEN + 9)
+// 9 is the dummy interface descriptor's length.
+#define CONFIG_NO_SERIAL_PORT_TOTAL_LEN     (TUD_CONFIG_DESC_LEN + TUD_VENDOR_DESC_LEN + 9)
+#define CONFIG_ONE_SERIAL_PORT_TOTAL_LEN    (CONFIG_NO_SERIAL_PORT_TOTAL_LEN + TUD_CDC_DESC_LEN)
+#define CONFIG_TWO_SERIAL_PORTS_TOTAL_LEN   (CONFIG_ONE_SERIAL_PORT_TOTAL_LEN + TUD_CDC_DESC_LEN)
 
-uint8_t const desc_configuration[] =
+// String indices of the serial ports' descriptions.
+#define STRID_SERIAL_PORT_1 6
+#define STRID_SERIAL_PORT_2 7
+
+// Hand rolled interface descriptor for the dummy interface.  This ensures
+// picoboot gets interface 1, as required by picotool (if there's more than one
+// interface).  This MUST have bInterfaceClass of 0xFF (vendor specific),
+// bInterfaceSubClass of 0x00, and bInterfaceProtocol of 0x00, or picotool will
+// not recognise the device, even though picotool does not use this interface.
+#define DUMMY_INTERFACE_DESCRIPTOR \
+  0x09, 0x04, ITF_NUM_DUMMY, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x04
+
+// The vendor interface: interface number, string index, EP Out & IN address,
+// EP size.
+#define VENDOR_INTERFACE_DESCRIPTOR \
+  TUD_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, 5, EPNUM_VENDOR_OUT, 0x80 | EPNUM_VENDOR_IN, TUD_OPT_HIGH_SPEED ? 512 : 64)
+
+// A serial port: interface number, string index, EP notification address and
+// size, EP data address (out, in) and size.
+#define SERIAL_PORT_1_DESCRIPTOR \
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_SERIAL_PORT_1, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, 0x80 | EPNUM_CDC_IN, TUD_OPT_HIGH_SPEED ? 512 : 64)
+#define SERIAL_PORT_2_DESCRIPTOR \
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC2, STRID_SERIAL_PORT_2, EPNUM_CDC2_NOTIF, 8, EPNUM_CDC2_OUT, 0x80 | EPNUM_CDC2_IN, TUD_OPT_HIGH_SPEED ? 512 : 64)
+
+uint8_t const desc_configuration_no_serial_port[] =
 {
   // Config number, interface count, string index, total length, attribute, power in mA
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x80, 250),
-
-  // Hand rolled interface descriptor for the dummy interface.  This ensures
-  // picoboot gets interface 1, as required by picotool (if there's more than
-  // one interface).  This MUST have bInterfaceClass of 0xFF (vendor
-  // specific), bInterfaceSubClass of 0x00, and bInterfaceProtocol of 0x00,
-  // or picotool will not recognise the device, even though picotool does not
-  // use this interface.
-  0x09, 0x04, ITF_NUM_DUMMY, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x04,
-
-  // Interface number, string index, EP Out & IN address, EP size
-  TUD_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, 5, EPNUM_VENDOR_OUT, 0x80 | EPNUM_VENDOR_IN, TUD_OPT_HIGH_SPEED ? 512 : 64),
-
-  // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
-  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 6, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, 0x80 | EPNUM_CDC_IN, TUD_OPT_HIGH_SPEED ? 512 : 64),
-
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC, 0, CONFIG_NO_SERIAL_PORT_TOTAL_LEN, 0x80, 100),
+  DUMMY_INTERFACE_DESCRIPTOR,
+  VENDOR_INTERFACE_DESCRIPTOR,
 };
+
+// Serial port 1, or serial port 2 if serial port 1 isn't enabled.  See
+// tud_descriptor_string_cb() for its description in the second case.
+uint8_t const desc_configuration_one_serial_port[] =
+{
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_CDC2, 0, CONFIG_ONE_SERIAL_PORT_TOTAL_LEN, 0x80, 100),
+  DUMMY_INTERFACE_DESCRIPTOR,
+  VENDOR_INTERFACE_DESCRIPTOR,
+  SERIAL_PORT_1_DESCRIPTOR,
+};
+
+uint8_t const desc_configuration_two_serial_ports[] =
+{
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TWO_SERIAL_PORTS_TOTAL_LEN, 0x80, 100),
+  DUMMY_INTERFACE_DESCRIPTOR,
+  VENDOR_INTERFACE_DESCRIPTOR,
+  SERIAL_PORT_1_DESCRIPTOR,
+  SERIAL_PORT_2_DESCRIPTOR,
+};
+
+// The configurations, indexed by the number of enabled serial ports.
+static const struct {
+  uint8_t const *desc;
+  uint32_t       size;
+} configurations[] = {
+  { desc_configuration_no_serial_port,   sizeof(desc_configuration_no_serial_port) },
+  { desc_configuration_one_serial_port,  sizeof(desc_configuration_one_serial_port) },
+  { desc_configuration_two_serial_ports, sizeof(desc_configuration_two_serial_ports) },
+};
+
+static uint8_t serial_port_count(void) {
+  uint8_t count = context.serial_port_1_enabled;
+  if (context.serial_port_2 & SERIAL_PORT_2_ENABLED) {
+    count++;
+  }
+  return count;
+}
+
+static uint8_t const *configuration_desc(void) {
+  return configurations[serial_port_count()].desc;
+}
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
 // Application return pointer to descriptor
@@ -102,7 +159,7 @@ uint8_t const desc_configuration[] =
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 {
   (void) index; // for multiple configurations
-  return desc_configuration;
+  return configuration_desc();
 }
 
 //--------------------------------------------------------------------+
@@ -149,7 +206,7 @@ uint8_t const * tud_descriptor_bos_cb(void)
 // the declared length instead would be comparing a field against itself, and a
 // wrong one would still read past the end of the array.
 uint32_t onerom_usb_test_configuration_desc_size(void) {
-  return (uint32_t)sizeof(desc_configuration);
+  return configurations[serial_port_count()].size;
 }
 
 uint32_t onerom_usb_test_bos_desc_size(void) {
@@ -222,8 +279,55 @@ static char const *string_desc_arr[] =
   NULL,                          // 3: Serials will use unique ID if possible
   "One ROM, the most flexible replacement ROM for your retro system", // 4: Dummy interface
   "One ROM Control",             // 5: Vendor Interface
-  "One ROM Serial",              // 6: CDC Interface
+  USB_PEER_SERIAL_PORT_1_DESC,   // 6: Serial port 1, see tud_descriptor_string_cb()
 };
+
+#if defined(ORA_HOST_TEST)
+uint8_t usb_host_test_flash_read8(uint32_t addr);
+#define FLASH_READ8(addr) usb_host_test_flash_read8(addr)
+#else
+#define FLASH_READ8(addr) (*(const volatile uint8_t *)(uintptr_t)(addr))
+#endif
+
+// Writes the description of serial port `port` (1 or 2) to out as UTF-16 and
+// returns the number of characters.  The default description is used if the
+// user plugin's description isn't valid.  The description is read from the
+// user plugin's flash to save RAM.
+// See usb_peer.h.
+static size_t serial_port_desc(uint8_t port, uint16_t *out) {
+  const usb_peer_usbc_t *usbc = usb_peer_usbc();
+  uint32_t addr = 0;
+  const char *fallback = USB_PEER_SERIAL_PORT_1_DESC;
+  if (port == 2) {
+    fallback = USB_PEER_SERIAL_PORT_2_DESC;
+    if (usbc != NULL) {
+      addr = usbc->serial_port_2_desc;
+    }
+  } else if (usbc != NULL) {
+    addr = usbc->serial_port_1_desc;
+  }
+
+  const uint32_t start = ORA_FLASH_CS0_BASE_ADDR + ORA_USER_PLUGIN_OFFSET;
+  const uint32_t end = start + ORA_USER_PLUGIN_SIZE;
+  if ((addr >= start) && (addr < end)) {
+    for (size_t len = 0; (len <= USB_PEER_SERIAL_PORT_DESC_MAX_LEN) && ((addr + len) < end); len++) {
+      uint8_t c = FLASH_READ8(addr + len);
+      if ((c == '\0') && (len != 0)) {
+        return len;
+      }
+      if ((c < 0x20) || (c > 0x7E)) {
+        break;
+      }
+      out[len] = c;
+    }
+  }
+
+  size_t len = strlen(fallback);
+  for (size_t ii = 0; ii < len; ii++) {
+    out[ii] = (uint8_t)fallback[ii];
+  }
+  return len;
+}
 
 static uint16_t _desc_str[64 + 1];
 
@@ -250,6 +354,20 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
       }
       break;
     }
+
+    // If only serial port 2 is enabled it uses serial port 1's interfaces and
+    // string index.
+    case STRID_SERIAL_PORT_1:
+      if (context.serial_port_1_enabled) {
+        chr_count = serial_port_desc(1, &_desc_str[1]);
+      } else {
+        chr_count = serial_port_desc(2, &_desc_str[1]);
+      }
+      break;
+
+    case STRID_SERIAL_PORT_2:
+      chr_count = serial_port_desc(2, &_desc_str[1]);
+      break;
 
     default:
       // Note: the 0xEE index string is a Microsoft OS 1.0 Descriptors.

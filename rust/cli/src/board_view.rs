@@ -297,7 +297,7 @@ pub fn render_pin_header(board: &Board) -> Option<String> {
     if rp {
         out.push_str("  !!3V3!! = 3.3V-only (ADC pin, keep ≤3.3V)    5V = 5V-tolerant\n");
     }
-    out.push_str("  SEL_A = image-select bit 0 (LSB); each further letter is the next bit\n");
+    out.push_str("  SEL_A = image-select bit 0 (LSB), SEL_B = bit 1 and so on\n");
     if has_x {
         out.push_str("  X1/X2 = jumper X pins\n");
     }
@@ -459,10 +459,10 @@ pub fn render_rom_socket(board: &Board, chip: Option<ChipType>, show_gpio: bool)
                 format!(" (One ROM overhangs the {}-pin socket)", cp)
             } else if bp < cp {
                 format!(
-                    " ({}-pin socket; One ROM at pins {}–{})",
-                    cp,
+                    " (One ROM at pins {}–{} of the {}-pin socket)",
                     board_lo + 1,
-                    board_lo + bp
+                    board_lo + bp,
+                    cp
                 )
             } else {
                 String::new()
@@ -672,7 +672,7 @@ mod tests {
         // pins 3-26, and the 2764's A12 overhangs → fly-lead to X1.
         let b = Board::try_from_str("fire-24-f").unwrap();
         let s = render_rom_socket(&b, Some(ChipType::Chip2764), true);
-        assert!(s.contains("28-pin socket; One ROM at pins 3–26"));
+        assert!(s.contains("One ROM at pins 3–26 of the 28-pin socket"));
         assert!(s.contains("A12 → X1"));
         assert!(s.contains("(empty)"));
         // The socket's VCC is unreachable; One ROM's own VCC lands on the ROM's

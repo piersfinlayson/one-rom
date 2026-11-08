@@ -165,14 +165,28 @@ static void onerom_rtt_init(void) {
     ONEROM_RTT_DMB();
 }
 
+// The descriptor of channel 2 or 3, whether or not it has a buffer, or NULL for
+// any other channel.  These are the channels onerom_rtt_set_buffer() creates.
+static onerom_rtt_ring_t *onerom_rtt_created_ring(unsigned channel) {
+    switch (channel) {
+        case 2u:
+            return &_SEGGER_RTT.up[2];
+        case 3u:
+            return &_SEGGER_RTT.down[1];
+        default:
+            return 0;
+    }
+}
+
 // The descriptor for a channel, or NULL if there is none or it has no buffer.
-//
-// Channel 0 is up[0], the log.  Channel 1 is down[0], input from a probe or a
-// plugin.  Probes use the arrays directly, so channel numbers exist only here.
 static onerom_rtt_ring_t *onerom_rtt_ring(unsigned channel) {
     onerom_rtt_ring_t *ring;
 
     switch (channel) {
+        case ONEROM_RTT_CH_BOOT:
+            ring = onerom_rtt_log_moved() ? &_SEGGER_RTT.up[1]
+                                          : &_SEGGER_RTT.up[0];
+            break;
         case 0u:
             ring = &_SEGGER_RTT.up[0];
             break;
@@ -180,7 +194,11 @@ static onerom_rtt_ring_t *onerom_rtt_ring(unsigned channel) {
             ring = &_SEGGER_RTT.down[0];
             break;
         default:
-            return 0;
+            ring = onerom_rtt_created_ring(channel);
+            if (ring == 0) {
+                return 0;
+            }
+            break;
     }
     if ((ring->buffer == 0) || (ring->size == 0u)) {
         return 0;
@@ -199,6 +217,91 @@ void onerom_rtt_plugins_init(void) {
     // whatever BOOT_LOGGING is set to.
     onerom_rtt_init();
 }
+
+unsigned onerom_rtt_log_moved(void) {
+    return (_SEGGER_RTT.up[1].buffer != 0) ? 1u : 0u;
+}
+
+unsigned onerom_rtt_move_log(char *buffer, unsigned size) {
+    onerom_rtt_ring_t *ch0 = &_SEGGER_RTT.up[0];
+    onerom_rtt_ring_t *log = &_SEGGER_RTT.up[1];
+    unsigned copied;
+
+    ONEROM_RTT_CRITICAL_SECTION();
+
+    onerom_rtt_init();
+
+    if (onerom_rtt_log_moved() || (buffer == 0) || (size < 2u)) {
+        return 0u;
+    }
+
+    copied = onerom_rtt_read(0u, buffer, size - 1u);
+
+    // Drop the bytes that didn't fit.
+    ch0->read_offset = ch0->write_offset;
+
+    log->name = onerom_rtt_channel_name;
+    log->size = size;
+    log->flags = ch0->flags;
+    log->read_offset = 0u;
+    log->write_offset = copied;
+
+    // onerom_rtt_log_moved() reads up[1]'s buffer, so it is written last.
+    ONEROM_RTT_DMB();
+    log->buffer = buffer;
+
+    return 1u;
+}
+
+unsigned onerom_rtt_set_buffer(unsigned channel, char *buffer, unsigned size) {
+    onerom_rtt_ring_t *ring = onerom_rtt_created_ring(channel);
+
+    if (ring == 0) {
+        return 0u;
+    }
+    if ((buffer != 0) && (size == 0u)) {
+        return 0u;
+    }
+
+    ONEROM_RTT_CRITICAL_SECTION();
+
+    onerom_rtt_init();
+
+    // A debug probe can read the descriptor at any time so clear the buffer
+    // pointer first and set it last.
+    ring->buffer = 0;
+    ONEROM_RTT_DMB();
+    if (buffer == 0) {
+        memset(ring, 0, sizeof(*ring));
+        return 1u;
+    }
+    ring->name = onerom_rtt_channel_name;
+    ring->size = size;
+    ring->flags = ONEROM_RTT_MODE_NO_BLOCK_SKIP;
+    ring->read_offset = 0u;
+    ring->write_offset = 0u;
+    ONEROM_RTT_DMB();
+    ring->buffer = buffer;
+
+    return 1u;
+}
+
+#if defined(TEST_BUILD)
+void onerom_rtt_test_unmove_log(void) {
+    onerom_rtt_ring_t *ch0 = &_SEGGER_RTT.up[0];
+    onerom_rtt_ring_t *log = &_SEGGER_RTT.up[1];
+
+    ONEROM_RTT_CRITICAL_SECTION();
+
+    if (!onerom_rtt_log_moved()) {
+        return;
+    }
+
+    memset(log, 0, sizeof(*log));
+    ch0->write_offset = 0u;
+    ch0->read_offset = 0u;
+}
+#endif // TEST_BUILD
 
 // Bytes that can be written without overtaking the host's read position.
 //
@@ -226,6 +329,15 @@ static unsigned onerom_rtt_avail(const onerom_rtt_ring_t *ring,
     }
 
     return read_offset - write_offset - 1u;
+}
+
+// The log's ring can be in USB DPRAM, where an unaligned access faults.
+// memcpy() can make unaligned accesses.
+static void onerom_rtt_copy(volatile char *dest, const volatile char *src,
+                            unsigned len) {
+    while (len--) {
+        *dest++ = *src++;
+    }
 }
 
 unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
@@ -261,13 +373,13 @@ unsigned onerom_rtt_write(unsigned channel, const void *buf, unsigned len) {
 
     to_end = size - write_offset;
     if (to_end > len) {
-        memcpy(ring->buffer + write_offset, data, len);
+        onerom_rtt_copy(ring->buffer + write_offset, data, len);
         // The data must be complete before write_offset publishes it.
         ONEROM_RTT_DMB();
         ring->write_offset = write_offset + len;
     } else {
-        memcpy(ring->buffer + write_offset, data, to_end);
-        memcpy(ring->buffer, data + to_end, len - to_end);
+        onerom_rtt_copy(ring->buffer + write_offset, data, to_end);
+        onerom_rtt_copy(ring->buffer, data + to_end, len - to_end);
         ONEROM_RTT_DMB();
         ring->write_offset = len - to_end;
     }
@@ -335,11 +447,11 @@ unsigned onerom_rtt_read(unsigned channel, void *buf, unsigned max_len) {
 
     to_end = size - read_offset;
     if (to_end > pending) {
-        memcpy(dest, ring->buffer + read_offset, pending);
+        onerom_rtt_copy(dest, ring->buffer + read_offset, pending);
         read_offset += pending;
     } else {
-        memcpy(dest, ring->buffer + read_offset, to_end);
-        memcpy(dest + to_end, ring->buffer, pending - to_end);
+        onerom_rtt_copy(dest, ring->buffer + read_offset, to_end);
+        onerom_rtt_copy(dest + to_end, ring->buffer, pending - to_end);
         read_offset = pending - to_end;
     }
 

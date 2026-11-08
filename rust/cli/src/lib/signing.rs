@@ -13,8 +13,8 @@ use std::time::Duration;
 use ed25519_dalek::pkcs8::{ALGORITHM_OID, PrivateKeyInfoRef, SecretDocument};
 use ed25519_dalek::{Signer as _, SigningKey};
 use log::debug;
-use onerom_config::hw::Board;
-use onerom_metadata::otp::format_chip_id;
+use onerom_config::hw::BoardSize;
+use onerom_metadata::otp::{CommissioningValues, format_chip_id};
 use pkcs8::{EncryptedPrivateKeyInfoRef, pkcs5};
 use serde::Serialize;
 
@@ -46,12 +46,16 @@ struct SignRequest<'a> {
     /// CHIPID as the bootloader's USB serial number shows it.
     chip_id: String,
     board: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<BoardSize>,
     manufacturer: &'a str,
     /// The UTC commissioning date as `YYYYMMDD`.
     date: &'a str,
-    /// Sign without publicly recording the signature. A request that records
-    /// it leaves this out, as a server without the option refuses any field it
-    /// doesn't know.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch: Option<&'a str>,
+    /// Sign without publicly recording the signature.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     dry_run: bool,
 }
@@ -97,14 +101,11 @@ impl SigningServer {
         self.reply(reply).await
     }
 
-    /// The key's signature over the commissioning instance on the chip whose
-    /// CHIPID is `chip_id`. The instance holds:
-    /// - `board`
-    /// - `manufacturer`
-    /// - `date`
+    /// The key's signature over the commissioning instance holding `values`
+    /// on the chip whose CHIPID is `chip_id`.
     ///
     /// `chip_id` holds rows `0x000`–`0x003` read with ECC. Row `0x000` comes
-    /// first. `date` is the UTC commissioning date as `YYYYMMDD`.
+    /// first.
     ///
     /// The server makes the message itself. The key's ID is the instance's
     /// signer. The caller checks the signature against the message it made.
@@ -113,12 +114,9 @@ impl SigningServer {
     pub async fn sign(
         &self,
         chip_id: [u16; 4],
-        board: Board,
-        manufacturer: &str,
-        date: &str,
+        values: &CommissioningValues,
     ) -> Result<[u8; 64], Error> {
-        self.signature(chip_id, board, manufacturer, date, false)
-            .await
+        self.signature(chip_id, values, false).await
     }
 
     /// The signature [`sign`](Self::sign) returns for the same values, without
@@ -127,12 +125,9 @@ impl SigningServer {
     pub async fn sign_dry_run(
         &self,
         chip_id: [u16; 4],
-        board: Board,
-        manufacturer: &str,
-        date: &str,
+        values: &CommissioningValues,
     ) -> Result<[u8; 64], Error> {
-        self.signature(chip_id, board, manufacturer, date, true)
-            .await
+        self.signature(chip_id, values, true).await
     }
 
     /// The key's signature over the instance. `dry_run` asks the server not to
@@ -140,16 +135,17 @@ impl SigningServer {
     async fn signature(
         &self,
         chip_id: [u16; 4],
-        board: Board,
-        manufacturer: &str,
-        date: &str,
+        values: &CommissioningValues,
         dry_run: bool,
     ) -> Result<[u8; 64], Error> {
         let request = SignRequest {
             chip_id: format_chip_id(chip_id),
-            board: board.name(),
-            manufacturer,
-            date,
+            board: values.board().name(),
+            size: values.size(),
+            manufacturer: values.manufacturer(),
+            date: values.date(),
+            revision: values.revision(),
+            batch: values.batch(),
             dry_run,
         };
         let reply = self
@@ -522,27 +518,45 @@ OdKR4pVGo/fYus95rivSHhST/Q5sFz6k0g==
         ));
     }
 
-    /// A request that records has the four fields every server accepts. A
-    /// server refuses a body with a field it doesn't know.
+    /// A request omits a revision or batch it doesn't have, and `dry_run`
+    /// where it's false. A server rejects a body with an unknown
+    /// field.
     #[test]
-    fn a_sign_request_has_the_servers_four_fields() {
-        let request = |dry_run| SignRequest {
+    fn a_sign_request_has_only_the_fields_it_uses() {
+        let request = |revision, batch, dry_run| SignRequest {
             chip_id: format_chip_id(CHIP_ID),
             board: "fire-24-f",
+            size: Some(BoardSize::M),
             manufacturer: "piers.rocks",
             date: "20260926",
+            revision,
+            batch,
             dry_run,
         };
         let mut expected = serde_json::json!({
             "chip_id": "DE3F9C232F655B6B",
             "board": "fire-24-f",
+            "size": "M",
             "manufacturer": "piers.rocks",
             "date": "20260926",
         });
-        assert_eq!(serde_json::to_value(request(false)).unwrap(), expected);
+        assert_eq!(
+            serde_json::to_value(request(None, None, false)).unwrap(),
+            expected
+        );
 
         expected["dry_run"] = true.into();
-        assert_eq!(serde_json::to_value(request(true)).unwrap(), expected);
+        assert_eq!(
+            serde_json::to_value(request(None, None, true)).unwrap(),
+            expected
+        );
+
+        expected["revision"] = "A1".into();
+        expected["batch"] = "Y1-2345".into();
+        assert_eq!(
+            serde_json::to_value(request(Some("A1"), Some("Y1-2345"), true)).unwrap(),
+            expected
+        );
     }
 
     #[test]

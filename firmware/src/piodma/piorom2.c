@@ -51,8 +51,10 @@ static int setup_serving_gpios(const onerom_rom_slot_t *slot);
 static int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr);
 static int setup_serving_dma(const onerom_rom_slot_t *slot, uint32_t rom_table_addr);
 static void start_serving_pios(void);
+static void claim_serving_pios(const onerom_rom_slot_t *slot);
 
-// The CS program is loaded first in its block.
+// The address and CS programs are each loaded first in their blocks.
+#define ADDR_PROGRAM_START  0
 #define CS_PROGRAM_START    0
 
 #if BLOCK_CS_DATA == 0
@@ -94,6 +96,7 @@ int piorom2(void) {
     }
 
     start_serving_pios();
+    claim_serving_pios(CURRENT_SLOT);
 
     // Serving is running, so record the width it runs at. Done here so that
     // a device that never serves leaves the field at its initial value.
@@ -466,7 +469,7 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     APIO_CLEAR_ALL_IRQS();
 
     // Handle the address block first
-    APIO_SET_BLOCK(BLOCK_ADDR);
+    APIO_SET_BLOCK_FROM(BLOCK_ADDR, ADDR_PROGRAM_START);
     RUNTIME->addr_pio_block_info = STORE_PIO_BLOCK_INFO(BLOCK_ADDR);
     APIO_SET_SM(SM_ADDR_READ);
     RUNTIME->addr_pio_sm_info = STORE_PIO_SM_INFO(SM_ADDR_READ);
@@ -908,6 +911,31 @@ int setup_serving_pios(const onerom_rom_slot_t *slot, uint32_t rom_table_addr) {
     APIO_END_BLOCK();
 
     return 0;
+}
+
+// Each block's per-role fields record its instruction count but not where its
+// programs start.
+STATIC_ASSERT((ADDR_PROGRAM_START == 0) && (CS_PROGRAM_START == 0),
+              "claim_serving_block() claims from instruction 0");
+
+static void claim_serving_block(uint8_t block_info, uint8_t sm_info, uint8_t gpio_base) {
+    uint8_t block = GET_PIO_BLOCK_INFO(block_info);
+
+    RUNTIME->pio_instr_claims[block] |= pio_instr_run(0, GET_PIO_BLOCK_INSTR_LEN(block_info));
+    RUNTIME->pio_block_claims |= (uint16_t)((sm_info & PIO_CLAIM_BLOCK_0_SMS)
+                                            << PIO_CLAIM_SMS_SHIFT(block));
+    if (gpio_base != 0) {
+        RUNTIME->pio_block_claims |= PIO_CLAIM_GPIOBASE_16(block);
+    }
+}
+
+// Claim the PIO state machines and instructions used for serving, so a plugin
+// can't claim them.  Called after serving starts, so it doesn't delay serving.
+static void claim_serving_pios(const onerom_rom_slot_t *slot) {
+    claim_serving_block(RUNTIME->addr_pio_block_info, RUNTIME->addr_pio_sm_info,
+                        slot->alg->alg_addr->gpio_base);
+    claim_serving_block(RUNTIME->cs_data_pio_block_info, RUNTIME->cs_data_pio_sm_info,
+                        slot->alg->alg_cs->gpio_base);
 }
 
 // SM_DATA_OUTPUT on its own sets the data pins' direction, so leaving it

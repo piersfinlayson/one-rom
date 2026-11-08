@@ -10,6 +10,7 @@ use log::{debug, error, info, trace, warn};
 use std::path::PathBuf;
 
 use onerom_config::chip::ChipType;
+use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::{Board, BoardSize, Model};
 use onerom_config::mcu::Variant as McuVariant;
 use onerom_fw::net::Release;
@@ -25,6 +26,7 @@ use crate::create::hw::{
     detect_hardware, detected_hardware_info, flash_firmware, flash_firmware_result,
 };
 use crate::device::Device;
+use crate::hw::HardwareInfo;
 use crate::studio::RuntimeInfo;
 use crate::task_from_msg;
 
@@ -41,6 +43,12 @@ pub enum Message {
     McuSelected(McuVariant),
     ReleaseSelected(Release),
     ReleaseDowloaded(Result<(), String>),
+
+    // Hardware and firmware version read back by Analyse
+    ReadBack {
+        hw_info: HardwareInfo,
+        version: FirmwareVersion,
+    },
 
     // Detect hardware button operation.
     // Information can be detected via connected device using Analyse tab
@@ -129,6 +137,10 @@ pub fn message(
                 Err(e) => warn!("Release download failed: {e}"),
             }
             Task::none()
+        }
+        Message::ReadBack { hw_info, version } => {
+            debug!("Read back v{version} for {hw_info}");
+            task_from_msg!(create.read_back_selected(runtime_info, hw_info, version))
         }
 
         // Detect hardware button operation.
@@ -233,6 +245,9 @@ impl std::fmt::Display for Message {
                 Ok(()) => write!(f, "ReleaseDowloaded(Ok)"),
                 Err(e) => write!(f, "ReleaseDowloaded(Err({e}))"),
             },
+            Message::ReadBack { hw_info, version } => {
+                write!(f, "ReadBack({hw_info}, v{version})")
+            }
 
             Message::DetectHardware => write!(f, "DetectHardware"),
             Message::DetectedHardwareInfo => write!(f, "DetectedHardwareInfo"),

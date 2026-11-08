@@ -344,13 +344,14 @@ fn x_pin_others(board: Board, gpio: u8) -> u64 {
         .fold(0, |mask, &other| mask | pin(other))
 }
 
-fn use_name(value: u8) -> String {
+pub fn use_name(value: u8) -> String {
     match value as ffi::ora_gpio_use_t {
         ffi::ora_gpio_use_t_ORA_GPIO_USE_FREE => "FREE".to_string(),
         ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ => "SERVING_READ".to_string(),
         ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN => "SERVING_DRIVEN".to_string(),
         ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM => "SYSTEM".to_string(),
         ffi::ora_gpio_use_t_ORA_GPIO_USE_INPUT_FORCED => "INPUT_FORCED".to_string(),
+        ffi::ora_gpio_use_t_ORA_GPIO_USE_PLUGIN => "PLUGIN".to_string(),
         other => format!("<unknown {other}>"),
     }
 }
@@ -467,6 +468,35 @@ pub fn test_gpio_use(
         if (info.gpio_use as usize) < counts.len() {
             counts[info.gpio_use as usize] += 1;
         }
+
+        // Every use that applies, as ora_gpio_info_t::uses reports them.
+        let own = if serving.driven & bit != 0 {
+            Some(ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN)
+        } else if serving.selects & bit != 0 {
+            Some(ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ)
+        } else if serving.forced & bit != 0 {
+            Some(ffi::ora_gpio_use_t_ORA_GPIO_USE_INPUT_FORCED)
+        } else if serving.read & bit != 0 {
+            Some(ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ)
+        } else {
+            None
+        };
+        let mut uses = own.map_or(0u32, |u| 1 << u);
+        if system & bit != 0 {
+            uses |= 1 << ffi::ora_gpio_use_t_ORA_GPIO_USE_SYSTEM;
+        }
+        if x_pin_use & serving.driven != 0 {
+            uses |= 1 << ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_DRIVEN;
+        }
+        if x_pin_use & !serving.driven != 0 {
+            uses |= 1 << ffi::ora_gpio_use_t_ORA_GPIO_USE_SERVING_READ;
+        }
+        if info.uses != uses {
+            errors.push(format!(
+                "gpio {gpio}: uses 0x{:02X} expected 0x{uses:02X}",
+                info.uses
+            ));
+        }
     }
 
     // An out-of-range GPIO is rejected rather than silently classified, which
@@ -490,6 +520,16 @@ pub fn test_gpio_use(
         errors.push(format!(
             "short query: wrote {} bytes and touched level={} is_output={}",
             info.size, info.level, info.is_output
+        ));
+    }
+    // A caller built before uses was added passes 4 bytes and gets no uses.
+    let (result, info) = emu.gpio_query_sized(0, 4);
+    if !result.is_ok() {
+        errors.push(format!("4-byte query: expected OK, got {result:?}"));
+    } else if info.size != 4 || info.uses != 0xFFFF_FFFF {
+        errors.push(format!(
+            "4-byte query: wrote {} bytes and set uses to 0x{:08X}",
+            info.size, info.uses
         ));
     }
     let (result, _) = emu.gpio_query_sized(0, 0);
@@ -544,7 +584,7 @@ fn note(errors: &mut Vec<String>, what: &str, got: OraResult, want: OraResult) {
 /// Which GPIO is free, read or driven depends on the board and the slot under
 /// test, so every pin these tests touch is chosen from the firmware's own
 /// classification rather than named here.
-fn first_gpio_with_use(
+pub fn first_gpio_with_use(
     emu: &Emulator,
     max_gpios: u8,
     want: ffi::ora_gpio_use_t,
@@ -903,4 +943,54 @@ pub fn test_is_pin_output(emu: &Emulator, board: Board) -> Result<(), String> {
     } else {
         Err(errors.join("; "))
     }
+}
+
+/// The USB plugin sends bits 0 to 7 of `ora_gpio_info_t::uses` to the host in
+/// one byte of its GPIO query entry.  An `ora_gpio_use_t` value above 7 fails
+/// here, before a host silently loses it.  See `onerom_gpio_entry_t` in
+/// `plugins/system/usb/include/usb_custom_pbx.h`.
+///
+/// The enum is read from `firmware/ora/api.h`, as `tests/lookup.rs` reads
+/// `api_id_t`, so a new value is checked without a change here.
+pub fn test_gpio_uses_fit_usb_entry(base_dir: &Path) -> Result<(), String> {
+    let path = base_dir.join("firmware/ora/api.h");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    let mut uses = Vec::new();
+    for line in text.lines().map(str::trim_start) {
+        if !line.starts_with("ORA_GPIO_USE_") {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim().trim_end_matches(',');
+        let value: u32 = value
+            .parse()
+            .map_err(|e| format!("{}: value {value:?}: {e}", name.trim()))?;
+        uses.push((name.trim().to_string(), value));
+    }
+
+    // A header that parsed to nothing would pass silently.
+    if uses.is_empty() {
+        return Err(format!(
+            "no ORA_GPIO_USE_* values found in {}",
+            path.display()
+        ));
+    }
+    let over: Vec<String> = uses
+        .iter()
+        .filter(|(_, v)| *v > 7)
+        .map(|(n, v)| format!("{n} = {v}"))
+        .collect();
+    if !over.is_empty() {
+        return Err(format!(
+            "the USB plugin's GPIO query entry holds uses 0 to 7, and these are higher: {}",
+            over.join(", ")
+        ));
+    }
+    let highest = uses.iter().map(|(_, v)| *v).max().unwrap_or(0);
+    println!("  {} GPIO uses, the highest {highest}", uses.len());
+    Ok(())
 }

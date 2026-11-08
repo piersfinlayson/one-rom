@@ -64,6 +64,11 @@ pub fn board_view(view: &str) -> String {
     format!("onerom board {view} --board <BOARD>")
 }
 
+/// List the firmware releases for `board`.
+pub fn firmware_releases(board: &str) -> String {
+    format!("onerom firmware releases --board {board}")
+}
+
 /// Latch `pin` low and leave it there.
 pub fn latch_pin_low(pin: Pin) -> String {
     format!("onerom control pin --pin {pin} --state low")

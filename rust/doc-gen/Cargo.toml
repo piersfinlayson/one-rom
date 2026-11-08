@@ -10,7 +10,7 @@ publish = false
 default-run = "doc-gen"
 authors = ["Piers Finlayson <piers@piers.rocks>"]
 license = "MIT"
-description = "One ROM documentation checker - keeps values quoted in docs/ in step with their source"
+description = "One ROM documentation checker - keeps values quoted in docs/ and onerom-config/README.md in step with their source"
 repository = "https://github.com/piersfinlayson/one-rom"
 homepage = "https://onerom.org"
 keywords = ["retro", "rom", "documentation"]
@@ -29,6 +29,7 @@ name = "doc-assemble"
 path = "src/assemble/main.rs"
 
 [dependencies]
+onerom-gen = { workspace = true }
 onerom-metadata = { workspace = true }
 
 toml = "1.1"

@@ -16,7 +16,7 @@ use onerom_lab_parser::LabParser;
 use onerom_metadata::otp::CommissioningArea;
 use onerom_metadata::{
     MaybeKnown, OTP_NUM_GPIOS_ROW, OneromBoardSize, USB_BOOTLOADER_PID, USB_BOOTLOADER_VID,
-    USB_PLUGIN_PID, USB_PLUGIN_VID,
+    USB_DPRAM_BASE_ADDR, USB_DPRAM_SIZE, USB_PLUGIN_PID, USB_PLUGIN_VID,
 };
 use picoboot::cmd::PicobootStatus;
 use picoboot::{
@@ -26,7 +26,7 @@ use picoboot::{
 use std::time::Duration;
 
 use crate::Error;
-use crate::device::board_size;
+use crate::device::{board_size, matches_serial, select_device_by_chip_id};
 use crate::otp::{Commissioning, PicobootOtp, read_otp_board_size};
 use crate::picobootx::LedQueryArgs;
 pub use crate::picobootx::{
@@ -36,8 +36,8 @@ use crate::picobootx::{
     GpioQueryArgs, ONEROM_CAPS_LEN, ONEROM_CMD_ARGS_LEN, ONEROM_CMD_GET_CAPS,
     ONEROM_CMD_GPIO_QUERY, ONEROM_CMD_GPIO_SET, ONEROM_CMD_LED_QUERY, ONEROM_CMD_SET_LED,
     ONEROM_CMD_SET_STANDBY, ONEROM_FEAT_GPIO_HOLD, ONEROM_FEAT_GPIO_QUERY, ONEROM_FEAT_GPIO_SET,
-    ONEROM_FEAT_LED_ARGS, ONEROM_FEAT_STANDBY, ONEROM_LED_STATE_LEN, ONEROM_MAGIC, PICOBOOT_DIR_IN,
-    SetStandbyArgs,
+    ONEROM_FEAT_GPIO_USES, ONEROM_FEAT_LED_ARGS, ONEROM_FEAT_STANDBY, ONEROM_LED_STATE_LEN,
+    ONEROM_MAGIC, PICOBOOT_DIR_IN, SetStandbyArgs,
 };
 use crate::{Device, DeviceState, Firmware, LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET, Options};
 
@@ -115,7 +115,7 @@ impl AccessError {
     /// Every unlisted variant is "could not be read", which is the honest
     /// answer for a failure this layer has nothing more specific to say about.
     #[allow(clippy::wildcard_enum_match_arm)]
-    fn classify(e: &picoboot::Error) -> AccessFailure {
+    pub(crate) fn classify(e: &picoboot::Error) -> AccessFailure {
         match e {
             // Neither of these got as far as speaking PICOBOOT, and neither
             // can tell a rival program from a permissions problem.
@@ -149,7 +149,7 @@ impl AccessError {
 /// The USB identity is copied out of the [`Device`] rather than the device
 /// being kept: the report is written after the enumeration loop, once the scan
 /// knows whether it found anything else.
-struct SkippedDevice {
+pub(crate) struct SkippedDevice {
     error: AccessError,
     serial: Option<String>,
     vid: u16,
@@ -247,6 +247,15 @@ fn include_device(answered: bool, recognised: bool, unrecognised: bool) -> bool 
 /// on a scan target that could not be read is left out and reported after the
 /// loop, at a level that depends on whether anything else was found.
 pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> {
+    enumerate_devices_and_skipped(options)
+        .await
+        .map(|(devices, _)| devices)
+}
+
+/// [`enumerate_devices`], plus the devices that could not be read.
+pub(crate) async fn enumerate_devices_and_skipped(
+    options: &Options,
+) -> Result<(Vec<Device>, Vec<SkippedDevice>), Error> {
     // Create the list of targets to use Picoboot to scan for.  We only use
     // the default RP2350 if no custom VID/PID pairs were provided.
     let targets: Vec<Target> = options
@@ -316,7 +325,21 @@ pub async fn enumerate_devices(options: &Options) -> Result<Vec<Device>, Error> 
         log!(level, "{}", skipped.report(options.verbose));
     }
 
-    Ok(devices)
+    Ok((devices, skipped))
+}
+
+/// The error for `--serial` `pattern` where it matches no device that was read.
+pub(crate) fn serial_not_found(pattern: &str, skipped: &[SkippedDevice]) -> Error {
+    skipped
+        .iter()
+        .find_map(|device| {
+            let serial = device.serial.as_deref()?;
+            matches_serial(Some(serial), pattern).then(|| Error::DeviceInaccessible {
+                serial: serial.to_string(),
+                failure: device.error.failure,
+            })
+        })
+        .unwrap_or_else(|| Error::DeviceNotFound(pattern.to_string()))
 }
 
 pub(crate) async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot, Error> {
@@ -325,14 +348,12 @@ pub(crate) async fn get_picoboot(device: &Device, long: bool) -> Result<Picoboot
         .map_err(|e| Error::Usb(e.to_string()))
 }
 
-/// Open a picoboot handle, keeping the picoboot error rather than its text.
-///
-/// [`get_picoboot`] is the same thing for every caller that only reports the
-/// failure. The scan path needs the variant, because that is what separates
-/// "another program has this device" from "it never answered".
-async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot::Error> {
-    let mut picoboot = Picoboot::new(device.device_info.clone()).await?;
+/// Longer than an `onerom monitor log` poll holds the device.
+const OPEN_RETRY_LIMIT: Duration = Duration::from_millis(100);
 
+const OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(25);
+
+async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot::Error> {
     let timeout = if long {
         // Flash erase can take a long time, so use a longer timeout for all
         // operations when erase is requested.
@@ -342,12 +363,40 @@ async fn open_picoboot(device: &Device, long: bool) -> Result<Picoboot, picoboot
     };
     debug!("Setting PICOBOOT timeouts to {timeout:?} (long={long})");
 
-    picoboot.set_timeouts(Timeouts {
-        endpoint: timeout,
-        ..Timeouts::default()
-    });
+    retry_not_opened(
+        || async {
+            let mut picoboot = Picoboot::new(device.device_info.clone()).await?;
+            picoboot.set_timeouts(Timeouts {
+                endpoint: timeout,
+                ..Timeouts::default()
+            });
+            picoboot.connect().await?;
+            Ok(picoboot)
+        },
+        AccessError::classify,
+    )
+    .await
+}
 
-    Ok(picoboot)
+async fn retry_not_opened<T, E, F>(
+    mut attempt: impl FnMut() -> F,
+    classify: impl Fn(&E) -> AccessFailure,
+) -> Result<T, E>
+where
+    F: Future<Output = Result<T, E>>,
+{
+    let deadline = tokio::time::Instant::now() + OPEN_RETRY_LIMIT;
+    loop {
+        match attempt().await {
+            Err(e)
+                if classify(&e) == AccessFailure::NotOpened
+                    && tokio::time::Instant::now() + OPEN_RETRY_INTERVAL <= deadline =>
+            {
+                tokio::time::sleep(OPEN_RETRY_INTERVAL).await;
+            }
+            result => return result,
+        }
+    }
 }
 
 /// RP2350 chip identity and package variant, read from a device via GET_INFO
@@ -425,7 +474,7 @@ pub async fn read_chip_info(pb: &mut Picoboot) -> Result<ChipInfo, Error> {
     let count = if resp.len() >= 4 { word(0) as usize } else { 0 };
     if count < 3 || resp.len() < (count + 1) * 4 {
         return Err(Error::Usb(format!(
-            "GET_INFO CHIP_INFO returned {} bytes with count {count}; too short",
+            "GET_INFO CHIP_INFO response is too short at {} bytes with count {count}",
             resp.len()
         )));
     }
@@ -477,26 +526,9 @@ pub async fn read_device_info(device: &mut Device) -> Result<(), AccessError> {
     debug!("Reading {FLASH_READ_SIZE_KB}KB from {FLASH_BASE:#010x} on {device}");
 
     // Parse the device's flash first, to establish its state and recognition.
-    let mut picoboot = open_picoboot(device, false)
+    let picoboot = open_picoboot(device, false)
         .await
         .map_err(AccessError::from_picoboot)?;
-
-    // Connect and reset here rather than leaving both to PicobootReader::new,
-    // which reports a string. The picoboot error variant is the only thing
-    // that separates a device another program is holding from one that opened
-    // and then said nothing, and a string cannot be matched on. The reader
-    // does its own connect and reset afterwards - the connect is a no-op on an
-    // already-connected handle, and the second reset costs one control
-    // transfer on a path that already opens the device twice.
-    {
-        let conn = picoboot
-            .connect()
-            .await
-            .map_err(AccessError::from_picoboot)?;
-        conn.reset_interface()
-            .await
-            .map_err(AccessError::from_picoboot)?;
-    }
 
     let firmware = {
         let mut reader = PicobootReader::new(picoboot)
@@ -690,7 +722,7 @@ impl RebootArgs {
 }
 
 /// Reboot the chosen One ROM
-pub async fn reboot(device: &Device, args: &RebootArgs) -> Result<(), Error> {
+pub async fn reboot(device: &Device, args: &RebootArgs, options: &Options) -> Result<(), Error> {
     // Check we can actually reboot into running mode if requested
     if args.mode == RebootMode::Running && args.check_usb_can_run && !device.usb_can_run() {
         return Err(Error::NoRebootIntoRunning(device.to_string()));
@@ -708,16 +740,46 @@ pub async fn reboot(device: &Device, args: &RebootArgs) -> Result<(), Error> {
 
     const REBOOT_TIMER: Duration = Duration::from_millis(10);
     debug!("Rebooting device {device} with type {reboot_type:?} and timer {REBOOT_TIMER:?}");
-    picoboot
-        .reboot(reboot_type, REBOOT_TIMER)
-        .await
-        .map_err(|e| Error::Usb(e.to_string()))?;
-
-    if !args.fast {
-        pause_reenumeration().await;
+    match picoboot.reboot(reboot_type, REBOOT_TIMER).await {
+        Ok(()) => {
+            if !args.fast {
+                pause_reenumeration().await;
+            }
+            Ok(())
+        }
+        // One ROM can reset before the host reads its acknowledgement, so the
+        // device is rescanned to check it reached the requested mode.
+        // Once the device has gone, macOS fails either the read or the claim
+        // of its endpoint.
+        Err(
+            e @ (picoboot::Error::UsbReadBulkFailure(..)
+            | picoboot::Error::UsbInEndpointClaimFailure(..)),
+        ) => {
+            debug!("Reboot acknowledgement not read, rescanning: {e}");
+            pause_reenumeration().await;
+            match select_device_by_chip_id(device.chip_id, options).await {
+                Ok(found) if rebooted_into(args.mode, found.state) => Ok(()),
+                Ok(found) => {
+                    debug!("Device is {} after reboot", found.state);
+                    Err(Error::Usb(e.to_string()))
+                }
+                Err(rescan) => {
+                    debug!("Device not found after reboot: {rescan}");
+                    Err(Error::Usb(e.to_string()))
+                }
+            }
+        }
+        Err(e) => Err(Error::Usb(e.to_string())),
     }
+}
 
-    Ok(())
+/// Whether a device found in `state` has rebooted into `mode`.
+fn rebooted_into(mode: RebootMode, state: DeviceState) -> bool {
+    match mode {
+        RebootMode::Stopped { .. } => state == DeviceState::Stopped,
+        RebootMode::Running => state != DeviceState::Stopped,
+        RebootMode::None => false,
+    }
 }
 
 enum MemoryType {
@@ -731,6 +793,8 @@ enum MemoryType {
     /// Virtual One ROM addresses that are read write at all times when One
     /// ROM is running
     VirtualRw,
+    /// Readable when One ROM is running, never writeable
+    RunningRo,
 }
 
 // A valid One ROM MCU memory region
@@ -769,6 +833,12 @@ const OTHER_REGIONS: &[MemoryRegion] = &[
         LIVE_ROM_BASE,
         LIVE_ROM_MAX_OFFSET,
         MemoryType::VirtualRw,
+    ),
+    MemoryRegion::new(
+        "USB DPRAM",
+        USB_DPRAM_BASE_ADDR,
+        USB_DPRAM_SIZE as u32,
+        MemoryType::RunningRo,
     ),
 ];
 
@@ -817,6 +887,15 @@ fn check_memory_range(
                         Err(Error::MemoryDeviceNotRunning)
                     }
                 }
+                MemoryType::RunningRo => {
+                    if write {
+                        Err(Error::MemoryNotWriteable)
+                    } else if device.is_running() {
+                        Ok(())
+                    } else {
+                        Err(Error::MemoryDeviceNotRunning)
+                    }
+                }
             };
         }
     }
@@ -825,9 +904,10 @@ fn check_memory_range(
 
 /// Bytes per PICOBOOT transfer in a memory read.
 ///
-/// The endpoint timeout covers a whole transfer, and a running One ROM answers
-/// at around 70KB/s, so a large read has to be split to finish one.
-const READ_CHUNK_BYTES: u32 = 32 * 1024;
+/// The endpoint timeout set in [`open_picoboot`] covers a whole transfer, so a
+/// large read is split. A running One ROM is read at about 750KB/s. 512KB
+/// transfers were no faster.
+pub(crate) const READ_CHUNK_BYTES: u32 = 32 * 1024;
 
 /// Read bytes from device memory
 pub async fn read_memory(device: &Device, address: u32, length: u32) -> Result<Vec<u8>, Error> {
@@ -857,6 +937,35 @@ pub async fn read_memory(device: &Device, address: u32, length: u32) -> Result<V
     }
 
     Ok(data)
+}
+
+/// Reads `length` bytes in one PICOBOOT transfer.
+pub(crate) async fn read_memory_on(
+    picoboot: &mut Picoboot,
+    device: &Device,
+    address: u32,
+    length: u32,
+) -> Result<Vec<u8>, Error> {
+    check_memory_range(device, address, length, false, false)?;
+
+    let data = picoboot.read(address, length).await.map_err(usb_error)?;
+    if data.len() != length as usize {
+        return Err(Error::Usb(format!(
+            "read {} of {length} bytes at {address:#010x}",
+            data.len()
+        )));
+    }
+    Ok(data)
+}
+
+pub(crate) async fn write_memory_on(
+    picoboot: &mut Picoboot,
+    device: &Device,
+    address: u32,
+    data: &[u8],
+) -> Result<(), Error> {
+    check_memory_range(device, address, data.len() as u32, true, false)?;
+    picoboot.write(address, data).await.map_err(usb_error)
 }
 
 /// Write bytes to device memory.
@@ -1454,7 +1563,7 @@ pub async fn gpio_query(
         failure => cmd_error("GPIO_QUERY", failure),
     })?;
 
-    let entries = GpioEntry::decode_all(&data)?;
+    let entries = GpioEntry::decode_all(&data, caps.has_feature(ONEROM_FEAT_GPIO_USES))?;
     if entries.len() != count as usize {
         return Err(Error::PicobootxDecode(format!(
             "GPIO_QUERY returned {} entries for GPIO{first_gpio}, expected {count}",
@@ -1488,6 +1597,23 @@ mod tests {
         assert_eq!(package(Some(0), Some(Rp235xB)), Some(Rp235xB));
         assert_eq!(package(None, Some(Rp235xA)), Some(Rp235xA));
         assert_eq!(package(None, None), None);
+    }
+
+    /// Only a stopped device has rebooted into stopped mode, and any other
+    /// into running mode.
+    #[test]
+    fn a_device_that_is_not_stopped_has_rebooted_into_running() {
+        use DeviceState::{Limp, Running, Stopped, Unknown};
+        for state in [Running, Limp, Unknown] {
+            assert!(rebooted_into(RebootMode::Running, state), "{state}");
+            assert!(
+                !rebooted_into(RebootMode::Stopped { msd: false }, state),
+                "{state}"
+            );
+        }
+        assert!(!rebooted_into(RebootMode::Running, Stopped));
+        assert!(rebooted_into(RebootMode::Stopped { msd: true }, Stopped));
+        assert!(!rebooted_into(RebootMode::None, Running));
     }
 
     /// A device that could not be read, with everything but the class fixed,
@@ -1542,6 +1668,53 @@ mod tests {
             AccessError::unreadable("no words of its own".to_string()).failure,
             AccessFailure::Unreadable
         );
+    }
+
+    async fn retry(
+        failure: AccessFailure,
+        opens_on: Option<u32>,
+    ) -> (Result<(), u32>, u32, Duration) {
+        let start = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let result = retry_not_opened(
+            || {
+                attempts += 1;
+                std::future::ready(if Some(attempts) == opens_on {
+                    Ok(())
+                } else {
+                    Err(attempts)
+                })
+            },
+            |_| failure,
+        )
+        .await;
+        (result, attempts, start.elapsed())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_device_that_would_not_open_is_retried_until_it_opens() {
+        let (result, attempts, elapsed) = retry(AccessFailure::NotOpened, Some(3)).await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(attempts, 3);
+        assert_eq!(elapsed, 2 * OPEN_RETRY_INTERVAL);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_device_that_stays_unopened_reports_the_last_failure() {
+        let (result, attempts, elapsed) = retry(AccessFailure::NotOpened, None).await;
+        let retries =
+            u32::try_from(OPEN_RETRY_LIMIT.as_millis() / OPEN_RETRY_INTERVAL.as_millis()).unwrap();
+        assert_eq!(attempts, retries + 1);
+        assert_eq!(result, Err(attempts));
+        assert_eq!(elapsed, OPEN_RETRY_LIMIT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn other_failures_are_not_retried() {
+        let (result, attempts, elapsed) = retry(AccessFailure::Unreadable, Some(2)).await;
+        assert_eq!(result, Err(1));
+        assert_eq!(attempts, 1);
+        assert_eq!(elapsed, Duration::ZERO);
     }
 
     #[test]
@@ -1613,6 +1786,35 @@ mod tests {
         assert_eq!(skip_level(false), Level::Warn);
         // A One ROM was listed, so it is a note.
         assert_eq!(skip_level(true), Level::Info);
+    }
+
+    #[test]
+    fn a_serial_matching_a_skipped_device_is_inaccessible() {
+        let skipped = [
+            skipped(AccessFailure::Unreadable, None),
+            skipped(AccessFailure::NotOpened, Some("E7E47917A0C2B0CE")),
+        ];
+        // With a wildcard, the error contains the device's serial.
+        for pattern in ["E7E47917A0C2B0CE", "e7e4*"] {
+            assert!(matches!(
+                serial_not_found(pattern, &skipped),
+                Error::DeviceInaccessible { serial, failure: AccessFailure::NotOpened }
+                    if serial == "E7E47917A0C2B0CE"
+            ));
+        }
+    }
+
+    #[test]
+    fn a_serial_matching_no_skipped_device_is_not_found() {
+        let skipped = [skipped(AccessFailure::NotOpened, Some("E7E47917A0C2B0CE"))];
+        assert!(matches!(
+            serial_not_found("62CD9AE3C0771A7E", &skipped),
+            Error::DeviceNotFound(pattern) if pattern == "62CD9AE3C0771A7E"
+        ));
+        assert!(matches!(
+            serial_not_found("62CD9AE3C0771A7E", &[]),
+            Error::DeviceNotFound(_)
+        ));
     }
 
     #[test]

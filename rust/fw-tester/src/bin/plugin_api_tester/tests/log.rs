@@ -37,6 +37,7 @@ unsafe extern "C" {
     fn onerom_rtt_write(channel: c_uint, buf: *const c_void, len: c_uint) -> c_uint;
     fn onerom_rtt_read(channel: c_uint, buf: *mut c_void, max_len: c_uint) -> c_uint;
     fn onerom_rtt_set_name(channel: c_uint, name: *const c_char) -> c_uint;
+    fn onerom_rtt_set_buffer(channel: c_uint, buffer: *mut c_char, size: c_uint) -> c_uint;
     fn onerom_rtt_query(
         channel: c_uint,
         size_out: *mut c_uint,
@@ -48,9 +49,9 @@ unsafe extern "C" {
 const CH0: u32 = 0;
 /// The channel the firmware never writes, from 0.7.3.
 const CH1: u32 = 1;
-/// One past `ONEROM_RTT_CHANNELS`, the first channel this firmware does not
-/// have. Every call must reject it. This is what a plugin built against a
-/// newer header hits on older firmware.
+/// Absent because `channel_2_size` isn't set in a plugin header. Every call must
+/// reject it. This is also what a plugin built against a newer header hits on
+/// older firmware.
 const CH_ABSENT: u32 = 2;
 /// Past `ONEROM_RTT_CHANNELS` entirely.
 const CH_OUT_OF_RANGE: u32 = 99;
@@ -337,6 +338,66 @@ pub fn test_absent_channel_is_rejected(emu: &Emulator) -> Result<(), String> {
         )?;
     }
 
+    Ok(())
+}
+
+/// Each claim is a bit of runtime info's `log_channel_claims`, so a host can
+/// read which plugin holds which claim.
+pub fn test_claims_are_in_runtime_info(emu: &Emulator) -> Result<(), String> {
+    use onerom_metadata::onerom_log_channel_claim_t as Claim;
+
+    let expect = |what: &str, want: u16| {
+        let got = emu.log_channel_claims();
+        if got == want {
+            Ok(())
+        } else {
+            Err(format!("{what}: claims {got:#06x}, want {want:#06x}"))
+        }
+    };
+
+    expect("before any claim", 0)?;
+    emu.set_calling_plugin(SYSTEM);
+    check(
+        "system claims channel 0 for writing",
+        emu.log_open_write(CH0, c"system"),
+        OraResult::Ok,
+    )?;
+    expect("system writes channel 0", Claim::LOG_CLAIM_SYSTEM_WRITE_0)?;
+    emu.set_calling_plugin(USER);
+    check(
+        "user claims channel 1 for reading",
+        emu.log_open_read(CH1),
+        OraResult::Ok,
+    )?;
+    expect(
+        "user also reads channel 1",
+        Claim::LOG_CLAIM_SYSTEM_WRITE_0 | Claim::LOG_CLAIM_USER_READ_1,
+    )?;
+    check(
+        "user releases channel 1",
+        emu.log_close_read(CH1),
+        OraResult::Ok,
+    )?;
+    emu.set_calling_plugin(SYSTEM);
+    check(
+        "system releases channel 0",
+        emu.log_close_write(CH0),
+        OraResult::Ok,
+    )?;
+    expect("after both release", 0)
+}
+
+/// Only channels 2 and 3 can be given a buffer, and a buffer must have a size.
+/// The firmware never passes anything else, so this calls the ring directly.
+pub fn test_ring_set_buffer_refusals(_emu: &Emulator) -> Result<(), String> {
+    let mut buf = [0 as c_char; 8];
+    for (label, channel, size) in [("channel 1", 1, 8), ("channel 4", 4, 8), ("size 0", 2, 0)] {
+        // SAFETY: the buffer outlives the call, and a refused call keeps nothing.
+        let set = unsafe { onerom_rtt_set_buffer(channel, buf.as_mut_ptr(), size) };
+        if set != 0 {
+            return Err(format!("set_buffer with {label} returned {set}, want 0"));
+        }
+    }
     Ok(())
 }
 

@@ -44,35 +44,62 @@ void (* const g_pfnVectors[])(void) = {
     SysTick_Handler,               // SysTick handler
 
     // Peripheral interrupt handlers follow 0-15 above.
-    // 16-19
 #if defined(STM32F4)
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-#else // RP235X
-    irq_handler_timer0_irq_0, irq_handler_timer0_irq_1, Default_Handler, Default_Handler,
-#endif 
-    // 20-23
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    // 24-27
-#if defined(STM32F4)
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-#else // RP235X
-    Default_Handler, Default_Handler, irq_handler_dma_irq_0, Default_Handler,
-#endif 
-    // 28-31
-#if defined(STM32F4)
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-#else // RP235X
-    Default_Handler, Default_Handler, irq_handler_usbctrl_irq, Default_Handler,
-#endif 
-    // 32-35
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    // 36-39
-#if defined(STM32F4)
     Default_Handler, Default_Handler, Default_Handler, vbus_connect_handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
 #else // RP235X
-    Default_Handler, vbus_connect_handler, Default_Handler, Default_Handler,
-#endif 
-    // 40-43
+    // Interrupts plugins can claim use irq_handler_plugin, except IO_BANK0 and
+    // USBCTRL, which have their own handlers.  See onerom_irq_t for the
+    // numbers.
+    // 0-3: TIMER0
+    irq_handler_timer0_irq_0, irq_handler_timer0_irq_1, irq_handler_plugin, irq_handler_plugin,
+    // 4-7: TIMER1
+    irq_handler_plugin, irq_handler_plugin, irq_handler_plugin, irq_handler_plugin,
+    // 8-11: PWM wrap 0-1, DMA 0-1
+    irq_handler_plugin, irq_handler_plugin, irq_handler_dma_irq_0, irq_handler_plugin,
+    // 12-15: DMA 2-3, USBCTRL, PIO0 0
+    irq_handler_plugin, irq_handler_plugin, irq_handler_usbctrl_irq, irq_handler_plugin,
+    // 16-19: PIO0 1, PIO1 0-1, PIO2 0
+    irq_handler_plugin, irq_handler_plugin, irq_handler_plugin, irq_handler_plugin,
+    // 20-23: PIO2 1, IO_BANK0, IO_BANK0_NS, IO_QSPI
+    irq_handler_plugin, irq_handler_io_bank0, Default_Handler, Default_Handler,
+    // 24-27: IO_QSPI_NS, SIO FIFO, SIO BELL, SIO FIFO_NS
+    Default_Handler, Default_Handler, irq_handler_plugin, Default_Handler,
+    // 28-31: SIO BELL_NS, SIO MTIMECMP, CLOCKS, SPI0
+    Default_Handler, irq_handler_plugin, Default_Handler, irq_handler_plugin,
+    // 32-35: SPI1, UART0, UART1, ADC FIFO
+    irq_handler_plugin, irq_handler_plugin, irq_handler_plugin, irq_handler_plugin,
+    // 36-39: I2C0, I2C1, OTP, TRNG
+    irq_handler_plugin, irq_handler_plugin, Default_Handler, irq_handler_plugin,
+    // 40-43: PROC0 CTI, PROC1 CTI, PLL_SYS, PLL_USB
+    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+    // 44-47: POWMAN POW, POWMAN TIMER, spare 0-1
+    Default_Handler, Default_Handler, irq_handler_plugin, irq_handler_plugin,
+    // 48-51: spare 2-5
+    irq_handler_plugin, irq_handler_plugin, irq_handler_plugin, irq_handler_plugin,
+    // Unused entries, padding the table to STM32F4's size
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
@@ -84,13 +111,7 @@ void (* const g_pfnVectors[])(void) = {
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
     Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
-    Default_Handler, Default_Handler, Default_Handler, Default_Handler,
+#endif
     // Different STM32F4s have different numbers of interrupts.  The maximum
     // appears to be 96 (F446), which is what's included here.  This means
     // that 0x080001C4 onwards is free, but we'll not use anything until

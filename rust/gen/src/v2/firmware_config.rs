@@ -95,6 +95,12 @@ pub fn build_firmware_overrides(overrides: &FirmwareConfig) -> OneromFirmwareOve
     result.fire_vreg = MaybeKnown::Known(fire_vreg);
     result.override_value = override_value;
     result.override_states = build_override_states(overrides);
+    result.addr_mon_min_cs_act = super::addr_mon::metadata_value(
+        overrides
+            .fire
+            .as_ref()
+            .and_then(|fire| fire.addr_mon_min_cs_act_ns),
+    );
     result
 }
 
@@ -123,6 +129,7 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
     use alloc::vec;
+    use onerom_metadata::ADDR_MON_MIN_CS_ACT_NOT_SET;
 
     use crate::{DebugConfig, FireConfig, FireCpuFreq, FireVreg, LedConfig};
 
@@ -142,6 +149,7 @@ mod tests {
             swd_enabled: true,
             turbo_boot: false,
             reserved_pins: vec![],
+            addr_mon_min_cs_act_ns: None,
         };
 
         let fw = build_firmware_config(&config);
@@ -170,6 +178,7 @@ mod tests {
         );
         assert_eq!(result.override_value, [0u8; 8]);
         assert_eq!(result.override_states.to_raw(), 0);
+        assert_eq!(result.addr_mon_min_cs_act, ADDR_MON_MIN_CS_ACT_NOT_SET);
     }
 
     #[test]
@@ -184,6 +193,7 @@ mod tests {
                 rom_dma_preload: true,
                 force_16_bit: false,
                 standby: None,
+                addr_mon_min_cs_act_ns: None,
             }),
             led: Some(LedConfig { enabled: true }),
             swd: Some(DebugConfig { swd_enabled: true }),
@@ -240,6 +250,29 @@ mod tests {
             assert_eq!(result.override_states.to_raw(), state as u8, "{standby:?}");
             assert_eq!(result.override_present, [0u8; 8], "{standby:?}");
             assert_eq!(result.override_value, [0u8; 8], "{standby:?}");
+        }
+    }
+
+    #[test]
+    fn addr_mon_min_cs_act_is_encoded_in_units() {
+        for (ns, value) in [
+            (None, ADDR_MON_MIN_CS_ACT_NOT_SET),
+            (Some(0), 0),
+            (Some(141), 15),
+        ] {
+            let overrides = FirmwareConfig {
+                fire: Some(FireConfig {
+                    addr_mon_min_cs_act_ns: ns,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+
+            let result = build_firmware_overrides(&overrides);
+
+            assert_eq!(result.addr_mon_min_cs_act, value, "{ns:?}");
+            assert_eq!(result.override_present, [0u8; 8], "{ns:?}");
+            assert_eq!(result.override_value, [0u8; 8], "{ns:?}");
         }
     }
 }

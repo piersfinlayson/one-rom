@@ -21,8 +21,8 @@ use wildmatch::WildMatch;
 
 use crate::Options;
 use crate::error::Error;
-use crate::otp::{Commissioning, board_size_text};
-use crate::usb::enumerate_devices;
+use crate::otp::Commissioning;
+use crate::usb::{enumerate_devices, enumerate_devices_and_skipped, serial_not_found};
 
 pub use onerom_app::known_board_size;
 
@@ -263,7 +263,7 @@ impl Device {
     }
 
     /// The One ROM's parse, `None` for other firmware.
-    pub(crate) fn onerom(&self) -> Option<&ParsedDevice> {
+    pub fn onerom(&self) -> Option<&ParsedDevice> {
         match self.firmware.as_ref()? {
             Firmware::OneRom(onerom) => Some(onerom),
             Firmware::Lab(_) => None,
@@ -348,13 +348,6 @@ impl Device {
             Some(variant) => format!("MCU: {variant} Chip ID: {id}"),
             None => format!("Chip ID: {id}"),
         })
-    }
-
-    /// The line shown beneath the device's line giving its board size, e.g.
-    /// `Board size: L`. `None` where the size isn't known.
-    pub fn board_size_line(&self) -> Option<String> {
-        let size = self.board_size?;
-        Some(format!("Board size: {}", board_size_text(size)))
     }
 
     /// The board's size, from runtime info while One ROM runs and from OTP
@@ -515,7 +508,7 @@ pub fn matches_serial(serial: Option<&str>, pattern: &str) -> bool {
 /// - No selector, multiple devices found: returns an error listing serials.
 /// - Selector provided: matches against serial number, errors if not found.
 pub async fn select_device(selector: Option<&str>, options: &Options) -> Result<Device, Error> {
-    let devices = enumerate_devices(options).await?;
+    let (devices, skipped) = enumerate_devices_and_skipped(options).await?;
 
     if devices.is_empty() {
         debug!("No devices found");
@@ -543,7 +536,7 @@ pub async fn select_device(selector: Option<&str>, options: &Options) -> Result<
                 .filter(|d| matches_serial(d.serial.as_deref(), pattern))
                 .collect();
             match matched.len() {
-                0 => Err(Error::DeviceNotFound(pattern.to_string())),
+                0 => Err(serial_not_found(pattern, &skipped)),
                 1 => Ok(matched.remove(0)),
                 _ => {
                     let serials: Vec<String> = matched

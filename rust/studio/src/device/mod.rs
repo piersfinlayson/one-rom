@@ -577,6 +577,37 @@ impl DeviceType {
     pub fn reboot(&self, client: Client, stopped: bool) -> Task<AppMessage> {
         Task::future(reboot_async(self.clone(), client, stopped))
     }
+
+    pub fn read_back(&self, client: Client, hw_info: HardwareInfo) -> Task<AppMessage> {
+        Task::future(read_back_async(self.clone(), client, hw_info))
+    }
+}
+
+/// The text for `error` from loading a firmware file or a One ROM. It's
+/// built from the error's fields to use "load" and "Studio" where the CLI's
+/// text uses "read" and "onerom".
+#[allow(clippy::wildcard_enum_match_arm)]
+pub(crate) fn load_error(error: CliError) -> String {
+    match &error {
+        CliError::ReadBack { what, reason } => format!("Couldn't load {what}.\n  {reason}"),
+        CliError::FirmwareTooNew { what, version } => format!(
+            "{what}'s firmware v{version} is newer than this version of Studio supports.\n  Update Studio."
+        ),
+        _ => error.to_string(),
+    }
+}
+
+// Generic read back method
+async fn read_back_async(device: DeviceType, client: Client, hw_info: HardwareInfo) -> AppMessage {
+    match device {
+        DeviceType::DebugProbe(p) => probe::read_back_async(p, client, hw_info).await,
+        DeviceType::Usb(u) => usb::read_back_async(u, client).await,
+        DeviceType::None => {
+            let log = "Attempted to load from None device";
+            internal_error!("{log}");
+            Message::ReadBackResult(client, Err(log.into())).into()
+        }
+    }
 }
 
 // Generic read device method
@@ -687,5 +718,52 @@ mod tests {
         let _ = device.update(&runtime_info, Message::ProbesDetected(vec![probe("a")]));
         let _ = device.update(&runtime_info, Message::SetUsbRunCapable(true));
         assert!(!device.is_usb_run_capable());
+    }
+
+    // The messages `task` sends
+    fn sent(task: Task<AppMessage>) -> Vec<AppMessage> {
+        let Some(stream) = iced_runtime::task::into_stream(task) else {
+            return Vec::new();
+        };
+        let outputs = stream.filter_map(|action| async move {
+            if let iced_runtime::Action::Output(msg) = action {
+                Some(msg)
+            } else {
+                None
+            }
+        });
+        futures::executor::block_on(outputs.collect())
+    }
+
+    /// The device is busy while it reads back, and its result goes to
+    /// Analyse.
+    #[test]
+    fn a_read_back_result_goes_to_analyse() {
+        use crate::analyse::Message as AnalyseMessage;
+        let runtime_info = RuntimeInfo::default();
+        let mut device = Device::new();
+
+        let read = device.update(
+            &runtime_info,
+            Message::ReadBack {
+                client: Client::Analyse,
+                hw_info: HardwareInfo::default(),
+            },
+        );
+        assert_eq!(device.operating, Some(Client::Analyse));
+        // Without a device selected, the read back fails.
+        assert!(sent(read).iter().any(|msg| matches!(
+            msg,
+            AppMessage::Device(Message::ReadBackResult(Client::Analyse, Err(_)))
+        )));
+
+        let error = "Slot 0's data couldn't be read".to_string();
+        let result = Message::ReadBackResult(Client::Analyse, Err(error.clone()));
+        let forwarded = sent(device.update(&runtime_info, result));
+        assert_eq!(device.operating, None);
+        assert!(forwarded.iter().any(|msg| matches!(
+            msg,
+            AppMessage::Analyse(AnalyseMessage::ReadBackResult(Err(e))) if *e == error
+        )));
     }
 }

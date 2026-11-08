@@ -81,6 +81,9 @@ pub enum OraResult {
     LogChannelInUse,
     LogFull,
     NotReady,
+    InUse,
+    Conflict,
+    NotFound,
     /// A code this binding does not know. Carries the C type's own width,
     /// which `-fshort-enums` makes one byte.
     Unknown(ffi::ora_result_t),
@@ -105,6 +108,9 @@ impl From<ffi::ora_result_t> for OraResult {
             ffi::ora_result_t_ORA_RESULT_LOG_CHANNEL_IN_USE => Self::LogChannelInUse,
             ffi::ora_result_t_ORA_RESULT_LOG_FULL => Self::LogFull,
             ffi::ora_result_t_ORA_RESULT_NOT_READY => Self::NotReady,
+            ffi::ora_result_t_ORA_RESULT_IN_USE => Self::InUse,
+            ffi::ora_result_t_ORA_RESULT_CONFLICT => Self::Conflict,
+            ffi::ora_result_t_ORA_RESULT_NOT_FOUND => Self::NotFound,
             other => Self::Unknown(other),
         }
     }
@@ -170,6 +176,8 @@ pub struct GpioInfo {
     pub gpio_use: u8,
     pub level: u8,
     pub is_output: u8,
+    /// Every use that applies, bit N for `ora_gpio_use_t` value N.
+    pub uses: u32,
 }
 
 /// One LED's state as reported by `ORA_ID_LED_GET`.
@@ -227,6 +235,34 @@ macro_rules! plugin_call {
 pub const ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS: u32 = 0x00000001;
 pub const ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS: u32 = 0x00000002;
 
+/// The IRQ flag an unclaimed instruction sets after
+/// [`Emulator::poison_unclaimed_pio`].  Serving, the RGB LED and the address
+/// monitor don't use it.
+const UNCLAIMED_PIO_IRQ: u8 = 7;
+
+const PIO_BLOCKS: u8 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RttUp {
+    pub is_usb_dpram_log: bool,
+    pub size: u32,
+    pub write_offset: u32,
+    pub read_offset: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UsbResetStep {
+    Assert,
+    Release,
+    ReleaseAndWait,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UsbReset {
+    pub step: UsbResetStep,
+    pub log_moved: bool,
+}
+
 /// A handle to a running One ROM firmware emulator instance.
 pub struct Emulator {
     /// Non-null after [`Self::setup_epio`] has been called.
@@ -278,6 +314,10 @@ impl Emulator {
             // SAFETY: firmware_main initialises the remaining global state and
             // returns (stubs prevent it from spinning or touching hardware).
             ffi::firmware_main();
+
+            // Run the part of plugin launch that comes before the plugins.  The
+            // rest is compiled out of a test build.
+            ffi::launch_prepare();
         }
         Self {
             epio: core::ptr::null_mut(),
@@ -559,6 +599,24 @@ impl Emulator {
         unsafe { ffi::stub_bootloader_entered() != 0 }
     }
 
+    /// The bootrom reboot the firmware scheduled since the last call, as
+    /// `(bootloader, delay_ms)`, or `None` if it scheduled none.
+    ///
+    /// The stub records the reboot and never reboots.  Reading clears the
+    /// record.
+    pub fn rom_reboot(&self) -> Option<(bool, u32)> {
+        let mut bootloader: u8 = 0;
+        let mut delay_ms: u32 = 0;
+        let rebooted = unsafe { ffi::stub_rom_reboot(&mut bootloader, &mut delay_ms) };
+        (rebooted != 0).then_some((bootloader != 0, delay_ms))
+    }
+
+    /// Make the firmware's bootrom reboot fail, as it does on a device whose
+    /// bootrom has no reboot function.  Cleared on boot.
+    pub fn set_rom_reboot_fails(&self, fails: bool) {
+        unsafe { ffi::stub_set_rom_reboot_fails(u8::from(fails)) };
+    }
+
     /// The serving algorithms and address window the current ROM slot runs.
     ///
     /// `None` before a slot is being served.  Read from the live slot config,
@@ -641,12 +699,179 @@ impl Emulator {
         unsafe { ffi::ffi_firmware_flags() }
     }
 
+    pub fn set_firmware_flags(&self, flags: u8) {
+        unsafe { ffi::ffi_set_firmware_flags(flags) };
+    }
+
+    /// Runtime info's `usb_dpram_pool_offset`.
+    pub fn usb_dpram_pool_offset(&self) -> u16 {
+        unsafe { ffi::ffi_usb_dpram_pool_offset() }
+    }
+
+    /// Runtime info's `log_channel_claims`, as `onerom_log_channel_claim_t`
+    /// bits.
+    pub fn log_channel_claims(&self) -> u16 {
+        unsafe { ffi::ffi_log_channel_claims() }
+    }
+
+    /// Runtime info's `dma_channel_claims`, bit N for channel N.
+    pub fn dma_channel_claims(&self) -> u16 {
+        unsafe { ffi::ffi_dma_channel_claims() }
+    }
+
+    pub fn set_dma_channel_claims(&self, claims: u16) {
+        unsafe { ffi::ffi_set_dma_channel_claims(claims) };
+    }
+
+    /// Runtime info's `hw_claims`, as `onerom_hw_claim_t` bits.
+    pub fn hw_claims(&self) -> u8 {
+        unsafe { ffi::ffi_hw_claims() }
+    }
+
+    pub fn set_hw_claims(&self, claims: u8) {
+        unsafe { ffi::ffi_set_hw_claims(claims) };
+    }
+
+    /// Runtime info's `hw_claims2`, as `onerom_hw_claim2_t` bits.
+    pub fn hw_claims2(&self) -> u8 {
+        unsafe { ffi::ffi_hw_claims2() }
+    }
+
+    pub fn set_hw_claims2(&self, claims: u8) {
+        unsafe { ffi::ffi_set_hw_claims2(claims) };
+    }
+
+    /// Runtime info's `timer_alarm_claims`, bit N for TIMER0 alarm N and bit
+    /// (4 + N) for TIMER1 alarm N.
+    pub fn timer_alarm_claims(&self) -> u8 {
+        unsafe { ffi::ffi_timer_alarm_claims() }
+    }
+
+    pub fn set_timer_alarm_claims(&self, claims: u8) {
+        unsafe { ffi::ffi_set_timer_alarm_claims(claims) };
+    }
+
+    /// Runtime info's `spinlock_claims`, bit N for spinlock N.
+    pub fn spinlock_claims(&self) -> u32 {
+        unsafe { ffi::ffi_spinlock_claims() }
+    }
+
+    pub fn set_spinlock_claims(&self, claims: u32) {
+        unsafe { ffi::ffi_set_spinlock_claims(claims) };
+    }
+
+    /// Runtime info's `pwm_slice_claims`, bit N for slice N.
+    pub fn pwm_slice_claims(&self) -> u16 {
+        unsafe { ffi::ffi_pwm_slice_claims() }
+    }
+
+    pub fn set_pwm_slice_claims(&self, claims: u16) {
+        unsafe { ffi::ffi_set_pwm_slice_claims(claims) };
+    }
+
+    /// Runtime info's `irq_claims_system` or `irq_claims_user` for `plugin`,
+    /// bit N for interrupt N.
+    pub fn irq_claims(&self, plugin: ffi::ora_plugin_type_t) -> u64 {
+        unsafe { ffi::ffi_irq_claims(plugin) }
+    }
+
+    pub fn set_irq_claims(&self, plugin: ffi::ora_plugin_type_t, claims: u64) {
+        unsafe { ffi::ffi_set_irq_claims(plugin, claims) };
+    }
+
+    /// Runs the launch-time USB reservation for `plugin` with a header whose
+    /// `properties1` field is the `properties1` argument.  Returns the entry
+    /// flags `plugin` would start with.
+    pub fn usb_reserve(&self, plugin: ffi::ora_plugin_type_t, properties1: u8) -> u8 {
+        unsafe { ffi::ffi_usb_reserve(plugin, properties1) }
+    }
+
+    /// Runtime info's `gpio_claims`, bit N for GPIO N.
+    pub fn gpio_claims(&self) -> u64 {
+        unsafe { ffi::ffi_gpio_claims() }
+    }
+
+    pub fn set_gpio_claims(&self, claims: u64) {
+        unsafe { ffi::ffi_set_gpio_claims(claims) };
+    }
+
+    /// Runtime info's `pio_instr_claims`, one word per PIO block, bit N for
+    /// instruction N.
+    pub fn pio_instr_claims(&self) -> [u32; 3] {
+        std::array::from_fn(|block| unsafe { ffi::ffi_pio_instr_claims(block as u8) })
+    }
+
+    pub fn set_pio_instr_claims(&self, claims: [u32; 3]) {
+        for (block, claim) in claims.into_iter().enumerate() {
+            unsafe { ffi::ffi_set_pio_instr_claims(block as u8, claim) };
+        }
+    }
+
+    /// Runtime info's `pio_block_claims`, as `onerom_pio_block_claim_t` bits.
+    pub fn pio_block_claims(&self) -> u16 {
+        unsafe { ffi::ffi_pio_block_claims() }
+    }
+
+    pub fn set_pio_block_claims(&self, claims: u16) {
+        unsafe { ffi::ffi_set_pio_block_claims(claims) };
+    }
+
+    /// Runtime info's `rgb_led_pio`, as `onerom_rgb_led_pio_t` bits.
+    pub fn rgb_led_pio(&self) -> u8 {
+        unsafe { ffi::ffi_rgb_led_pio() }
+    }
+
+    pub fn set_rgb_led_pio(&self, pio: u8) {
+        unsafe { ffi::ffi_set_rgb_led_pio(pio) };
+    }
+
+    /// Claim the RGB LED's PIO state machine and write its program, as plugin
+    /// launch does.
+    pub fn pio_led_launch(&self) {
+        unsafe { ffi::pio_led_launch() };
+    }
+
+    /// Runtime info's `addr_monitor_pio`, as `onerom_addr_monitor_pio_t` bits.
+    pub fn addr_monitor_pio(&self) -> u8 {
+        unsafe { ffi::ffi_addr_monitor_pio() }
+    }
+
+    /// Fill every unclaimed PIO instruction with `IRQ WAIT` on IRQ flag
+    /// `UNCLAIMED_PIO_IRQ`.  A state machine that runs one sets that flag in
+    /// its block and stops.  See [`Self::unclaimed_pio_used`].
+    ///
+    /// Call after boot and before [`Self::setup_epio`].  The instructions are
+    /// written to the apio emulation's record, which `epio_update_from_apio()`
+    /// copies into epio on every call.
+    pub fn poison_unclaimed_pio(&self) {
+        unsafe { ffi::ffi_poison_unclaimed_pio(UNCLAIMED_PIO_IRQ) };
+    }
+
+    /// The first PIO block in which the firmware has written or run an
+    /// unclaimed instruction since [`Self::poison_unclaimed_pio`].
+    pub fn unclaimed_pio_used(&self) -> Option<u8> {
+        let epio = self.epio_or_panic();
+        let written = unsafe { ffi::ffi_unclaimed_pio_written(UNCLAIMED_PIO_IRQ) };
+        let ran = (0..PIO_BLOCKS).find(
+            |&block| unsafe { ffi::epio_peek_block_irq_num(epio, block, UNCLAIMED_PIO_IRQ) } != 0,
+        );
+        u8::try_from(written).ok().or(ran)
+    }
+
     /// Record `FIRMWARE_STATE_PLUGINS_STARTED`, which plugin launch sets on a
     /// device. Plugin launch is compiled out of a test build.
     ///
     /// Doesn't take `&self` so a yield hook can call it.
     pub fn set_plugins_started() {
         unsafe { ffi::ffi_set_plugins_started() };
+    }
+
+    /// The firmware's reading of `key`'s commissioning value: its first row and
+    /// its length in bytes.
+    pub fn otp_commissioning_value(key: u16) -> Option<(u16, u16)> {
+        let (mut row, mut len) = (0, 0);
+        (unsafe { ffi::otp_commissioning_value(key, &mut row, &mut len) } != 0)
+            .then_some((row, len))
     }
 
     /// The firmware's reading of the board OTP commissions the chip as: the
@@ -736,10 +961,111 @@ impl Emulator {
         unsafe { ffi::ffi_set_rom_slot_override_states(index, states) };
     }
 
+    /// Lasts until [`Self::restore_rom_slots`].
+    pub fn set_rom_slot_no_image(index: u8) {
+        unsafe { ffi::ffi_set_rom_slot_no_image(index) };
+    }
+
     /// Write a valid header to plugin slot `index` with its entry point at
     /// device address `entry`.
     pub fn set_plugin_header(index: u8, entry: u32, overrides1: u8, properties1: u8) {
         unsafe { ffi::ffi_set_plugin_header(index, entry, overrides1, properties1) };
+    }
+
+    /// As [`Self::install_plugin_slots`], keeping the metadata's other slots.
+    /// The metadata must have at least three slots.
+    pub fn overlay_plugin_slots() {
+        unsafe { ffi::ffi_overlay_plugin_slots() };
+    }
+
+    pub fn set_plugin_boot_slot_addr(index: u8, addr: u32) {
+        unsafe { ffi::ffi_set_plugin_boot_slot_addr(index, addr) };
+    }
+
+    pub fn set_plugin_usb_controller_dpram_size(index: u8, size: u16) {
+        unsafe { ffi::ffi_set_plugin_usb_controller_dpram_size(index, size) };
+    }
+
+    pub fn set_plugin_channel_sizes(index: u8, channel_2: u16, channel_3: u16) {
+        unsafe { ffi::ffi_set_plugin_channel_sizes(index, channel_2, channel_3) };
+    }
+
+    /// Set plugin `index`'s header to point at a peer data block at `addr`, or
+    /// at none for 0.  Write the block with [`Emulator::set_flash_words`].
+    pub fn set_plugin_peer_data(index: u8, addr: u32) {
+        unsafe { ffi::ffi_set_plugin_peer_data(index, addr) };
+    }
+
+    pub fn set_plugin_magic(index: u8, magic: u32) {
+        unsafe { ffi::ffi_set_plugin_magic(index, magic) };
+    }
+
+    pub fn set_plugin_api_version(index: u8, api_version: u32) {
+        unsafe { ffi::ffi_set_plugin_api_version(index, api_version) };
+    }
+
+    pub fn set_plugin_min_fw_version(index: u8, major: u16, minor: u16, patch: u16) {
+        unsafe { ffi::ffi_set_plugin_min_fw_version(index, major, minor, patch) };
+    }
+
+    /// A boot doesn't clear the filename.
+    pub fn set_plugin_filename(index: u8, filename: Option<&'static std::ffi::CStr>) {
+        let filename = filename.map_or(std::ptr::null(), std::ffi::CStr::as_ptr);
+        unsafe { ffi::ffi_set_plugin_filename(index, filename) };
+    }
+
+    /// Reduce the slot count after [`Self::install_plugin_slots`] or
+    /// [`Self::overlay_plugin_slots`], until [`Self::restore_rom_slots`].
+    pub fn set_rom_slot_count(count: u8) {
+        unsafe { ffi::ffi_set_rom_slot_count(count) };
+    }
+
+    /// An unset byte reads 0xFF. A set byte lasts until [`Self::clear_flash`].
+    /// `STUB_FLASH_BYTES` in `firmware/test/stub_rp235x.c` limits how many
+    /// bytes can be set.
+    pub fn set_flash_byte(addr: u32, value: u8) {
+        unsafe { ffi::stub_flash_set8(addr, value) };
+    }
+
+    /// Write little-endian words to flash from `addr`.
+    pub fn set_flash_words(addr: u32, words: &[u32]) {
+        for (word_addr, word) in (addr..).step_by(4).zip(words) {
+            for (byte_addr, byte) in (word_addr..).zip(word.to_le_bytes()) {
+                Self::set_flash_byte(byte_addr, byte);
+            }
+        }
+    }
+
+    pub fn clear_flash() {
+        unsafe { ffi::stub_flash_clear() };
+    }
+
+    pub fn user_plugin_to_start() -> bool {
+        unsafe { ffi::ffi_user_plugin_to_start() != 0 }
+    }
+
+    pub fn plugin_entry_flags() -> u8 {
+        unsafe { ffi::plugin_entry_flags() }
+    }
+
+    pub fn system_plugin_to_launch() -> bool {
+        unsafe { ffi::ffi_system_plugin_to_launch() != 0 }
+    }
+
+    pub fn user_plugin_to_launch(system_launched: bool) -> bool {
+        unsafe { ffi::ffi_user_plugin_to_launch(system_launched as u8) != 0 }
+    }
+
+    pub fn plugin_entry_args(
+        plugin_type: ffi::ora_plugin_type_t,
+        entry_flags: u8,
+    ) -> ffi::ora_entry_args_t {
+        unsafe { *ffi::plugin_entry_args(plugin_type, entry_flags) }
+    }
+
+    pub fn plugin_boot_slot(num_plugins: u8) -> Option<u8> {
+        let mut slot = 0u8;
+        (unsafe { ffi::plugin_boot_slot(num_plugins, &mut slot) } != 0).then_some(slot)
     }
 
     /// The firmware's boot parse of the plugin slots. Returns the plugins found
@@ -1039,6 +1365,42 @@ impl Emulator {
         (r, info)
     }
 
+    /// `ORA_ID_GET_FLASH_SLOT_ADDR`, returning the result, address and size. An
+    /// output the call doesn't write reads `u32::MAX`.
+    pub fn get_flash_slot_addr(&self, flash_slot: u8, flags: u32) -> (OraResult, u32, u32) {
+        self.get_flash_slot_addr_null_out(flash_slot, flags, false, false)
+    }
+
+    pub fn get_flash_slot_addr_null_out(
+        &self,
+        flash_slot: u8,
+        flags: u32,
+        null_addr: bool,
+        null_size: bool,
+    ) -> (OraResult, u32, u32) {
+        let mut addr = u32::MAX;
+        let mut size = u32::MAX;
+        let addr_out = if null_addr {
+            std::ptr::null_mut()
+        } else {
+            &mut addr as *mut u32
+        };
+        let size_out = if null_size {
+            std::ptr::null_mut()
+        } else {
+            &mut size as *mut u32
+        };
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_FLASH_SLOT_ADDR,
+            ffi::ora_get_flash_slot_addr_fn_t,
+            flash_slot,
+            flags,
+            addr_out,
+            size_out
+        ));
+        (r, addr, size)
+    }
+
     pub fn reprogram_ram_rom_slot(
         &self,
         slot: u8,
@@ -1256,6 +1618,7 @@ impl Emulator {
             use_: 0xFF,
             level: 0xFF,
             is_output: 0xFF,
+            uses: 0xFFFF_FFFF,
         };
         let r = plugin_call!(
             ffi::api_id_t_ORA_ID_GPIO_QUERY,
@@ -1270,6 +1633,7 @@ impl Emulator {
                 gpio_use: info.use_,
                 level: info.level,
                 is_output: info.is_output,
+                uses: info.uses,
             },
         )
     }
@@ -1479,6 +1843,71 @@ impl Emulator {
         ))
     }
 
+    pub fn log_moved(&self) -> bool {
+        unsafe { ffi::onerom_rtt_log_moved() != 0 }
+    }
+
+    /// Returns whether the log moved.
+    pub fn launch_usb_dpram(&self, entry_flags: u8) -> bool {
+        unsafe { ffi::launch_usb_dpram(entry_flags) != 0 }
+    }
+
+    /// The first `STUB_USB_RESETS_MAX` changes to the USB controller's reset
+    /// since the last boot.
+    pub fn usb_resets(&self) -> Vec<UsbReset> {
+        let mut steps = [0u8; ffi::STUB_USB_RESETS_MAX as usize];
+        let count = unsafe { ffi::stub_usb_resets(steps.as_mut_ptr(), steps.len() as u8) };
+        steps[..(count as usize).min(steps.len())]
+            .iter()
+            .map(|&s| UsbReset {
+                step: match u32::from(s) & !ffi::STUB_USB_RESET_LOG_MOVED {
+                    ffi::STUB_USB_RESET_ASSERT => UsbResetStep::Assert,
+                    ffi::STUB_USB_RESET_RELEASE => UsbResetStep::Release,
+                    ffi::STUB_USB_RESET_RELEASE_WAIT => UsbResetStep::ReleaseAndWait,
+                    other => panic!("unknown USB reset step {other:#04x}"),
+                },
+                log_moved: u32::from(s) & ffi::STUB_USB_RESET_LOG_MOVED != 0,
+            })
+            .collect()
+    }
+
+    pub fn unmove_log(&self) {
+        unsafe { ffi::onerom_rtt_test_unmove_log() };
+    }
+
+    /// A boot doesn't release the log channels.
+    pub fn reset_log_claims(&self) {
+        unsafe { ffi::ora_log_reset_claims() };
+    }
+
+    pub fn rtt_up(&self, index: u8) -> Option<RttUp> {
+        let mut up = ffi::ffi_rtt_up_t {
+            is_usb_dpram_log: 0,
+            size: 0,
+            write_offset: 0,
+            read_offset: 0,
+        };
+        (unsafe { ffi::ffi_rtt_up(index, &mut up) } != 0).then_some(RttUp {
+            is_usb_dpram_log: up.is_usb_dpram_log != 0,
+            size: up.size,
+            write_offset: up.write_offset,
+            read_offset: up.read_offset,
+        })
+    }
+
+    /// Returns `buf.len()` if the record was stored, 0 if it was dropped.
+    pub fn fw_log_write(&self, buf: &[u8]) -> u32 {
+        unsafe { ffi::ffi_log_write(buf.as_ptr(), buf.len() as u32) }
+    }
+
+    /// Read One ROM's log as a debug probe does, consuming the bytes.
+    pub fn fw_log_read(&self, max_len: u32) -> Vec<u8> {
+        let mut buf = vec![0u8; max_len as usize];
+        let n = unsafe { ffi::ffi_log_read(buf.as_mut_ptr(), max_len) };
+        buf.truncate(n as usize);
+        buf
+    }
+
     /// `ORA_ID_SET_PLUGIN_CONTEXT`.
     ///
     /// `context` is an opaque value the firmware only stores, so a test can
@@ -1667,9 +2096,8 @@ impl Emulator {
     /// `ORA_ID_ALLOC`, returning the allocation as an address rather than a
     /// pointer.
     ///
-    /// The firmware has no allocator, so the answer is always 0 (NULL) and
-    /// there is nothing for a caller to dereference.  An address keeps that
-    /// visible and keeps the wrapper safe.
+    /// The call always returns 0 (NULL), so there is nothing for a caller to
+    /// dereference.  An address keeps that visible and keeps the wrapper safe.
     pub fn alloc(&self, size: usize) -> usize {
         let p = plugin_call!(ffi::api_id_t_ORA_ID_ALLOC, ffi::ora_alloc_fn_t, size);
         p as usize
@@ -1681,6 +2109,158 @@ impl Emulator {
             ffi::api_id_t_ORA_ID_GET_FREE_MEM,
             ffi::ora_get_free_mem_fn_t
         )
+    }
+
+    /// `ORA_ID_GET_PEER_DATA`, as the plugin [`Self::set_calling_plugin`]
+    /// last set, returning the result and the block's words up to its size.
+    /// The words are empty unless the result is `Ok`.
+    pub fn get_peer_data(&self, format: u32, flags: u32) -> (OraResult, Vec<u32>) {
+        let mut ptr: *const u32 = std::ptr::null();
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PEER_DATA,
+            ffi::ora_get_peer_data_fn_t,
+            format,
+            flags,
+            &mut ptr
+        ));
+        if !r.is_ok() || ptr.is_null() {
+            return (r, Vec::new());
+        }
+        // SAFETY: on Ok the pointer is at a valid block, which starts with an
+        // ora_peer_data_header_t.
+        unsafe {
+            let size = (*ptr.cast::<ffi::ora_peer_data_header_t>()).size;
+            (
+                r,
+                std::slice::from_raw_parts(ptr, size as usize / 4).to_vec(),
+            )
+        }
+    }
+
+    /// [`Self::get_peer_data`] with `block_out` NULL.
+    pub fn get_peer_data_null_out(&self, format: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_PEER_DATA,
+            ffi::ora_get_peer_data_fn_t,
+            format,
+            0,
+            std::ptr::null_mut()
+        ))
+    }
+
+    /// `ORA_ID_ALLOC_MEM`, returning the result and the address.  An address
+    /// the call doesn't write reads `u32::MAX`.
+    ///
+    /// The request's size field is passed unchanged, so a test can pass a size
+    /// below the minimum.
+    pub fn alloc_mem(&self, req: &ffi::ora_alloc_request_t) -> (OraResult, u32) {
+        let mut addr = u32::MAX;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_ALLOC_MEM,
+            ffi::ora_alloc_mem_fn_t,
+            req as *const ffi::ora_alloc_request_t,
+            &mut addr as *mut u32
+        ));
+        (r, addr)
+    }
+
+    /// `ORA_ID_ALLOC_MEM` with a NULL request or a NULL address output.
+    pub fn alloc_mem_null(
+        &self,
+        req: &ffi::ora_alloc_request_t,
+        null_req: bool,
+        null_addr: bool,
+    ) -> OraResult {
+        let mut addr = u32::MAX;
+        let req_ptr = if null_req {
+            std::ptr::null()
+        } else {
+            req as *const ffi::ora_alloc_request_t
+        };
+        let addr_out = if null_addr {
+            std::ptr::null_mut()
+        } else {
+            &mut addr as *mut u32
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_ALLOC_MEM,
+            ffi::ora_alloc_mem_fn_t,
+            req_ptr,
+            addr_out
+        ))
+    }
+
+    /// `ORA_ID_CLAIM_HW`, passing `instance` in and returning its value after
+    /// the call.
+    pub fn claim_hw(&self, hw: ffi::ora_hw_t, instance: u32, flags: u32) -> (OraResult, u32) {
+        let mut instance = instance;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_HW,
+            ffi::ora_claim_hw_fn_t,
+            hw,
+            &mut instance as *mut u32,
+            flags
+        ));
+        (r, instance)
+    }
+
+    /// `ORA_ID_CLAIM_HW` with a NULL instance.
+    pub fn claim_hw_null(&self, hw: ffi::ora_hw_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_HW,
+            ffi::ora_claim_hw_fn_t,
+            hw,
+            std::ptr::null_mut(),
+            0
+        ))
+    }
+
+    /// `ORA_ID_SET_IRQ_ENABLED`.
+    pub fn set_irq_enabled(&self, irq: u8, enable: u8, flags: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_SET_IRQ_ENABLED,
+            ffi::ora_set_irq_enabled_fn_t,
+            irq,
+            enable,
+            flags
+        ))
+    }
+
+    /// `ORA_ID_CLAIM_PIO`, passing `block`, `sm` and `first_instr` in and
+    /// returning their values after the call.  `None` passes NULL for that
+    /// argument and is returned as `None`.
+    pub fn claim_pio(
+        &self,
+        block: Option<u32>,
+        sm: Option<u32>,
+        first_instr: Option<u32>,
+        num_instrs: u32,
+        gpio_base: ffi::ora_pio_gpiobase_t,
+        flags: u32,
+    ) -> (OraResult, Option<u32>, Option<u32>, Option<u32>) {
+        let (mut block, mut sm, mut first_instr) = (block, sm, first_instr);
+        let ptr = |v: &mut Option<u32>| v.as_mut().map_or(std::ptr::null_mut(), |v| v as *mut u32);
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_PIO,
+            ffi::ora_claim_pio_fn_t,
+            ptr(&mut block),
+            ptr(&mut sm),
+            ptr(&mut first_instr),
+            num_instrs,
+            gpio_base,
+            flags
+        ));
+        (r, block, sm, first_instr)
+    }
+
+    /// `ORA_ID_CLAIM_GPIO`.
+    pub fn claim_gpio(&self, gpio: u32, flags: u32) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_CLAIM_GPIO,
+            ffi::ora_claim_gpio_fn_t,
+            gpio,
+            flags
+        ))
     }
 
     /// `ORA_ID_ERR_LOG` with a message carrying no conversions.
@@ -1841,6 +2421,131 @@ impl Emulator {
             unsafe { ffi::ffi_epio_update_from_apio(self.epio_or_panic()) };
         }
         result
+    }
+
+    // ── Reboot ───────────────────────────────────────────────────────────────
+
+    /// `ORA_ID_REBOOT`.
+    ///
+    /// The request is passed exactly as given, size field included, so a caller
+    /// exercising the size contract states its own.
+    pub fn reboot(&self, req: &ffi::ora_reboot_request_t) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT,
+            ffi::ora_reboot_fn_t,
+            req as *const ffi::ora_reboot_request_t
+        ))
+    }
+
+    /// `ORA_ID_REBOOT_BOOTSEL`.
+    ///
+    /// On a device this never returns.  In a test build it returns after
+    /// scheduling the reboot.
+    pub fn reboot_bootsel(&self) {
+        plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT_BOOTSEL,
+            ffi::ora_reboot_bootsel_fn_t
+        );
+    }
+
+    /// `ORA_ID_REBOOT` with a NULL request.
+    pub fn reboot_null(&self) -> OraResult {
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_REBOOT,
+            ffi::ora_reboot_fn_t,
+            std::ptr::null()
+        ))
+    }
+
+    // ── Commissioning ────────────────────────────────────────────────────────
+
+    /// `ORA_ID_GET_COMMISSIONING_VALUE`, returning the result and a copy of the
+    /// value where it succeeded.
+    pub fn get_commissioning_value(&self, key: u16) -> (OraResult, Option<Vec<u8>>) {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
+            ffi::ora_get_commissioning_value_fn_t,
+            key,
+            &mut ptr as *mut *const u8,
+            &mut len as *mut u16
+        ));
+        let value = (r.is_ok() && !ptr.is_null())
+            .then(|| unsafe { std::slice::from_raw_parts(ptr, usize::from(len)) }.to_vec());
+        (r, value)
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_VALUE` with a NULL value pointer, a NULL
+    /// length pointer, or both.
+    pub fn get_commissioning_value_null_out(
+        &self,
+        key: u16,
+        null_value: bool,
+        null_len: bool,
+    ) -> OraResult {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let value_out = if null_value {
+            std::ptr::null_mut()
+        } else {
+            &mut ptr as *mut *const u8
+        };
+        let len_out = if null_len {
+            std::ptr::null_mut()
+        } else {
+            &mut len as *mut u16
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
+            ffi::ora_get_commissioning_value_fn_t,
+            key,
+            value_out,
+            len_out
+        ))
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_INSTANCE`, returning the result and a copy of
+    /// the instance where it succeeded.
+    pub fn get_commissioning_instance(&self) -> (OraResult, Option<Vec<u8>>) {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let r = OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_INSTANCE,
+            ffi::ora_get_commissioning_instance_fn_t,
+            &mut ptr as *mut *const u8,
+            &mut len as *mut u16
+        ));
+        let instance = (r.is_ok() && !ptr.is_null())
+            .then(|| unsafe { std::slice::from_raw_parts(ptr, usize::from(len)) }.to_vec());
+        (r, instance)
+    }
+
+    /// `ORA_ID_GET_COMMISSIONING_INSTANCE` with a NULL instance pointer, a
+    /// NULL length pointer, or both.
+    pub fn get_commissioning_instance_null_out(
+        &self,
+        null_instance: bool,
+        null_len: bool,
+    ) -> OraResult {
+        let mut ptr: *const u8 = std::ptr::null();
+        let mut len: u16 = 0;
+        let instance_out = if null_instance {
+            std::ptr::null_mut()
+        } else {
+            &mut ptr as *mut *const u8
+        };
+        let len_out = if null_len {
+            std::ptr::null_mut()
+        } else {
+            &mut len as *mut u16
+        };
+        OraResult::from(plugin_call!(
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_INSTANCE,
+            ffi::ora_get_commissioning_instance_fn_t,
+            instance_out,
+            len_out
+        ))
     }
 
     // ── Yield ────────────────────────────────────────────────────────────────

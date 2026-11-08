@@ -47,10 +47,13 @@ pub use onerom_app::{
     // Async fetch/resolution.
     fetch_releases,
     newest_compatible,
+    parse_plugin,
     parse_plugins,
     plugin_to_chip_set_config,
     // Resolve the plugins a config refers to by name (delegates fetching).
     resolve_config_plugins,
+    // Resolve one plugin spec, delegating fetching.
+    resolve_plugin,
     // Resolve a device plugin slot to a PluginDisplay (delegates fetching).
     resolve_plugin_display,
     resolve_plugins,

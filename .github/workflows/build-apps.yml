@@ -3,6 +3,7 @@ name: Build One ROM Studio and CLI
 on:
   workflow_dispatch:
   push:
+    branches: ['**']
     paths:
       - 'rust/**'
       - '!**.md'

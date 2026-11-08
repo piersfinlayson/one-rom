@@ -7,20 +7,20 @@
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::Variant;
-use onerom_fw::{assemble_firmware, validate_sizes};
 
 use crate::args;
 use crate::firmware::{
-    acquire_firmware, build_rom_image, confirm_slot_overrides, resolve_config_json,
-    verify_assembled_firmware,
+    accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, fetch_config_json,
+    resolve_build_plugins, resolve_config_json,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
-use onerom_app::{FlashPlan, FlashStep, read_commissioning};
+use onerom_app::{
+    CheckedImage, FlashPlan, FlashStep, assemble_image, check_image, read_commissioning,
+};
 use onerom_cli::device::select_device_by_chip_id;
 use onerom_cli::error::plan_error;
 use onerom_cli::otp::{PicobootOtp, check_board};
 use onerom_cli::pin::ResolvedPin;
-use onerom_cli::plugin::{parse_plugins, resolve_plugins};
 use onerom_cli::slot::{
     self, GlobalConfig, check_slot_confirmations, save_config, saved_config_json,
 };
@@ -56,19 +56,21 @@ fn validate_program_args(args: &args::program::ProgramArgs) -> Result<(), Error>
 
 // ------------------------------- Image acquisition -------------------------------
 
-/// Acquire the complete firmware image to flash, from any of the supported sources.
+/// Acquire the complete firmware image to flash, from any of the supported
+/// sources, and check it for `board`.
 async fn acquire_program_image(
     options: &Options,
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
-) -> Result<Vec<u8>, Error> {
+) -> Result<CheckedImage, Error> {
     if let Some(firmware) = &args.firmware {
-        return load_prebuilt_firmware(options, firmware);
+        return Ok(check_image(load_prebuilt_firmware(options, firmware)?, *board).await);
     }
 
     if is_bare_base_firmware(args) {
-        return load_bare_base_firmware(options, args.base_firmware.as_deref().unwrap());
+        let data = load_bare_base_firmware(options, args.base_firmware.as_deref().unwrap())?;
+        return Ok(check_image(data, *board).await);
     }
 
     build_and_assemble(options, args, board, mcu).await
@@ -99,15 +101,26 @@ async fn build_and_assemble(
     args: &args::program::ProgramArgs,
     board: &Option<Board>,
     mcu: &Variant,
-) -> Result<Vec<u8>, Error> {
+) -> Result<CheckedImage, Error> {
     let board = board.as_ref().ok_or(Error::NoBoardOrDevice)?;
 
     // Acquire firmware first — version is needed for plugin compat checking.
     let (firmware_data, version, _version_str) =
         acquire_firmware(options, &args.base_firmware, &args.version, board, mcu).await?;
 
-    let specs = parse_plugins(&args.plugin)?;
-    let plugins = resolve_plugins(&specs, &version, &onerom_cli::CliFetch).await?;
+    let config = match &args.config_file {
+        Some(source) => Some(fetch_config_json(source).await?),
+        None => None,
+    };
+    let (specs, plugins) = resolve_build_plugins(
+        &args.plugin,
+        args.no_plugin,
+        config.as_deref(),
+        slot::slots_define_plugin(&args.slot, board)?,
+        &version,
+        &onerom_cli::CliFetch,
+    )
+    .await?;
 
     let global_config = GlobalConfig {
         config_name: args.config_name.clone(),
@@ -118,10 +131,11 @@ async fn build_and_assemble(
         disable_swd: args.disable_swd,
         turbo_boot: args.turbo_boot,
         reserved_pins: args.reserve_pin.clone(),
+        addr_mon_min_cs_act_ns: args.addr_mon_min_cs_act_ns,
     };
 
     let config_json = resolve_config_json(
-        args.config_file.as_deref(),
+        config,
         &args.slot,
         args.no_config,
         board,
@@ -139,7 +153,7 @@ async fn build_and_assemble(
 
     let device = options.device.as_ref().ok_or(Error::NoDevice)?;
     let size = image_size(version, device.flash_chips().size());
-    let (fw_props, metadata, image_data, desc) = build_rom_image(
+    let (fw_props, metadata, roms, desc) = build_rom_image(
         options,
         &config_json,
         version,
@@ -147,23 +161,24 @@ async fn build_and_assemble(
         *mcu,
         size,
         args.force,
+        &onerom_cli::CliFetch,
         // Runs before any ROM image is downloaded.
         |config| refuse_unservable_request(args, slot::has_system_plugin(config)),
     )
     .await?;
 
-    validate_sizes(&fw_props, &firmware_data, &metadata, &image_data)?;
+    let checked = assemble_image(&fw_props, firmware_data, metadata, roms).await?;
 
     if options.verbose && !desc.is_empty() {
         println!("ROM configuration:\n---\n{desc}\n---");
     }
 
-    assemble_firmware(firmware_data, metadata, image_data).map_err(Into::into)
+    Ok(checked)
 }
 
 /// The size to build an image for a `size` One ROM with firmware `version`.
 /// It's M where the firmware doesn't support `size`.
-fn image_size(version: FirmwareVersion, size: BoardSize) -> BoardSize {
+pub(crate) fn image_size(version: FirmwareVersion, size: BoardSize) -> BoardSize {
     if supports_board_size(version, size) {
         size
     } else {
@@ -203,7 +218,7 @@ pub(crate) fn verify_line(addr: u32, data: &[u8]) -> String {
 /// Flashes `data` and reads it back where `verify`. `image_board` is the
 /// board the image is for. `force` programs a board commissioned as another
 /// board. A refused image leaves the One ROM as it was.
-async fn flash_device(
+pub(crate) async fn flash_device(
     options: &mut Options,
     data: &[u8],
     image_board: Option<Board>,
@@ -277,7 +292,7 @@ pub(crate) async fn reboot_to_stopped(
         println!("Device is {state}, rebooting into stopped mode...");
     }
     let chip_id = device.chip_id;
-    reboot(device, &RebootArgs::stopped(false, false)).await?;
+    reboot(device, &RebootArgs::stopped(false, false), options).await?;
 
     let new_device = select_device_by_chip_id(chip_id, options).await?;
     if states.contains(&new_device.state) {
@@ -294,7 +309,7 @@ async fn reboot_to_running(options: &Options) -> Result<(), Error> {
     if options.verbose {
         println!("Rebooting device into running mode...");
     }
-    reboot(device, &RebootArgs::running(false, false)).await
+    reboot(device, &RebootArgs::running(false, false), options).await
 }
 
 /// Reboots a One ROM this command `stopped` back into running mode and
@@ -323,7 +338,7 @@ pub(crate) async fn reboot_stopped(options: &Options) -> Result<(), Error> {
     if options.verbose {
         println!("Rebooting device into stopped mode...");
     }
-    reboot(device, &RebootArgs::stopped(false, false)).await
+    reboot(device, &RebootArgs::stopped(false, false), options).await
 }
 
 /// Reboots a stopped device into the bootloader again and selects it by its
@@ -369,13 +384,16 @@ fn write_firmware_file(path: &str, data: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-async fn reboot_and_rescan(options: &mut Options, reboot_args: &RebootArgs) -> Result<(), Error> {
+pub(crate) async fn reboot_and_rescan(
+    options: &mut Options,
+    reboot_args: &RebootArgs,
+) -> Result<(), Error> {
     let device = options.device.as_ref().unwrap();
     if options.verbose {
         println!("Rebooting device...");
     }
     let chip_id = device.chip_id;
-    reboot(device, reboot_args).await?;
+    reboot(device, reboot_args, options).await?;
 
     if !reboot_args.fast {
         let device = select_device_by_chip_id(chip_id, options).await?;
@@ -400,7 +418,7 @@ fn without_usb(option: &str, consequence: &str) -> Error {
         format!(
             "The image being programmed has no USB system plugin, so the One ROM\n  \
              will not be on the USB bus once it is running{consequence}\n  \
-             Add '--plugin usb', or drop {option}."
+             Drop {option}."
         ),
     )
 }
@@ -474,8 +492,8 @@ pub async fn cmd_program(
         None => None,
     };
 
-    let data = acquire_program_image(options, args, &board, &mcu).await?;
-    let image = verify_assembled_firmware(options, &data, args.force, board).await?;
+    let checked = acquire_program_image(options, args, &board, &mcu).await?;
+    let (data, image) = accept_image(options, checked, args.force, board)?;
 
     // onerom program sets a board up as One ROM.
     if let Some(file) = &args.firmware
@@ -488,9 +506,8 @@ pub async fn cmd_program(
     // built one has already answered, before its ROMs were fetched.
     if args.firmware.is_some() || is_bare_base_firmware(args) {
         // An image whose metadata did not parse cannot answer - and
-        // verify_assembled_firmware has already said so, or been forced past -
-        // so it is left alone rather than refused on a reading nothing stands
-        // behind.
+        // accept_image has already said so, or been forced past - so it is
+        // left alone rather than refused on a reading nothing stands behind.
         let usb_capable = !image.parse_errors().is_empty() || image.is_usb_run_capable();
         refuse_unservable_request(args, usb_capable)?;
     }
@@ -627,6 +644,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn addr_mon_min_cs_act_ns_is_checked_on_program() {
+        use clap::Parser;
+        use onerom_gen::MAX_ADDR_MON_MIN_CS_ACT_NS;
+        let parse = |value: &str| {
+            crate::args::Cli::try_parse_from([
+                "onerom",
+                "program",
+                "--slot",
+                "file=a.bin,type=2364,cs1=active-low",
+                "--addr_mon_min_cs_act_ns",
+                value,
+            ])
+        };
+        let max = MAX_ADDR_MON_MIN_CS_ACT_NS.to_string();
+        let crate::args::Commands::Program(args) = parse(&max).unwrap().command else {
+            panic!("not program");
+        };
+        assert_eq!(
+            args.addr_mon_min_cs_act_ns,
+            Some(MAX_ADDR_MON_MIN_CS_ACT_NS)
+        );
+        assert!(parse(&(MAX_ADDR_MON_MIN_CS_ACT_NS + 1).to_string()).is_err());
+    }
+
     /// Firmware before 0.8.0 gets an M image whatever the One ROM's size.
     #[test]
     fn an_image_is_for_m_where_the_firmware_supports_only_m() {
@@ -668,8 +710,8 @@ mod tests {
                 .resolve(Some(&Board::Fire24F))
                 .unwrap()
         };
-        let unreserved = parse_firmware(&image_2364(1, &[])).await;
-        let reserved = parse_firmware(&image_2364(1, &["x1", "sel_c"])).await;
+        let unreserved = parse_firmware(&image_2364(1, &[]).await).await;
+        let reserved = parse_firmware(&image_2364(1, &["x1", "sel_c"]).await).await;
 
         let warning = unreserved_reset_pin(&unreserved, pin("x1")).unwrap();
         assert!(holds(&warning, &["X1", "x1"]), "{warning}");

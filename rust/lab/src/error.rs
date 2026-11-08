@@ -18,6 +18,10 @@ pub enum Error {
     NonFireBoard,
     /// Unrecognised or unsupported chip type
     InvalidChip,
+    /// The chip type isn't one the board supports
+    ChipNotOnBoard,
+    /// A socket pin the chip uses has no GPIO on the board
+    NoGpio(u8),
     /// Unrecognised output format specifier
     InvalidFormat,
     /// Board must be configured before this command can run
@@ -39,6 +43,45 @@ pub enum Error {
     Cancelled,
     /// An invalid control line polarity was entered
     InvalidCsPolarity,
+    /// A control line's polarity is unset or set to auto-detect
+    CsPolarityNotSet,
+    /// An RBCP step failed
+    Rbcp(crate::rbcp::Failure),
+    /// The chip is larger than a fast read supports
+    FastReadChipSize,
+    /// The board's pins for this chip can't be driven by a fast read
+    FastReadPins,
+    /// The board's data pins for this chip can't be driven as a square wave
+    DrivePins,
+    /// A drive's data lines include one the chip doesn't have
+    DriveLines(usize),
+    /// A host profile breaks a limit
+    HostProfile(onerom_lab_bus::ProfileError),
+    /// The board's pins for this chip can't be driven by the host bus
+    HostPins,
+    /// The host bus didn't return a sample in time
+    HostTimeout,
+    /// A host bus machine ran out of words mid-burst
+    HostStall,
+    /// A pin that didn't parse
+    Pin(onerom_config::pin::PinError),
+    /// A pin the board doesn't have
+    PinResolve(onerom_config::pin::ResolveError),
+    /// A pin that isn't a UART TX pin
+    UartTxPin(onerom_config::pin::ResolvedPin),
+    /// A pin that isn't a UART RX pin
+    UartRxPin(onerom_config::pin::ResolvedPin),
+    /// TX and RX pins of different UARTs
+    UartPins(
+        onerom_config::pin::ResolvedPin,
+        crate::uart::UartId,
+        onerom_config::pin::ResolvedPin,
+        crate::uart::UartId,
+    ),
+    /// `u` is already running
+    UartRunning,
+    /// `U` with `u` not running
+    UartNotRunning,
 }
 
 impl From<crate::usb::Error> for Error {
@@ -58,6 +101,11 @@ impl fmt::Display for Error {
             Self::InvalidBoard => write!(f, "unrecognised board type"),
             Self::NonFireBoard => write!(f, "only Fire boards are supported"),
             Self::InvalidChip => write!(f, "unrecognised chip type"),
+            Self::ChipNotOnBoard => write!(
+                f,
+                "chip type isn't supported on this board - use 'l' to list supported chips"
+            ),
+            Self::NoGpio(pin) => write!(f, "socket pin {pin} has no GPIO on this board"),
             Self::InvalidFormat => write!(f, "unrecognised output format"),
             Self::BoardNotSet => write!(f, "board not set — use 'B:<name>' to configure it"),
             Self::ChipNotSet => write!(f, "chip type not set"),
@@ -67,6 +115,38 @@ impl fmt::Display for Error {
             Self::Syntax => write!(f, "syntax error"),
             Self::Cancelled => write!(f, "cancelled"),
             Self::InvalidCsPolarity => write!(f, "invalid control line polarity"),
+            Self::CsPolarityNotSet => {
+                write!(f, "control line polarity not set - use 'c' to set it")
+            }
+            Self::Rbcp((step, e)) => write!(f, "RBCP {step}: {e}"),
+            Self::FastReadChipSize => write!(
+                f,
+                "a fast read supports chips up to {}KB",
+                crate::fast_read::MAX_BYTES / 1024
+            ),
+            Self::FastReadPins => {
+                write!(f, "a fast read doesn't support this chip on this board")
+            }
+            Self::DrivePins => {
+                write!(f, "data lines can't be driven for this chip on this board")
+            }
+            Self::DriveLines(n) => write!(f, "this chip has {n} data lines"),
+            Self::HostProfile(e) => write!(f, "{}", crate::host::profile_error(*e)),
+            Self::HostPins => {
+                write!(f, "the host bus doesn't support this chip on this board")
+            }
+            Self::HostTimeout => write!(f, "host bus read timed out"),
+            Self::HostStall => write!(f, "host bus stalled"),
+            Self::Pin(e) => write!(f, "{e}"),
+            Self::PinResolve(e) => write!(f, "{e}"),
+            Self::UartTxPin(pin) => write!(f, "{pin} isn't a UART TX pin"),
+            Self::UartRxPin(pin) => write!(f, "{pin} isn't a UART RX pin"),
+            Self::UartPins(tx, tx_id, rx, rx_id) => write!(
+                f,
+                "TX {tx} is on {tx_id} and RX {rx} is on {rx_id} - both must be on one UART"
+            ),
+            Self::UartRunning => write!(f, "u is already running - use U to stop it"),
+            Self::UartNotRunning => write!(f, "u isn't running"),
         }
     }
 }

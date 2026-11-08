@@ -1,9 +1,11 @@
 # PCB Files
 
-Contains One ROM PCB design files.  These are organised into two directories:
+Contains One ROM PCB design files, organised into:
 
 - [`verified/`](verified/README.md) - Verified designs that have been tested and work.
 - [`unverified/`](unverified/README.md) - Unverified designs that have not been tested.
+- [`3dmodels/`](3dmodels/) - 3D models of parts with no standard kicad model of their own.
+- [`scripts/`](scripts/) - Scripts that build models and render the PCBs.
 
 Before using any of the designs, review the hardware [LICENSE](/LICENSE.md#cern-ohl-w-20-license) and [NOTICE](/hardware/NOTICE) files.
 
@@ -25,6 +27,8 @@ The following table lists the recommended verified designs.  Each design has bee
 | Fire  | RP2354B | 40 | C (upright) | ✓ | 4 | n/a | ✓ | [fire-40-c](./verified/fire-40-c/README.md) |
 
 **One ROM 28C onwards, 32 and 40 require components on the top and bottom of the PCB**
+
+To identify a board or see it looks like see [onerom.org/identify/](https://onerom.org/identify/).
 
 There may be later, unverified, revisions not in the list above.  These may have improvements over the recommended revisions, but they have not been verified to work.  If you want to use one of these later revisions, read the relevant README before ordering.
 

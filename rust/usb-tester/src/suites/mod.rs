@@ -7,11 +7,14 @@
 use crate::Suite;
 
 pub mod descriptors;
+pub mod exclusive;
 pub mod gpio;
 pub mod input;
+pub mod irq;
 pub mod led;
 pub mod log;
 pub mod picobootx;
+pub mod serial_port_2;
 pub mod standby;
 
 /// Every suite, in the order they run.
@@ -45,6 +48,21 @@ pub static SUITES: &[Suite] = &[
         name: "input",
         blurb: "does what a terminal types reach the input channel?",
         scenarios: input::SCENARIOS,
+    },
+    Suite {
+        name: "exclusive",
+        blurb: "does a plugin get exclusive use of the serial port?",
+        scenarios: exclusive::SCENARIOS,
+    },
+    Suite {
+        name: "serial_port_2",
+        blurb: "does serial port 2 move the user plugin's data?",
+        scenarios: serial_port_2::SCENARIOS,
+    },
+    Suite {
+        name: "irq",
+        blurb: "does the reserved USB interrupt reach tinyusb's handler?",
+        scenarios: irq::SCENARIOS,
     },
     Suite {
         name: "descriptors",

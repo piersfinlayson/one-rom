@@ -29,6 +29,24 @@
 // @since firmware 0.7.2
 #define ORA_GPIO_NONE ((uint8_t)0xFF)
 
+// Key for the commissioning instance's format version in
+// ora_get_commissioning_value.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_VERSION_KEY ((uint16_t)0xFFFF)
+
+// Longest OTP_KEY_COMMISSIONING_MANUFACTURER value in characters. A board
+// commissioned with a CLI before v0.6.0 may have a longer value.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_MANUFACTURER_MAX_LEN 0x20
+
+// Longest OTP_KEY_COMMISSIONING_REVISION value in characters.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_REVISION_MAX_LEN 0x10
+
+// Longest OTP_KEY_COMMISSIONING_BATCH value in characters.
+// @since firmware 0.8.1
+#define ORA_COMMISSIONING_BATCH_MAX_LEN 0x10
+
 // Position of FLASH_DEVINFO's CS0_SIZE field.
 // @since firmware 0.8.0
 #define ORA_OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT ((uint16_t)8)
@@ -122,6 +140,93 @@
 // @since firmware 0.8.0
 #define ORA_USB_BOOTLOADER_PID ((uint16_t)0xF540)
 
+// Maximum reboot delay in milliseconds.
+// @since firmware 0.8.1
+#define ORA_REBOOT_MAX_DELAY_MS ((uint32_t)0x00002710)
+
+// Offset of the plugin_type byte in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_PLUGIN_TYPE_OFFSET 0x14
+
+// Offset of the overrides1 byte in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_OVERRIDES1_OFFSET 0x16
+
+// Offset of the properties1 byte in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_PROPERTIES1_OFFSET 0x17
+
+// Offset of the little-endian 32-bit boot_slot_addr in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET 0x20
+
+// Offset of the little-endian 16-bit usb_controller_dpram_size in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_USB_CONTROLLER_DPRAM_SIZE_OFFSET 0x1E
+
+// Offset of the little-endian 16-bit channel_2_size in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_CHANNEL_2_SIZE_OFFSET 0x24
+
+// Offset of the little-endian 16-bit channel_3_size in the plugin header.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_CHANNEL_3_SIZE_OFFSET 0x26
+
+// Offset of the little-endian 32-bit peer_data in the plugin header. peer_data is the address of the plugin's first peer data block.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_PEER_DATA_OFFSET 0x28
+
+// Offset of the little-endian 32-bit irq_handler in the plugin header. irq_handler is the address of the plugin's interrupt handler, or 0 for none.
+// @since firmware 0.8.1
+#define ORA_PLUGIN_HEADER_IRQ_HANDLER_OFFSET 0x2C
+
+// Largest channel_2_size a plugin header may set, in bytes.
+// @since firmware 0.8.1
+#define ORA_LOG_CHANNEL_2_MAX_SIZE ((uint16_t)0x0100)
+
+// Largest channel_3_size a plugin header may set, in bytes.
+// @since firmware 0.8.1
+#define ORA_LOG_CHANNEL_3_MAX_SIZE ((uint16_t)0x0100)
+
+// Plugin header overrides1 bit. With it set, One ROM boots the ROM slot
+// numbered in the byte at boot_slot_addr, which must be in the plugin's own flash
+// region. ROM slot 0 is the first slot that isn't a plugin. A number past the
+// last ROM slot is ignored. The system plugin's boot slot is used ahead of the
+// user plugin's.
+// @since firmware 0.8.1
+#define ORA_OVERRIDE1_BOOT_SLOT ((uint8_t)2)
+
+// Plugin header overrides1 bit. With it set, ROM slot 0 boots unless a
+// plugin's OVERRIDE1_BOOT_SLOT selects a slot.
+// @since firmware 0.8.1
+#define ORA_OVERRIDE1_IGNORE_IMAGE_SELECT ((uint8_t)4)
+
+// Plugin header properties1 bit requesting exclusive serial IN mode. With this
+// bit set in either plugin's header, both plugins are started with
+// ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN set.
+// @since firmware 0.8.1
+#define ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN ((uint8_t)4)
+
+// Plugin header properties1 bit. With it set, the firmware reserves the USB
+// controller and its interrupt for the plugin at launch, unless the USB controller
+// has already been claimed. If both plugins set it, they are reserved for the system
+// plugin. The plugin they are reserved for is started with the
+// ORA_ENTRY_FLAG_USB_RESERVED bit set.
+// @since firmware 0.8.1
+#define ORA_PROPERTY1_RESERVE_USB ((uint8_t)8)
+
+// Address of the RP2350's USB DPRAM.
+// @since firmware 0.8.1
+#define ORA_USB_DPRAM_BASE_ADDR ((uint32_t)0x50100000)
+
+// Size in bytes of the RP2350's USB DPRAM.
+// @since firmware 0.8.1
+#define ORA_USB_DPRAM_SIZE 0x1000
+
+// Maximum number of bytes of USB DPRAM a plugin can reserve for a USB controller.
+// @since firmware 0.8.1
+#define ORA_USB_CONTROLLER_DPRAM_MAX 0x500
+
 // RP235xB
 // @since firmware 0.8.0
 #define ORA_RP235XB ((uint8_t)0)
@@ -129,6 +234,48 @@
 // RP235xA
 // @since firmware 0.8.0
 #define ORA_RP235XA ((uint8_t)1)
+
+// An entry with key 0 and length 0 ends a list of OTP store entries. An entry
+// with key 0 and any other length has been deleted.
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_NONE ((uint16_t)0)
+
+// Board name
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_BOARD ((uint16_t)1)
+
+// Commissioning signature
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_SIG ((uint16_t)2)
+
+// Manufacturer's name
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_MANUFACTURER ((uint16_t)3)
+
+// Commissioning date
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_DATE ((uint16_t)4)
+
+// ID of the signing key
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_SIGNER ((uint16_t)5)
+
+// Board revision
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_REVISION ((uint16_t)6)
+
+// Manufacturing batch
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_BATCH ((uint16_t)7)
+
+// Size the board was commissioned as
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_COMMISSIONING_SIZE ((uint16_t)8)
+
+// 0xFFFF is never written to OTP as a key. It makes the C enum
+// onerom_otp_key_t 2 bytes wide.
+// @since firmware 0.8.1
+#define ORA_OTP_KEY_RESERVED ((uint16_t)0xFFFF)
 
 // No flash chip.
 // @since firmware 0.8.0
@@ -186,6 +333,218 @@
 // @since firmware 0.8.0
 #define ORA_BOARD_SIZE_OTHER ((uint8_t)0xFF)
 
+// TIMER0 alarm 0
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER0_IRQ_0 ((uint8_t)0)
+
+// TIMER0 alarm 1
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER0_IRQ_1 ((uint8_t)1)
+
+// TIMER0 alarm 2
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER0_IRQ_2 ((uint8_t)2)
+
+// TIMER0 alarm 3
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER0_IRQ_3 ((uint8_t)3)
+
+// TIMER1 alarm 0
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER1_IRQ_0 ((uint8_t)4)
+
+// TIMER1 alarm 1
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER1_IRQ_1 ((uint8_t)5)
+
+// TIMER1 alarm 2
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER1_IRQ_2 ((uint8_t)6)
+
+// TIMER1 alarm 3
+// @since firmware 0.8.1
+#define ORA_IRQ_TIMER1_IRQ_3 ((uint8_t)7)
+
+// PWM wrap interrupt 0
+// @since firmware 0.8.1
+#define ORA_IRQ_PWM_IRQ_WRAP_0 ((uint8_t)8)
+
+// PWM wrap interrupt 1
+// @since firmware 0.8.1
+#define ORA_IRQ_PWM_IRQ_WRAP_1 ((uint8_t)9)
+
+// DMA interrupt 0
+// @since firmware 0.8.1
+#define ORA_IRQ_DMA_IRQ_0 ((uint8_t)0x0A)
+
+// DMA interrupt 1
+// @since firmware 0.8.1
+#define ORA_IRQ_DMA_IRQ_1 ((uint8_t)0x0B)
+
+// DMA interrupt 2
+// @since firmware 0.8.1
+#define ORA_IRQ_DMA_IRQ_2 ((uint8_t)0x0C)
+
+// DMA interrupt 3
+// @since firmware 0.8.1
+#define ORA_IRQ_DMA_IRQ_3 ((uint8_t)0x0D)
+
+// USB controller
+// @since firmware 0.8.1
+#define ORA_IRQ_USBCTRL_IRQ ((uint8_t)0x0E)
+
+// PIO0 interrupt 0
+// @since firmware 0.8.1
+#define ORA_IRQ_PIO0_IRQ_0 ((uint8_t)0x0F)
+
+// PIO0 interrupt 1
+// @since firmware 0.8.1
+#define ORA_IRQ_PIO0_IRQ_1 ((uint8_t)0x10)
+
+// PIO1 interrupt 0
+// @since firmware 0.8.1
+#define ORA_IRQ_PIO1_IRQ_0 ((uint8_t)0x11)
+
+// PIO1 interrupt 1
+// @since firmware 0.8.1
+#define ORA_IRQ_PIO1_IRQ_1 ((uint8_t)0x12)
+
+// PIO2 interrupt 0
+// @since firmware 0.8.1
+#define ORA_IRQ_PIO2_IRQ_0 ((uint8_t)0x13)
+
+// PIO2 interrupt 1
+// @since firmware 0.8.1
+#define ORA_IRQ_PIO2_IRQ_1 ((uint8_t)0x14)
+
+// GPIO bank 0 per-core
+// @since firmware 0.8.1
+#define ORA_IRQ_IO_IRQ_BANK0 ((uint8_t)0x15)
+
+// GPIO bank 0, non-secure
+// @since firmware 0.8.1
+#define ORA_IRQ_IO_IRQ_BANK0_NS ((uint8_t)0x16)
+
+// QSPI pins per-core
+// @since firmware 0.8.1
+#define ORA_IRQ_IO_IRQ_QSPI ((uint8_t)0x17)
+
+// QSPI pins, non-secure
+// @since firmware 0.8.1
+#define ORA_IRQ_IO_IRQ_QSPI_NS ((uint8_t)0x18)
+
+// Inter-core FIFO, one for each core
+// @since firmware 0.8.1
+#define ORA_IRQ_SIO_IRQ_FIFO ((uint8_t)0x19)
+
+// Doorbells per-core
+// @since firmware 0.8.1
+#define ORA_IRQ_SIO_IRQ_BELL ((uint8_t)0x1A)
+
+// Inter-core FIFO, non-secure
+// @since firmware 0.8.1
+#define ORA_IRQ_SIO_IRQ_FIFO_NS ((uint8_t)0x1B)
+
+// Doorbells, non-secure
+// @since firmware 0.8.1
+#define ORA_IRQ_SIO_IRQ_BELL_NS ((uint8_t)0x1C)
+
+// SIO timer compare per-core
+// @since firmware 0.8.1
+#define ORA_IRQ_SIO_IRQ_MTIMECMP ((uint8_t)0x1D)
+
+// Clocks
+// @since firmware 0.8.1
+#define ORA_IRQ_CLOCKS_IRQ ((uint8_t)0x1E)
+
+// SPI0
+// @since firmware 0.8.1
+#define ORA_IRQ_SPI0_IRQ ((uint8_t)0x1F)
+
+// SPI1
+// @since firmware 0.8.1
+#define ORA_IRQ_SPI1_IRQ ((uint8_t)0x20)
+
+// UART0
+// @since firmware 0.8.1
+#define ORA_IRQ_UART0_IRQ ((uint8_t)0x21)
+
+// UART1
+// @since firmware 0.8.1
+#define ORA_IRQ_UART1_IRQ ((uint8_t)0x22)
+
+// ADC FIFO
+// @since firmware 0.8.1
+#define ORA_IRQ_ADC_IRQ_FIFO ((uint8_t)0x23)
+
+// I2C0
+// @since firmware 0.8.1
+#define ORA_IRQ_I2C0_IRQ ((uint8_t)0x24)
+
+// I2C1
+// @since firmware 0.8.1
+#define ORA_IRQ_I2C1_IRQ ((uint8_t)0x25)
+
+// OTP
+// @since firmware 0.8.1
+#define ORA_IRQ_OTP_IRQ ((uint8_t)0x26)
+
+// TRNG
+// @since firmware 0.8.1
+#define ORA_IRQ_TRNG_IRQ ((uint8_t)0x27)
+
+// Core 0 cross-trigger
+// @since firmware 0.8.1
+#define ORA_IRQ_PROC0_IRQ_CTI ((uint8_t)0x28)
+
+// Core 1 cross-trigger
+// @since firmware 0.8.1
+#define ORA_IRQ_PROC1_IRQ_CTI ((uint8_t)0x29)
+
+// System PLL
+// @since firmware 0.8.1
+#define ORA_IRQ_PLL_SYS_IRQ ((uint8_t)0x2A)
+
+// USB PLL
+// @since firmware 0.8.1
+#define ORA_IRQ_PLL_USB_IRQ ((uint8_t)0x2B)
+
+// Power manager
+// @since firmware 0.8.1
+#define ORA_IRQ_POWMAN_IRQ_POW ((uint8_t)0x2C)
+
+// Power manager timer
+// @since firmware 0.8.1
+#define ORA_IRQ_POWMAN_IRQ_TIMER ((uint8_t)0x2D)
+
+// Spare, raised by software only
+// @since firmware 0.8.1
+#define ORA_IRQ_SPARE_IRQ_0 ((uint8_t)0x2E)
+
+// Spare, raised by software only
+// @since firmware 0.8.1
+#define ORA_IRQ_SPARE_IRQ_1 ((uint8_t)0x2F)
+
+// Spare, raised by software only
+// @since firmware 0.8.1
+#define ORA_IRQ_SPARE_IRQ_2 ((uint8_t)0x30)
+
+// Spare, raised by software only
+// @since firmware 0.8.1
+#define ORA_IRQ_SPARE_IRQ_3 ((uint8_t)0x31)
+
+// Spare, raised by software only
+// @since firmware 0.8.1
+#define ORA_IRQ_SPARE_IRQ_4 ((uint8_t)0x32)
+
+// Spare, raised by software only
+// @since firmware 0.8.1
+#define ORA_IRQ_SPARE_IRQ_5 ((uint8_t)0x33)
+
+// Not an interrupt
+// @since firmware 0.8.1
+#define ORA_IRQ_INVALID ((uint8_t)0xFF)
+
 // The boot copy of the ROM image from flash into RAM has finished, or the
 // slot has no image to copy.
 // @since firmware 0.8.0
@@ -202,5 +561,13 @@
 // One ROM is in standby and doesn't serve the ROM.
 // @since firmware 0.8.0
 #define ORA_FIRMWARE_FLAG_STANDBY ((uint8_t)1)
+
+// One ROM's log is in RTT up buffer 1. Never cleared once set.
+// @since firmware 0.8.1
+#define ORA_FIRMWARE_FLAG_LOG_IN_UP1 ((uint8_t)2)
+
+// Whether VBUS detection is enabled.
+// @since firmware 0.8.1
+#define ORA_FIRMWARE_FLAG_VBUS_DETECT ((uint8_t)4)
 
 #endif // ONEROM_CONSTANTS_H

@@ -18,6 +18,7 @@ use iced::{Element, Subscription, Task, event, keyboard};
 use log::{debug, error, info, trace, warn};
 
 use onerom_config::chip::ChipType;
+use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::{Board, BoardSize, Model};
 use onerom_config::mcu::{Family, MCU_VARIANTS, Variant as McuVariant};
 use onerom_fw::net::{Release, Releases};
@@ -174,6 +175,32 @@ impl Create {
         }
     }
 
+    fn select_version_or_latest(
+        &mut self,
+        releases: Option<&Releases>,
+        version: FirmwareVersion,
+    ) -> Option<AppMessage> {
+        match releases.and_then(|r| self.selected_hw_info.offered_release(r, version)) {
+            Some(release) => self.select_release(release.clone()),
+            None => self.select_latest_release(releases),
+        }
+    }
+
+    fn read_back_selected(
+        &mut self,
+        runtime_info: &RuntimeInfo,
+        hw_info: HardwareInfo,
+        version: FirmwareVersion,
+    ) -> Option<AppMessage> {
+        let (board, mcu) = (hw_info.board?, hw_info.mcu_variant?);
+        self.model_selected(board.model());
+        // board_selected's selection of the latest release is replaced below
+        let _ = self.board_selected(runtime_info, board);
+        self.select_size_from(&hw_info);
+        self.mcu_selected(mcu);
+        self.select_version_or_latest(runtime_info.releases(), version)
+    }
+
     fn select_release(&mut self, release: Release) -> Option<AppMessage> {
         // Download the release
         if let Some(board) = self.selected_hw_info.board
@@ -250,6 +277,27 @@ impl Create {
 
     fn board_size_selected(&mut self, size: BoardSize) {
         self.selected_hw_info.board_size = Some(size);
+    }
+
+    // A size read from a device replaces the selected size where the board
+    // supports it.  Otherwise the image's minimum size does.
+    fn select_size_from(&mut self, hw_info: &HardwareInfo) {
+        self.size_detected = false;
+        if self.selected_hw_info.board_size.is_some()
+            && let Some(board) = self.selected_hw_info.board
+        {
+            let sizes = Self::board_sizes(board);
+            if let Some(size) = hw_info.board_size
+                && sizes.contains(&size)
+            {
+                self.board_size_selected(size);
+                self.size_detected = true;
+            } else if let Some(min) = hw_info.min_board_size
+                && sizes.contains(&min)
+            {
+                self.board_size_selected(min);
+            }
+        }
     }
 
     fn mcu_selected(&mut self, mcu: McuVariant) {
@@ -413,6 +461,74 @@ mod tests {
             detected(&mut create, fire_40_a(None, Some(size)));
             assert_eq!(create.selected_hw_info.board_size, Some(size));
             assert!(!create.size_detected);
+        }
+    }
+
+    // The version of the release `msg` downloads
+    fn downloaded(msg: Option<AppMessage>) -> Option<String> {
+        if let Some(AppMessage::Studio(StudioMessage::DownloadRelease(release, ..))) = msg {
+            Some(release.version)
+        } else {
+            None
+        }
+    }
+
+    /// A read back's version selects its release where offered for the
+    /// board, otherwise the latest.
+    #[test]
+    fn a_read_back_version_selects_its_release_where_offered() {
+        let releases = Releases::from_json(
+            r#"{ "version": 1, "latest": "0.8.1", "releases": [
+                { "version": "0.8.1", "boards": [{ "name": "fire-40-a", "mcus": [{ "name": "rp2350" }] }] },
+                { "version": "0.8.0", "boards": [{ "name": "fire-40-a", "mcus": [{ "name": "rp2350" }] }] },
+                { "version": "0.7.0", "boards": [{ "name": "fire-24-f", "mcus": [{ "name": "rp2350" }] }] }
+            ] }"#,
+        )
+        .unwrap();
+        let mut create = Create::new();
+        detected(&mut create, fire_40_a(None, None));
+
+        for (version, selected) in [
+            (FirmwareVersion::new(0, 8, 0, 0), "0.8.0"),
+            (FirmwareVersion::new(0, 7, 0, 0), "0.8.1"),
+            (FirmwareVersion::new(0, 8, 2, 0), "0.8.1"),
+        ] {
+            let msg = create.select_version_or_latest(Some(&releases), version);
+            assert_eq!(downloaded(msg).as_deref(), Some(selected));
+        }
+    }
+
+    /// A read back's board size, or a file's minimum size, is selected where
+    /// Board Size is offered for its board. The selected size is kept where the
+    /// read back has neither.
+    #[test]
+    fn a_read_back_board_size_is_selected_where_offered() {
+        let runtime_info = RuntimeInfo::default();
+        let version = FirmwareVersion::new(0, 8, 0, 0);
+        let mut create = Create::new();
+        let fire_24_f = HardwareInfo {
+            board: Some(board("fire-24-f")),
+            ..fire_40_a(Some(BoardSize::M), None)
+        };
+
+        for (hw_info, size, size_detected) in [
+            (
+                fire_40_a(Some(BoardSize::L), None),
+                Some(BoardSize::L),
+                true,
+            ),
+            (fire_40_a(None, None), Some(BoardSize::L), false),
+            (
+                fire_40_a(None, Some(BoardSize::M)),
+                Some(BoardSize::M),
+                false,
+            ),
+            (fire_24_f, None, false),
+        ] {
+            let _ = create.read_back_selected(&runtime_info, hw_info, version);
+            assert_eq!(create.selected_hw_info.board, hw_info.board);
+            assert_eq!(create.selected_hw_info.board_size, size);
+            assert_eq!(create.size_detected, size_detected);
         }
     }
 }

@@ -6,11 +6,11 @@ use std::fmt::Display;
 use std::io::Write;
 
 use crate::args::inspect::{
-    InspectGpioArgs, InspectHeaderArgs, InspectImageArgs, InspectInfoArgs, InspectLedArgs,
-    InspectOtpArgs, InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
+    InspectGpioArgs, InspectHeaderArgs, InspectInfoArgs, InspectLedArgs, InspectOtpArgs,
+    InspectPeekLiveArgs, InspectPeekMemoryArgs, InspectRgbArgs, InspectSlotsArgs,
     InspectSocketArgs, InspectTelemetryArgs,
 };
-use crate::commissioning::{device_lines, report_lines};
+use crate::commissioning::{board_size_value, device_lines, report_lines};
 use crate::utils::{
     active_chip_type, check_device, check_device_running, check_fire_board,
     check_fire_board_optional, check_live_read_write, print_hex_dump, resolve_board,
@@ -21,7 +21,7 @@ use onerom_cli::CliFetch;
 use onerom_cli::LIVE_ROM_BASE;
 use onerom_cli::colour::RgbColour;
 use onerom_cli::gpio;
-use onerom_cli::otp::PicobootOtp;
+use onerom_cli::otp::{Commissioning, PicobootOtp};
 use onerom_cli::plugin::{PluginOrigin, PluginType, resolve_plugin_display};
 use onerom_cli::usb::{
     GpioEntry, GpioUse, LedId, LedState, get_caps, gpio_query, gpio_query_all, led_query,
@@ -35,6 +35,7 @@ use onerom_fw_parser::{
     NewerGeneration, ParseError, ParsedDevice, RuntimeAbsence, SdrrCsState, SlotKind,
 };
 use onerom_lab_parser::Lab;
+use onerom_metadata::{OneromAlgDataConfig, OneromFirmwareOverrides, OneromRomSlot};
 
 pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), Error> {
     // Print the device summary
@@ -42,8 +43,12 @@ pub async fn cmd_info(options: &Options, args: &InspectInfoArgs) -> Result<(), E
     let device = options.device.as_ref().unwrap();
 
     println!("{device}");
-    if let Some(line) = device.board_size_line() {
-        println!("  {line}");
+    if let Some(size) = device.board_size() {
+        let current = match &device.commissioning {
+            Commissioning::Read(area) => area.current(),
+            Commissioning::Unreadable | Commissioning::LabRunning | Commissioning::NotRead => None,
+        };
+        println!("  Board size: {}", board_size_value(size, current));
     }
     for line in commissioning_lines(device, true, options.verbose) {
         println!("  {line}");
@@ -113,7 +118,7 @@ pub(crate) async fn write_otp<O: LocalOtpAccess>(
     Ok(())
 }
 
-fn print_onerom_info(onerom: &ParsedDevice) -> Result<(), Error> {
+pub(crate) fn print_onerom_info(onerom: &ParsedDevice) -> Result<(), Error> {
     if let Some(sdrr) = onerom.as_original() {
         if let Some(info) = sdrr.flash.as_ref() {
             let json =
@@ -356,11 +361,37 @@ pub fn unrecognised_firmware_error(reasons: &[ParseError]) -> Error {
     Error::Other(unrecognised_firmware_lines(reasons).join("\n"))
 }
 
-/// The lines `inspect slots` prints for a slot's firmware overrides, empty
-/// where none is set.
-pub(crate) fn override_lines(overrides: &onerom_metadata::OneromFirmwareOverrides) -> Vec<String> {
+/// The lines printed for `slot`'s firmware overrides, empty where none is set.
+pub(crate) fn slot_override_lines(slot: &OneromRomSlot) -> Vec<String> {
+    let overrides = slot.firmware_overrides.clone().unwrap_or_default();
+    override_lines(&overrides, forces_16_bit(slot))
+}
+
+/// Whether `slot` was built with force-16-bit, which isn't stored as an
+/// override. A chip with an 8-bit mode is served as 16-bit `AlgData0` only
+/// with force-16-bit. See onerom-gen's `reads_byte_pin`.
+fn forces_16_bit(slot: &OneromRomSlot) -> bool {
+    let has_8_bit_mode = slot
+        .roms
+        .first()
+        .and_then(|rom| ChipType::try_from_str(&rom.rom_type))
+        .is_some_and(|chip| chip.supports_bit_mode(8));
+    has_8_bit_mode
+        && slot.alg.as_ref().is_some_and(|alg| {
+            matches!(
+                alg.alg_data,
+                OneromAlgDataConfig::AlgData0 { word_size: 16, .. }
+            )
+        })
+}
+
+/// The lines for `overrides` and force-16-bit, empty where none is set.
+pub(crate) fn override_lines(
+    overrides: &OneromFirmwareOverrides,
+    force_16_bit: bool,
+) -> Vec<String> {
     let mut lines = Vec::new();
-    if !overrides.any_present() {
+    if !overrides.any_present() && !force_16_bit {
         return lines;
     }
     lines.push("    Firmware overrides:".to_string());
@@ -388,7 +419,17 @@ pub(crate) fn override_lines(overrides: &onerom_metadata::OneromFirmwareOverride
     if let Some(standby) = overrides.standby() {
         lines.push(format!("      Standby at boot: {standby}"));
     }
+    if let Some(ns) = overrides.addr_mon_min_cs_act_ns() {
+        lines.push(format!("      {}", addr_mon_min_cs_act_text(ns)));
+    }
+    if force_16_bit {
+        lines.push("      Force 16-bit".to_string());
+    }
     lines
+}
+
+fn addr_mon_min_cs_act_text(ns: u16) -> String {
+    format!("Address monitor minimum CS-active time: {ns}ns")
 }
 
 /// Print a device's slot configuration.
@@ -483,6 +524,9 @@ pub async fn output_slot_info(
     print!("{prefix}");
     println!("  {}", slot_count_line(rom_count, selected, standby));
     if let Some(line) = reserved_pins_line(parsed) {
+        println!("{prefix}  {line}");
+    }
+    if let Some(line) = addr_mon_min_cs_act_line(parsed) {
         println!("{prefix}  {line}");
     }
 
@@ -594,11 +638,9 @@ pub async fn output_slot_info(
                     );
                 }
 
-                if let Some(overrides) = &slot.firmware_overrides {
-                    for line in override_lines(overrides) {
-                        print!("{prefix}");
-                        println!("{line}");
-                    }
+                for line in slot_override_lines(slot) {
+                    print!("{prefix}");
+                    println!("{line}");
                 }
 
                 for (j, rom) in slot.roms.iter().enumerate() {
@@ -653,6 +695,12 @@ pub(crate) fn reserved_pins_line(parsed: &ParsedDevice) -> Option<String> {
     (!reserved.is_empty()).then(|| format!("Reserved pins: {reserved}"))
 }
 
+pub(crate) fn addr_mon_min_cs_act_line(parsed: &ParsedDevice) -> Option<String> {
+    parsed
+        .addr_mon_min_cs_act_ns()
+        .map(addr_mon_min_cs_act_text)
+}
+
 /// Print one plugin line (and, when verbose, its detail).
 ///
 /// Resolves the plugin's image `source` to a friendly name via `onerom-app`.
@@ -700,12 +748,6 @@ pub async fn cmd_slots(options: &Options, args: &InspectSlotsArgs) -> Result<(),
     let device = options.device.as_ref().unwrap();
 
     output_slot_info(device, options, "", &[]).await
-}
-
-pub async fn cmd_image(options: &Options, args: &InspectImageArgs) -> Result<(), Error> {
-    check_device(options, args, false)?;
-    let _device = options.device.as_ref().unwrap();
-    Err(Error::Unimplemented("inspect image".into()))
 }
 
 // Outputs some bytes of data read from the device, either to the console as a
@@ -766,18 +808,27 @@ pub async fn cmd_peek_memory(options: &Options, args: &InspectPeekMemoryArgs) ->
 /// recognise is shown raw rather than guessed at.
 ///
 /// The device reports a reserved pin as `free` or `input forced`, and a data
-/// pin in standby as serving driven.
+/// pin in standby as serving driven. Every use of a GPIO with more than one is
+/// listed.
 fn gpio_use_label(entry: &GpioEntry, reserved: bool, standby: bool) -> String {
-    match entry.gpio_use() {
-        Some(GpioUse::Free | GpioUse::InputForced) if reserved => "reserved".to_string(),
-        Some(GpioUse::Free) => "free".to_string(),
-        Some(GpioUse::ServingRead) => "serving (read)".to_string(),
-        Some(GpioUse::ServingDriven) if standby => "standby".to_string(),
-        Some(GpioUse::ServingDriven) => "serving (driven)".to_string(),
-        Some(GpioUse::SystemPin) => "system".to_string(),
-        Some(GpioUse::InputForced) => "input forced".to_string(),
-        None => format!("unknown ({})", entry.gpio_use_raw),
+    let mut labels: Vec<String> = Vec::new();
+    for gpio_use in entry.gpio_uses() {
+        let label = match gpio_use {
+            Ok(GpioUse::Free | GpioUse::InputForced) if reserved => "reserved".to_string(),
+            Ok(GpioUse::Free) => "free".to_string(),
+            Ok(GpioUse::ServingRead) => "serving (read)".to_string(),
+            Ok(GpioUse::ServingDriven) if standby => "standby".to_string(),
+            Ok(GpioUse::ServingDriven) => "serving (driven)".to_string(),
+            Ok(GpioUse::SystemPin) => "system".to_string(),
+            Ok(GpioUse::InputForced) => "input forced".to_string(),
+            Ok(GpioUse::Plugin) => "plugin".to_string(),
+            Err(raw) => format!("unknown ({raw})"),
+        };
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
     }
+    labels.join(", ")
 }
 
 /// What the table shows when a column has nothing to say.
@@ -1353,14 +1404,15 @@ mod tests {
     }
 
     /// A device's worth of entries, using the same `use` category throughout so
-    /// a test can pick out the column it cares about. The wire's fourth byte is
-    /// reserved and is not represented here.
+    /// a test can pick out the column it cares about. They have no uses, like
+    /// entries from a device without `ONEROM_FEAT_GPIO_USES`.
     fn entries(count: u8, gpio_use: u8) -> Vec<GpioEntry> {
         (0..count)
             .map(|gpio| GpioEntry {
                 gpio_use_raw: gpio_use,
                 level: u8::from(gpio.is_multiple_of(2)),
                 is_output: u8::from(gpio.is_multiple_of(3)),
+                uses: None,
             })
             .collect()
     }
@@ -1757,6 +1809,7 @@ mod tests {
         assert_eq!(use_of(GpioUse::Free, true), "reserved");
         assert_eq!(use_of(GpioUse::InputForced, true), "reserved");
         assert_eq!(use_of(GpioUse::ServingRead, true), "serving (read)");
+        assert_eq!(use_of(GpioUse::Plugin, true), "plugin");
         assert_eq!(use_of(GpioUse::InputForced, false), "input forced");
     }
 
@@ -1792,6 +1845,39 @@ mod tests {
         assert_eq!(slot_heading(2, false, true), "Slot 2:");
     }
 
+    /// The global and per-slot values are displayed rounded up to the
+    /// metadata's units.
+    #[tokio::test]
+    async fn addr_mon_min_cs_act_ns_is_displayed_where_set() {
+        use crate::test_board::{holds, image_addr_mon, shows};
+        use onerom_cli::image::parse_firmware;
+
+        let parsed = parse_firmware(&image_addr_mon(Some(141), &[Some(300), None]).await).await;
+        let line = addr_mon_min_cs_act_line(&parsed).unwrap();
+        assert!(holds(&line, &["150ns"]), "{line}");
+        let slots = &parsed.as_schema().unwrap().metadata().unwrap().rom_slots;
+        let lines = |slot: usize| slot_override_lines(&slots[slot]);
+        assert!(shows(lines(0), &["300ns"]), "{:?}", lines(0));
+        assert!(lines(1).is_empty(), "{:?}", lines(1));
+
+        let unset = parse_firmware(&image_addr_mon(None, &[None]).await).await;
+        assert_eq!(addr_mon_min_cs_act_line(&unset), None);
+    }
+
+    /// A 27C400 slot built with force-16-bit is detected and one built without
+    /// it isn't.
+    #[tokio::test]
+    async fn force_16_bit_is_detected_where_set() {
+        use crate::test_board::image_overrides;
+        use onerom_cli::image::parse_firmware;
+
+        let overrides = serde_json::json!({ "fire": { "force_16_bit": true } });
+        let parsed = parse_firmware(&image_overrides(overrides).await).await;
+        let slots = &parsed.as_schema().unwrap().metadata().unwrap().rom_slots;
+        assert!(forces_16_bit(&slots[0]));
+        assert!(!forces_16_bit(&slots[1]));
+    }
+
     /// Print every shape the table takes, for eyeballing:
     /// `cargo test -p onerom-cli --bin onerom show_gpio_table -- --nocapture`.
     #[test]
@@ -1812,6 +1898,7 @@ mod tests {
                         },
                         level: u8::from(gpio.is_multiple_of(2)),
                         is_output: u8::from(driven.contains(&gpio)),
+                        uses: None,
                     })
                     .collect()
             };

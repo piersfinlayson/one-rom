@@ -10,8 +10,13 @@
 //! is what stops a scenario depending on which of those the shim happens to
 //! model and which the firmware does.
 
+use std::sync::Mutex;
+
 use onerom_fw_emulator::Emulator;
-use onerom_metadata::onerom_firmware_flag_t;
+use onerom_metadata::{
+    FLASH_CS0_BASE_ADDR, SYSTEM_PLUGIN_OFFSET, SYSTEM_PLUGIN_SIZE, USB_DPRAM_SIZE,
+    USER_PLUGIN_OFFSET, USER_PLUGIN_SIZE, onerom_firmware_flag_t,
+};
 use onerom_plugin_tester::harness::Plugin;
 
 use crate::ffi;
@@ -290,6 +295,21 @@ impl<'a> Device<'a> {
         Ok(buf)
     }
 
+    pub fn usb_dpram(&mut self) -> &mut [u8] {
+        // SAFETY: a static buffer of USB_DPRAM_SIZE bytes.
+        unsafe { std::slice::from_raw_parts_mut(ffi::stub_usb_dpram(), USB_DPRAM_SIZE) }
+    }
+
+    pub fn tinyusb_inits_and_resets(&self) -> (u32, u32) {
+        // SAFETY: reads shim counters.
+        unsafe {
+            (
+                ffi::usb_host_test_tinyusb_inits(),
+                ffi::usb_host_test_controller_resets(),
+            )
+        }
+    }
+
     /// Whether picoboot claims a control request before the plugin's own
     /// handler sees it.
     pub fn set_picoboot_claims_control(&mut self, claims: bool) {
@@ -504,4 +524,63 @@ pub fn reset_endpoint() {
             ffi::usb_host_test_take_tx(buf.as_mut_ptr(), pending);
         }
     }
+}
+
+static SAVED_SLOT_ADDRS: Mutex<Option<[u32; 2]>> = Mutex::new(None);
+
+const PLUGIN_REGIONS: [(u32, u32); 2] = [
+    (
+        FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET,
+        SYSTEM_PLUGIN_SIZE as u32,
+    ),
+    (
+        FLASH_CS0_BASE_ADDR + USER_PLUGIN_OFFSET,
+        USER_PLUGIN_SIZE as u32,
+    ),
+];
+
+/// Make ROM slots 0 and 1 a valid system plugin and user plugin until
+/// [`restore_rom_slots`].  Returns false without changing anything if the
+/// config has fewer than two ROM slots.
+///
+/// The firmware's entry flags follow from the headers.  The plugin starts with
+/// the flags [`set_entry_flags`] sets.
+pub fn install_plugin_slots(emu: &Emulator, user_properties1: u8) -> bool {
+    if emu.get_flash_slot_count(0) < 2 {
+        return false;
+    }
+
+    let mut saved = SAVED_SLOT_ADDRS.lock().unwrap();
+    if saved.is_none() {
+        *saved = Some([0, 1].map(Emulator::rom_slot_flash_addr));
+        Emulator::install_plugin_slots();
+    }
+
+    for (index, ((region, size), properties1)) in
+        PLUGIN_REGIONS.iter().zip([0, user_properties1]).enumerate()
+    {
+        let index = index as u8;
+        Emulator::set_plugin_header(index, region + size - 1, 0, properties1);
+        Emulator::set_rom_slot_flash_addr(index, *region);
+    }
+    true
+}
+
+pub fn plugin_slots_installed() -> bool {
+    SAVED_SLOT_ADDRS.lock().unwrap().is_some()
+}
+
+pub fn restore_rom_slots() {
+    if let Some(addrs) = SAVED_SLOT_ADDRS.lock().unwrap().take() {
+        Emulator::restore_rom_slots();
+        for (index, addr) in addrs.into_iter().enumerate() {
+            Emulator::set_rom_slot_flash_addr(index as u8, addr);
+        }
+    }
+}
+
+/// [`reset_endpoint`] sets the flags back to zero.
+pub fn set_entry_flags(flags: u8) {
+    // SAFETY: called before the plugin starts.
+    unsafe { ffi::usb_host_test_set_entry_flags(flags) };
 }

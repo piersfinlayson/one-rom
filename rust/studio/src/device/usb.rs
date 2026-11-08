@@ -11,6 +11,7 @@ use onerom_app::FlashPlan;
 use onerom_cli::Error as CliError;
 use onerom_cli::device::flash_chips;
 use onerom_cli::error::plan_error;
+use onerom_cli::read_back::read_back_picoboot;
 use onerom_cli::usb::{read_board_size, read_chip_info, read_commissioning, run_flash_plan};
 use onerom_config::Model;
 use onerom_config::hw::Board;
@@ -20,8 +21,10 @@ use picoboot::{Picoboot, Target};
 use std::time::Duration;
 
 use crate::app::AppMessage;
+use crate::device::probe::FIRE_ONLY;
 use crate::device::{
     Address, BoardDetails, Client, Message, UNKNOWN_FLASH_STEP, check_commissioned_board,
+    load_error,
 };
 use crate::hw::HardwareInfo;
 use crate::internal_error;
@@ -284,6 +287,16 @@ pub async fn read_async(
             }
         }
     }
+}
+
+/// Reads a Fire One ROM back into the config that builds it.  Sends
+/// Message::ReadBackResult when done.
+pub async fn read_back_async(usb_device: UsbDeviceType, client: Client) -> AppMessage {
+    let result = match usb_device {
+        UsbDeviceType::Ice(_) => Err(FIRE_ONLY.to_string()),
+        UsbDeviceType::Fire(fire) => read_back_picoboot(&fire.picoboot).await.map_err(load_error),
+    };
+    Message::ReadBackResult(client, result).into()
 }
 
 /// Read the board size and commissioned board of a Fire device.  Sends

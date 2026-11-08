@@ -12,7 +12,7 @@ use onerom_app::{
     FLASH_DEVINFO_CS1_SIZE_SHIFT, FLASH_DEVINFO_D8H_ERASE_SUPPORTED, FLASH_DEVINFO_SIZE_BITS,
     LOCK1_READ_ONLY, OtpReport, PageLock, SignerTable,
 };
-use onerom_cli::otp::{Commissioning, escape_controls, format_date};
+use onerom_cli::otp::{Commissioning, board_size_text, escape_controls, format_date};
 use onerom_config::hw::Board;
 use onerom_metadata::otp::pico_otp::whitelabel::{
     OTP_ROW_USB_BOOT_FLAGS, OTP_ROW_USB_BOOT_FLAGS_R1, OTP_ROW_USB_BOOT_FLAGS_R2,
@@ -22,7 +22,8 @@ use onerom_metadata::otp::{AreaIssue, CommissioningArea, CommissioningInstance, 
 use onerom_metadata::{
     MaybeKnown, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_R1_ROW,
     OTP_BOOT_FLAGS0_R2_ROW, OTP_BOOT_FLAGS0_ROW, OTP_COMMISSIONING_SIG_LEN, OTP_FLASH_DEVINFO_ROW,
-    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OneromFlashSize, OneromOtpEntry,
+    OTP_FLASH_PARTITION_SLOT_SIZE_ROW, OTP_PAGE_ROWS, OneromBoardSize, OneromFlashSize,
+    OneromOtpEntry,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,20 +33,39 @@ use onerom_metadata::{
 /// A label and its value, shown as a line.
 pub type Labelled = (String, String);
 
-/// `instance`'s board type, manufacturer and date with their labels. A value
-/// the instance doesn't have is left out.
-pub fn instance_values(instance: &CommissioningInstance) -> Vec<Labelled> {
+/// `instance`'s values with their labels, other than its size and signing key.
+/// A value the instance doesn't have is left out. `contact` follows the
+/// manufacturer where it's `Some`.
+pub fn instance_values(instance: &CommissioningInstance, contact: Option<&str>) -> Vec<Labelled> {
     [
         ("Board type:", instance.board().map(escape_controls)),
+        ("Revision:", instance.revision().map(escape_controls)),
         (
             "Manufacturer:",
             instance.manufacturer().map(escape_controls),
         ),
+        ("Contact:", contact.map(str::to_string)),
         ("Date:", instance.date().map(format_date)),
+        ("Batch:", instance.batch().map(escape_controls)),
     ]
     .into_iter()
     .filter_map(|(label, value)| Some((label.to_string(), value?)))
     .collect()
+}
+
+/// The `Board size:` value for `size`, the size OTP configures. Where
+/// `current` was commissioned as another size, that size follows.
+pub fn board_size_value(
+    size: MaybeKnown<OneromBoardSize>,
+    current: Option<&CommissioningInstance>,
+) -> String {
+    let text = board_size_text(size);
+    match current.and_then(CommissioningInstance::size) {
+        Some(commissioned) if commissioned != size => {
+            format!("{text} (commissioned as {})", board_size_text(commissioned))
+        }
+        _ => text,
+    }
 }
 
 /// `values` a line each, indented two spaces, with the values lined up past
@@ -113,12 +133,9 @@ pub fn unknown_keys(entries: &[StoreEntry]) -> impl Iterator<Item = UnknownKey> 
 }
 
 impl UnknownKey {
-    /// The entry as `key KEY (N bytes) at row ROW`.
+    /// The entry as `KEY (N bytes) at row ROW`.
     pub fn text(&self) -> String {
-        format!(
-            "key {} ({} bytes) at row {:#05x}",
-            self.key, self.len, self.row
-        )
+        format!("{} ({} bytes) at row {:#05x}", self.key, self.len, self.row)
     }
 }
 
@@ -161,7 +178,8 @@ pub fn unknown_version(area: &CommissioningArea) -> Option<String> {
 ///
 /// Always, where they apply:
 /// - `Commissioned: unknown` for an area holding an unknown version
-/// - each skipped key
+/// - the skipped keys, a line each with `verbose` and counted in one line
+///   otherwise
 /// - a board that differs from the firmware's
 ///
 /// `scan` asks for `details` only with `--verbose`. The lines don't say
@@ -192,7 +210,7 @@ pub fn device_lines(
         (Some(unknown), _) => lines.push(format!("Commissioned: {unknown}")),
         (None, Some(current)) => {
             if details {
-                let mut values = instance_values(current);
+                let mut values = instance_values(current, None);
                 if verbose && let Some(signer) = current.signer() {
                     values.push(("Signing key:".to_string(), signer_name(signer, table)));
                 }
@@ -212,16 +230,30 @@ pub fn device_lines(
         (None, None) if details && verbose => lines.push("Commissioned: no".to_string()),
         (None, None) => {}
     }
-    lines.extend(skipped_keys(area));
+    lines.extend(skipped_keys(area, verbose));
     lines
 }
 
 /// A line for each entry in `area` whose key this build doesn't know.
-fn skipped_keys(area: &CommissioningArea) -> impl Iterator<Item = String> + '_ {
-    area.instances()
+fn skipped_keys(area: &CommissioningArea, verbose: bool) -> Vec<String> {
+    let unknown: Vec<UnknownKey> = area
+        .instances()
         .iter()
         .flat_map(|instance| unknown_keys(instance.entries()))
-        .map(|unknown| format!("Skipped: unknown {}", unknown.text()))
+        .collect();
+    match unknown.len() {
+        0 => Vec::new(),
+        _ if verbose => unknown
+            .iter()
+            .map(|unknown| format!("Skipped: unknown commissioning key {}", unknown.text()))
+            .collect(),
+        1 => {
+            vec!["Skipped: 1 unknown commissioning key. Update the CLI to display it.".to_string()]
+        }
+        count => vec![format!(
+            "Skipped: {count} unknown commissioning keys. Update the CLI to display them."
+        )],
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -252,8 +284,19 @@ pub fn report_lines(report: &OtpReport, verbose: bool, table: &SignerTable) -> V
         lines.extend(
             instances
                 .flat_map(|instance| unknown_keys(instance.entries()))
-                .chain(general_store.flat_map(|store| unknown_keys(store.entries())))
-                .map(|unknown| labelled("Skipped:", format!("unknown {}", unknown.text()))),
+                .map(|unknown| {
+                    labelled(
+                        "Skipped:",
+                        format!("unknown commissioning key {}", unknown.text()),
+                    )
+                })
+                .chain(
+                    general_store
+                        .flat_map(|store| unknown_keys(store.entries()))
+                        .map(|unknown| {
+                            labelled("Skipped:", format!("unknown key {}", unknown.text()))
+                        }),
+                ),
         );
     }
     lines.extend(white_label_lines(report));
@@ -284,10 +327,11 @@ fn labelled(label: &str, value: impl std::fmt::Display) -> String {
 /// it.
 fn size_lines(report: &OtpReport, verbose: bool) -> Vec<String> {
     let size = match report.size {
-        Some(BoardSize::M) => "M",
-        Some(BoardSize::L) => "L",
-        None => "other",
+        Some(BoardSize::M) => OneromBoardSize::BoardSizeM,
+        Some(BoardSize::L) => OneromBoardSize::BoardSizeL,
+        None => OneromBoardSize::BoardSizeOther,
     };
+    let size = board_size_value(MaybeKnown::Known(size), report.commissioning.current());
     let mut lines = vec![labelled("Board size:", size)];
     if verbose {
         let enabled = majority(report.boot_flags0) & OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE != 0;
@@ -357,7 +401,7 @@ fn commissioning_lines(report: &OtpReport, table: &SignerTable, verbose: bool) -
     let Some(current) = area.current() else {
         return vec![labelled("Commissioned:", "no")];
     };
-    let mut values = instance_values(current);
+    let mut values = instance_values(current, None);
     if let Some(signer) = current.signer() {
         values.push(("Signing key:".to_string(), signer_name(signer, table)));
     }
@@ -650,9 +694,22 @@ fn entry_text(entry: &StoreEntry) -> String {
                 OneromOtpEntry::OtpKeyCommissioningSig { signature } => {
                     format!("COMMISSIONING_SIG {}", hex::encode(signature))
                 }
+                OneromOtpEntry::OtpKeyCommissioningRevision { revision } => {
+                    format!("COMMISSIONING_REVISION {}", escape_controls(revision))
+                }
+                OneromOtpEntry::OtpKeyCommissioningBatch { batch } => {
+                    format!("COMMISSIONING_BATCH {}", escape_controls(batch))
+                }
+                OneromOtpEntry::OtpKeyCommissioningSize { size } => {
+                    format!("COMMISSIONING_SIZE {size}")
+                }
                 OneromOtpEntry::Unknown { key, params } => {
                     format!("unknown key {key}, {} bytes", params.len())
                 }
+                // Every key in this build's onerom-metadata is listed above,
+                // so this arm is reached only when the CLI is built against a
+                // newer onerom-metadata.
+                other => format!("{other:?}"),
             };
             format!("Row {row:#05x}: {entry}")
         }
@@ -821,12 +878,19 @@ mod tests {
         assert_eq!(verbose, newer);
         let blank = device_lines(None, &area_of(&[0]), (true, true), &table);
         assert_ne!(verbose, blank);
-        // An instance holding key 9. It ends before its signature. The line
-        // holds the key, its length in bytes and its row.
+        // An instance holding key 9. It ends before its signature. Without
+        // --verbose one line contains the count. With it the line contains the
+        // key, its length in bytes and its row.
         let skipped = area_of(&[OTP_STORE_MAGIC, 1, 9, 4, 0x0201, 0x0403, 0, 0]);
-        let skipped = device_lines(None, &skipped, (true, false), &table);
-        assert_eq!(skipped.len(), 1, "{skipped:?}");
-        assert!(holds(&skipped[0], &["9", "4", "0x0c2"]), "{skipped:?}");
+        let quiet = device_lines(None, &skipped, (true, false), &table);
+        assert_eq!(quiet.len(), 1, "{quiet:?}");
+        assert!(
+            holds(&quiet[0], &["1", "unknown commissioning key"]),
+            "{quiet:?}"
+        );
+        let verbose = device_lines(None, &skipped, (true, true), &table);
+        let verbose = verbose.last().unwrap();
+        assert!(holds(verbose, &["9", "4", "0x0c2"]), "{verbose:?}");
     }
 
     #[test]
@@ -998,7 +1062,8 @@ mod tests {
                     &["0x0c9", "COMMISSIONING_MANUFACTURER", "piers.rocks"],
                     &["0x0d1", "COMMISSIONING_DATE", "20260101"],
                     &["0x0d7", "COMMISSIONING_SIGNER", "1"],
-                    &["0x0da", "COMMISSIONING_SIG", &signature],
+                    &["0x0da", "COMMISSIONING_SIZE", "2"],
+                    &["0x0dd", "COMMISSIONING_SIG", &signature],
                 ]
             ),
             "{lines:?}"

@@ -10,8 +10,9 @@ use airfrog_rpc::io::Reader;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use onerom_app::{FlashPlan, FlashStep, OtpAccess, OtpError};
-use onerom_cli::device::{board_size, flash_chips};
+use onerom_cli::device::{board_size, flash_chips, known_board_size};
 use onerom_cli::error::plan_error;
+use onerom_cli::read_back::device_read_back_error;
 use onerom_cli::usb::{FLASH_BASE, RAM_BASE};
 use onerom_config::hw::Board;
 use onerom_fw_parser::Parser;
@@ -26,6 +27,7 @@ use tokio::task::spawn_blocking;
 use crate::app::AppMessage;
 use crate::device::{
     Address, BoardDetails, Client, Message, UNKNOWN_FLASH_STEP, check_commissioned_board,
+    load_error,
 };
 use crate::hw::HardwareInfo;
 
@@ -282,6 +284,43 @@ pub async fn read_board_details_async(
     };
     Message::BoardDetailsRead(client, details).into()
 }
+
+/// Reads a Fire One ROM back through a probe into the config that builds it.
+/// Sends Message::ReadBackResult when done.
+pub async fn read_back_async(
+    probe: ProbeType,
+    client: Client,
+    hw_info: HardwareInfo,
+) -> AppMessage {
+    let Some(mcu) = hw_info.mcu_variant.filter(|_| hw_info.is_fire()) else {
+        let result = Err(FIRE_ONLY.to_string());
+        return Message::ReadBackResult(client, result).into();
+    };
+    let chip_id = mcu.chip_id().to_string();
+
+    let result = spawn_blocking(move || {
+        let mut session =
+            open_session(probe.inner().clone(), chip_id).map_err(|e| e.to_string())?;
+        let size = known_board_size(read_board_size(&mut session));
+        futures::executor::block_on(async {
+            let mut reader = ProbeReader {
+                session: &mut session,
+            };
+            let parsed = Parser::with_base_flash_address(&mut reader, FLASH_BASE, RAM_BASE)
+                .parse_device()
+                .await;
+            onerom_app::read_back(&parsed, &mut reader, size)
+                .await
+                .map_err(|e| load_error(device_read_back_error(e)))
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()));
+    Message::ReadBackResult(client, result).into()
+}
+
+/// Error text for reading back an Ice device.
+pub(crate) const FIRE_ONLY: &str = "Only a One ROM Fire can be loaded";
 
 // Opens a probe and attaches to the chip
 fn open_session(probe: DebugProbeInfo, chip_id: String) -> Result<Session, ProbeError> {

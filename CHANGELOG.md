@@ -2,6 +2,152 @@
 
 All notable changes between versions are documented in this file.
 
+## v0.8.1 - unreleased
+
+Headline changes in this release:
+- A One ROM can be updated, cloned to another One ROM and have its config and ROM images saved to a PC.
+- The plugin API has substantial enhancements, including allowing plugins to reserve nearly all types of RP2350 MCU hardware peripherals.
+- The USB plugin can now optionally expose a second serial interface, useful for some plugins.
+
+There are a very few non-backwards compatible changes listed below - see `Breaking:` items.  These are all minor and unlikely to affect the vast majority of users so a decision has been made not to bump One ROM's minor version.
+
+In detail:
+- RBCP can now be tuned for machines with glitchy chip select lines, using the `addr_mon_min_cs_act_ns` firmware override.
+- The code optimisation of the core firmware binary has been modified to reduce the overall binary size, allowing new function to be squeezed into the 48KB maximum.  This has changed some timings in the firmware, with the changes focused on code that runs after ROM serving has been set up.
+- CLI:
+  - `--config` on `onerom program` and `onerom firmware build` can be an http(s) URL.
+  - Add `onerom update`, `onerom clone` and `onerom save`.
+  - Fix: `onerom` no longer crashes when its output is piped to a program that exits early, for example `head`.
+  - Fix: a reboot no longer fails when the One ROM resets before the CLI reads its reply to the reboot command.
+  - When the One ROM selected with `--serial` can't be opened the error message is now "could not be opened".
+  - `onerom monitor log` reads One ROM's log from RAM when a plugin has exclusive use of the serial port.
+  - `onerom inspect peek memory` can also read USB DPRAM.
+  - `onerom console --serial-port 2` opens optional serial port 2.
+  - `firmware inspect` displays each slot's firmware overrides.
+  - Breaking: `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.
+  - Breaking: `hardware commission` and `hardware sign` add the board's size, and any `--revision` and `--batch`, to the signed commissioning data. An unused signature from an earlier CLI fails with `hardware commission --signature`. One ROMs already commissioned aren't affected.
+  - Breaking: `hardware commission` and `hardware sign` fail with a manufacturer name longer than 32 characters.
+  - `hardware request-signature`'s link contains the CLI version. A signing request from a CLI before v0.6.0 is rejected.
+  - Breaking: `onerom program` fails on options it previously ignored when used with `--firmware` or `--base-firmware`, for example `--instance-name`.
+  - Breaking: `onerom program --base-firmware` without `--config` or `--slot` requires `--no-config`.
+  - Fix/Breaking: `onerom console --no-echo` requires `--raw`.
+- Web Programmer:
+  - Moves to logic shared with the CLI to combine and verify built firmware.
+  - One ROM Builder loads config and ROM images from a One ROM or firmware file.
+  - The One ROM Builder tab's Save Image button saves a slot's ROM image to a file.
+  - One ROM Builder no longer requires an image for a RAM slot.
+- Studio:
+  - Moves to logic shared with the CLI to combine and verify built firmware.
+  - The Analyse tab's Open in Create button copies the configuration and ROM images of a One ROM or firmware file into the Create tab.
+- Lab:
+  - Long running operations, like ROM reads, now run on the second core, so USB isn't impacted.
+  - `R` queries One ROM information using RBCP.
+  - `a` is a batch read that reads the ROM and queries One ROM information.
+  - `x` reads a chip continuously at MHz rates.
+  - `d` drives a chip's data lines as a square wave, with the chip deselected.
+  - `H` emulates a host's bus timing, including chip select glitches.
+  - `u` sends and receives serial traffic on a pair of header pins.
+  - Fix: Lab no longer hangs reading a chip with fixed chip selects, for example the HM7641.
+  - Fix: selecting an unsupported chip type no longer hangs Lab.
+  - `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
+- Plugins:
+  - blink 0.1.1
+    - Requires firmware 0.7.2.
+    - Yields so the other plugin can enter exclusive mode.
+  - ext-flash 0.1.1
+    - Sets `ORA_PROPERTY1_SUPPORTS_YIELD` so the other plugin can enter exclusive mode.
+  - host-control 0.1.7
+    - Requires firmware 0.8.1.
+    - Supports RBCP's `REBOOT` command.
+    - Adds Device Info extensions which expose One ROM's commissioning values, commissioning instance and metadata.
+  - USB 0.3.3
+    - Requires firmware 0.8.1.
+    - Reserves its USB DPRAM in the plugin header and reduces its usage by 128 bytes.
+    - Fix: a host request to halt an unused endpoint no longer reads past the end of tinyusb's endpoint table.
+    - With firmware 0.8.1, supports a plugin with exclusive use of the serial port.
+    - A user plugin can configure the USB plugin's two serial ports.
+    - USB DPRAM can be read over picobootx.
+    - REBOOT2's delay now starts when the command is received instead of after the host reads the reply, matching the RP2350 bootloader.
+    - Fix: REBOOT2 with a delay of 0 now reboots immediately instead of never rebooting.
+    - The GPIO query reply includes every use of each GPIO.
+    - Reserves the USB controller and its interrupt at launch.
+    - Now reports its max current draw as 100mA.
+  - rgb 0.1.3
+    - Requires firmware 0.7.2.
+    - Yields so the other plugin can enter exclusive mode.
+  - slot-colour 0.1.1
+    - Yields so the other plugin can enter exclusive mode.
+- Plugin APIs:
+  - Breaking: a second `ora_setup_address_monitor()` call now returns `ORA_RESULT_IN_USE`.
+  - Breaking: new result codes may be added in future and applied to existing API calls.  Plugins should handle unexpected failure codes gracefully.
+  - New: `ora_reboot()` can be used to reboot One ROM.
+  - New: `ora_get_commissioning_value()` reads a commissioning value from OTP.
+  - New: `ora_get_commissioning_instance()` reads the current commissioning instance from OTP.
+  - New: `ORA_METADATA_KEY_CHIP_ID` reads the RP2350's chip ID with `ora_get_metadata_uint_at()`.
+  - New: `ora_get_flash_slot_addr()` returns a flash slot's flash address and size.
+  - New: a plugin that sets `ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN` gets exclusive use of the USB serial port.  One ROM's log moves to USB DPRAM in this case.
+  - New: a plugin can choose the ROM slot One ROM boots with `ORA_OVERRIDE1_BOOT_SLOT` and ignore the image select jumpers with `ORA_OVERRIDE1_IGNORE_IMAGE_SELECT`.
+  - New: a plugin can reserve USB DPRAM for a USB controller by using `usb_controller_dpram_size` in its header.
+  - New: `ora_alloc_mem()` allocates memory from a pool shared by both plugins.
+  - New: log channels 2 and 3 when using plugin header fields `channel_2_size` and `channel_3_size`.
+  - New: `ora_get_peer_data()` retrieves peer plugin data blocks.
+  - New: a plugin can claim hardware resources using `ora_claim_hw()`:
+    - DMA channel
+    - UART
+    - I2C
+    - SPI
+    - ADC
+    - USB
+    - SHA256
+    - TRNG
+    - Timer alarm
+    - Spinlock
+    - PWM slice
+    - IRQ
+  - New: a plugin can claim PIO state machines and instructions using `ora_claim_pio()`.
+  - New: a plugin can claim GPIOs using `ora_claim_gpio()`.
+  - New: the plugin header's `irq_handler` field points to the plugin's interrupt handler.  `ora_set_irq_enabled()` enables or disables an interrupt claimed by the plugin.
+  - New: with `ORA_PROPERTY1_RESERVE_USB` set, the firmware reserves the USB controller and its interrupt for the plugin at launch and sets `ORA_ENTRY_FLAG_USB_RESERVED`.
+  - New: `ORA_SYSTEM_PLUGIN` and `ORA_USER_PLUGIN` define a plugin from a setup function and a loop function.  The plugin yields to the other plugin after each loop call, and `ora_delay_ms()` yields until the delay ends.
+  - New: `ora_gpio_info_t::uses`, a bitfield of every `ora_gpio_use_t` that applies to a GPIO.
+  - New: the firmware starts clk_peri for the UARTs and SPIs before starting the plugins, and a plugin can read its frequency with `ORA_METADATA_KEY_CLK_PERI_HZ`.
+  - Deprecated: `ORA_ID_REBOOT_BOOTSEL`.  Use `ORA_ID_REBOOT`.
+  - Deprecated: `ORA_ID_ALLOC` and `ORA_ID_GET_FREE_MEM`, which never allocated memory.  Use `ORA_ID_ALLOC_MEM`.
+  - Deprecated: `ORA_ID_REGISTER_IRQ` and `ORA_ID_ENABLE_IRQ`.  Use `irq_handler` and `ORA_ID_SET_IRQ_ENABLED`.
+  - Deprecated: `ORA_DEFINE_SYSTEM_PLUGIN`, `ORA_DEFINE_USER_PLUGIN` and `ORA_DEFINE_PLUGIN_HEADER`.  Use `ORA_SYSTEM_PLUGIN` and `ORA_USER_PLUGIN`.
+  - Deprecated: `ORA_PROPERTY1_SUPPORTS_USB_RUNNING`, which has no effect.  Use `ORA_OVERRIDE1_DISABLE_VBUS_DETECT`.
+- Other:
+  - Added manufacturer contact details to commissioning signing key tables.
+  - The signing server accepts a size, revision and batch.
+- Fixes:
+  - A slot overclocked to 800MHz now attempts to run at 800MHz not 150MHz.
+  - Two plugins entering exclusive mode at the same time no longer hang both cores.
+  - reboots requested over USB or by a plugin took up to 10 times longer than asked.
+
+To publish:
+- Rust crates (in dependency order):
+  - onerom-metadata-gen 0.2.0
+  - onerom-metadata 0.4.0
+  - onerom-lab-metadata 0.2.0
+  - onerom-gen 0.10.0
+  - onerom-fw-parser 0.11.0
+  - onerom-lab-parser 0.2.0
+  - onerom-app 0.5.0
+  - onerom-fw 0.5.0
+  - onerom-cli 0.6.0
+- Config schema
+- CLI bin 0.6.0
+- Studio 0.2.5
+- One ROM Lab 0.4.1
+- host-control plugin 0.1.7
+- USB plugin 0.3.3
+- blink plugin 0.1.1
+- ext-flash plugin 0.1.1
+- rgb plugin 0.1.3
+- slot-colour plugin 0.1.1
+- one-rom-wasm 0.6.2: rebuild against the published Rust crates
+- one-rom-site: pick up wasm 0.6.2
+
 ## v0.8.0 - 2026-10-06
 
 Headline changes in this release:

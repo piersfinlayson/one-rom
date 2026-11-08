@@ -61,37 +61,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
 
-    // C header output path.  Configurable so CI or the C build system can
-    // redirect it without touching the build script.  The fallback lands
-    // inside the crate build tree; it is always produced, and for consumers
-    // it simply appears under their target/ and is otherwise unused.
+    // C header output path, set by ONEROM_C_HEADER_OUT.  rust/.cargo/config.toml
+    // points it at firmware/generated.  Without it the header goes to OUT_DIR,
+    // where nothing reads it.
     let c_header = env::var(ENV_C_HEADER_OUT)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest_dir.join(C_HEADER_FILE));
+        .unwrap_or_else(|_| out_dir.join(C_HEADER_FILE));
 
-    // Plugin-facing key header.  Redirected to firmware/ora by the workspace
-    // .cargo/config.toml (relative to rust/), the same mechanism as the C
-    // header above; the in-crate fallback is otherwise unused.
+    // Plugin-facing key header, set the same way and pointed at firmware/ora.
     let keys_header = env::var(ENV_KEYS_HEADER_OUT)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest_dir.join(KEYS_HEADER_FILE));
+        .unwrap_or_else(|_| out_dir.join(KEYS_HEADER_FILE));
 
     // Plugin-facing constants header, redirected the same way.
     let constants_header = env::var(ENV_CONSTANTS_HEADER_OUT)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest_dir.join(CONSTANTS_HEADER_FILE));
+        .unwrap_or_else(|_| out_dir.join(CONSTANTS_HEADER_FILE));
 
     // Linker-script fragment, redirected to firmware/generated the same way as
     // the C header.
     let linker_script = env::var(ENV_LINKER_SCRIPT_OUT)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest_dir.join(LINKER_SCRIPT_FILE));
+        .unwrap_or_else(|_| out_dir.join(LINKER_SCRIPT_FILE));
 
     // Plugin-facing linker-script fragment, redirected to firmware/ora the same
     // way as the plugin-facing headers.
     let linker_constants = env::var(ENV_LINKER_CONSTANTS_OUT)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| manifest_dir.join(LINKER_CONSTANTS_FILE));
+        .unwrap_or_else(|_| out_dir.join(LINKER_CONSTANTS_FILE));
 
     // -------------------------------------------------------------------------
     // Cargo rerun-if-changed directives

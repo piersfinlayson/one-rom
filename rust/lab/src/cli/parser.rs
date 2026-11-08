@@ -16,15 +16,19 @@
 
 use alloc::format;
 use alloc::string::String;
+use core::ops::RangeInclusive;
 
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 use onerom_config::mcu::Family;
+use onerom_config::pin::{Pin, ResolvedPin, parse_pin};
 
 use super::CsPolaritySetting;
 use super::OutputFormat;
 use super::editor::LineEditor;
 use crate::error::Error;
+use crate::fast_read::MAX_DELAY_CYCLES;
+use crate::uart::Mode;
 
 // ---------------------------------------------------------------------------
 // Colon-syntax splitting
@@ -129,13 +133,23 @@ async fn prompt(editor: &mut LineEditor, msg: &str) -> Result<Option<String>, Er
 /// - Blank input or Ctrl-C accepts `default` if one is set.
 /// - Ctrl-C with no default returns `Err(Cancelled)`.
 /// - An unrecognised name prints a message and re-prompts.
+/// - Where `board` is set, a chip type `l` doesn't list for it fails with
+///   [`Error::ChipNotOnBoard`] inline and re-prompts otherwise.
 pub async fn require_chip(
     token: Option<&str>,
     default: Option<ChipType>,
+    board: Option<Board>,
     editor: &mut LineEditor,
 ) -> Result<ChipType, Error> {
+    let on_board = |chip| board.is_none_or(|board| super::board_has_chip(board, chip));
+
     if let Some(t) = token {
-        return ChipType::try_from_str(t).ok_or(Error::InvalidChip);
+        let chip = ChipType::try_from_str(t).ok_or(Error::InvalidChip)?;
+        return if on_board(chip) {
+            Ok(chip)
+        } else {
+            Err(Error::ChipNotOnBoard)
+        };
     }
 
     loop {
@@ -145,29 +159,37 @@ pub async fn require_chip(
             prompt(editor, "Chip type: ").await?
         };
 
-        let s = match input {
+        let (chip, s) = match input {
             None => return Err(Error::Cancelled),
             Some(s) if s.is_empty() => match default {
-                Some(d) => return Ok(d),
+                Some(d) => (d, String::from(d.name())),
                 None => {
                     super::send_line("Chip type is required. Use 'l' to list supported chips.")
                         .await?;
                     continue;
                 }
             },
-            Some(s) => s,
+            Some(s) => match ChipType::try_from_str(&s) {
+                Some(c) => (c, s),
+                None => {
+                    super::send_line(&format!(
+                        "Unknown chip '{}'. Use 'l' to list supported chips.",
+                        s
+                    ))
+                    .await?;
+                    continue;
+                }
+            },
         };
 
-        match ChipType::try_from_str(&s) {
-            Some(c) => return Ok(c),
-            None => {
-                super::send_line(&format!(
-                    "Unknown chip '{}'. Use 'l' to list supported chips.",
-                    s
-                ))
-                .await?;
-            }
+        if on_board(chip) {
+            return Ok(chip);
         }
+        super::send_line(&format!(
+            "Chip '{}' isn't supported on this board. Use 'l' to list supported chips.",
+            s
+        ))
+        .await?;
     }
 }
 
@@ -330,6 +352,254 @@ pub async fn get_interval(
             Err(_) => {
                 super::send_line(&format!("Invalid number '{}'.", s)).await?;
             }
+        }
+    }
+}
+
+/// Resolve a delay of 0 to [`MAX_DELAY_CYCLES`] cycles from an inline token or
+/// an interactive prompt.  Blank input returns `default` and Ctrl-C returns
+/// [`Error::Cancelled`].
+pub async fn get_delay(
+    token: Option<&str>,
+    default: u32,
+    label: &str,
+    editor: &mut LineEditor,
+) -> Result<u32, Error> {
+    if let Some(t) = token {
+        let n = t.trim().parse::<u32>().map_err(|_| Error::Syntax)?;
+        if n > MAX_DELAY_CYCLES {
+            return Err(Error::Syntax);
+        }
+        return Ok(n);
+    }
+
+    loop {
+        let input = prompt(editor, &format!("{label} (cycles) [{}]: ", default)).await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match s.parse::<u32>() {
+            Ok(n) if n <= MAX_DELAY_CYCLES => return Ok(n),
+            Ok(_) => {
+                super::send_line(&format!(
+                    "{label} must be at most {MAX_DELAY_CYCLES} cycles."
+                ))
+                .await?;
+            }
+            Err(_) => {
+                super::send_line(&format!("Invalid number '{}'.", s)).await?;
+            }
+        }
+    }
+}
+
+/// Resolve the data lines to drive from an inline token or an interactive
+/// prompt.  `all` returns `None`.
+pub async fn get_lines(
+    token: Option<&str>,
+    default: Option<u16>,
+    editor: &mut LineEditor,
+) -> Result<Option<u16>, Error> {
+    let parse = |s: &str| {
+        if s.trim().eq_ignore_ascii_case("all") {
+            return Some(None);
+        }
+        match parse_addr(s) {
+            Ok(n) if (1..=0xFFFF).contains(&n) => Some(Some(n as u16)),
+            _ => None,
+        }
+    };
+    if let Some(t) = token {
+        return parse(t).ok_or(Error::Syntax);
+    }
+
+    let shown = match default {
+        Some(lines) => format!("{lines:#06x}"),
+        None => String::from("all"),
+    };
+    loop {
+        let input = prompt(editor, &format!("Data lines, D0 in bit 0 [{shown}]: ")).await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match parse(&s) {
+            Some(lines) => return Ok(lines),
+            None => {
+                super::send_line(&format!(
+                    "Invalid data lines '{}'. Use all, or 0x0001 to 0xffff.",
+                    s
+                ))
+                .await?
+            }
+        }
+    }
+}
+
+/// The first argument of `H`.
+pub enum HostChoice {
+    Off,
+    C64,
+    /// A custom profile's cycle in ns.
+    Cycle(u32),
+}
+
+/// Resolve `H`'s first argument from an inline token or an interactive
+/// prompt.  Blank input returns `default`.
+pub async fn get_host(
+    token: Option<&str>,
+    default: &str,
+    editor: &mut LineEditor,
+) -> Result<HostChoice, Error> {
+    let parse = |s: &str| {
+        let s = s.trim();
+        if s.eq_ignore_ascii_case("off") {
+            Some(HostChoice::Off)
+        } else if s.eq_ignore_ascii_case("c64") {
+            Some(HostChoice::C64)
+        } else {
+            s.parse::<u32>().ok().map(HostChoice::Cycle)
+        }
+    };
+    if let Some(t) = token {
+        return parse(t).ok_or(Error::Syntax);
+    }
+
+    loop {
+        let input = prompt(
+            editor,
+            &format!("Host (off, c64 or cycle in ns) [{default}]: "),
+        )
+        .await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => String::from(default),
+            Some(s) => s,
+        };
+
+        match parse(&s) {
+            Some(choice) => return Ok(choice),
+            None => super::send_line("Enter off, c64 or a cycle in ns.").await?,
+        }
+    }
+}
+
+/// Resolve a number in `range` from an inline token or an interactive prompt.
+/// Blank input returns `default` and Ctrl-C returns [`Error::Cancelled`].
+pub async fn get_number(
+    token: Option<&str>,
+    default: u32,
+    label: &str,
+    range: RangeInclusive<u32>,
+    editor: &mut LineEditor,
+) -> Result<u32, Error> {
+    if let Some(t) = token {
+        return t
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|n| range.contains(n))
+            .ok_or(Error::Syntax);
+    }
+
+    loop {
+        let input = prompt(editor, &format!("{label} [{default}]: ")).await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match s.parse::<u32>() {
+            Ok(n) if range.contains(&n) => return Ok(n),
+            Ok(_) => {
+                super::send_line(&format!(
+                    "{label} must be from {} to {}.",
+                    range.start(),
+                    range.end()
+                ))
+                .await?;
+            }
+            Err(_) => {
+                super::send_line(&format!("Invalid number '{}'.", s)).await?;
+            }
+        }
+    }
+}
+
+/// Resolve a header pin, or `gpio<N>`, on `board` from an inline token or an
+/// interactive prompt.  Blank input returns `default` and Ctrl-C returns
+/// [`Error::Cancelled`].
+pub async fn get_pin(
+    token: Option<&str>,
+    default: Pin,
+    label: &str,
+    board: Board,
+    editor: &mut LineEditor,
+) -> Result<ResolvedPin, Error> {
+    let resolve = |s: &str| {
+        parse_pin(s)
+            .map_err(Error::Pin)?
+            .resolve(Some(&board))
+            .map_err(Error::PinResolve)
+    };
+    if let Some(t) = token {
+        return resolve(t);
+    }
+
+    loop {
+        let input = prompt(editor, &format!("{label} [{default}]: ")).await?;
+
+        let result = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => default.resolve(Some(&board)).map_err(Error::PinResolve),
+            Some(s) => resolve(&s),
+        };
+
+        match result {
+            Ok(pin) => return Ok(pin),
+            Err(e) => super::send_line(&format!("{e}.")).await?,
+        }
+    }
+}
+
+/// Resolve a serial traffic mode from an inline token or an interactive
+/// prompt.  Blank input returns `default` and Ctrl-C returns
+/// [`Error::Cancelled`].
+pub async fn get_uart_mode(
+    token: Option<&str>,
+    default: Mode,
+    editor: &mut LineEditor,
+) -> Result<Mode, Error> {
+    if let Some(t) = token {
+        return Mode::from_str(t).ok_or(Error::Syntax);
+    }
+
+    loop {
+        let input = prompt(
+            editor,
+            &format!("Mode (pattern/echo) [{}]: ", default.as_str()),
+        )
+        .await?;
+
+        let s = match input {
+            None => return Err(Error::Cancelled),
+            Some(s) if s.is_empty() => return Ok(default),
+            Some(s) => s,
+        };
+
+        match Mode::from_str(&s) {
+            Some(mode) => return Ok(mode),
+            None => super::send_line("Enter pattern or echo.").await?,
         }
     }
 }

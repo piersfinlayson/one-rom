@@ -13,6 +13,7 @@
 #include "usb_led.h"
 #include "usb_gpio.h"
 #include "usb_log.h"
+#include "usb_peer.h"
 
 // Context structure for our plugin
 typedef struct {
@@ -60,6 +61,16 @@ typedef struct {
     ora_log_write_fn_t log_write;
     ora_log_query_fn_t log_query;
 
+    uint8_t exclusive_serial_in;
+
+    // 1 if serial port 1 is enabled.  Set by serial_ports_init().
+    uint8_t serial_port_1_enabled;
+
+    // Serial port 2's state as SERIAL_PORT_2_* bits, then its tinyusb CDC
+    // interface.  Set by serial_ports_init().
+    uint8_t serial_port_2;
+    uint8_t serial_port_2_cdc_itf;
+
     // Whether a terminal has the CDC port open, and whether a session it has
     // just started is still to be set up.  Both are set from tud_cdc_line_state_cb(),
     // which reports the transition - see usb_log.c.
@@ -88,7 +99,11 @@ typedef struct {
 // Forward declaration of the context, which we define in usb_main.c
 extern usb_plugin_context_t context;
 
+// From usb_main.c
+const usb_peer_usbc_t *usb_peer_usbc(void);
+
 // Forward declaration of plugin's Picoboot functions, from usb_picoboot.c
+
 void usb_picoboot_init(uint8_t ep_out, uint8_t ep_in);
 bool usb_picoboot_control_xfer_cb(
     uint8_t rhport,

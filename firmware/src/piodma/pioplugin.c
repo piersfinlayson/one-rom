@@ -8,15 +8,15 @@
 #include "piodma/piodma.h"
 
 // ---------------------------------------------------------------------------
-// Address-monitor emulation seams
+// Address-monitor emulation hooks
 //
 // On real hardware the address-monitor DMA is configured by writing DMA
-// channel registers, and its ring write position lives in the channel's
+// channel registers, and its ring write position is held in the channel's
 // write_addr register.  Under emulation there are no such registers, so the
-// firmware routes both through injected seams (mirroring sram_to_host /
+// firmware routes both through injected hooks (mirroring sram_to_host /
 // set_host_sram_ptr): pio_setup_address_monitor_dma calls the injected
-// configure callback with the block/SM/ring it chose (so a wrong choice is
-// caught, not masked), and the ring write position is read from a slot the
+// configure callback with its block/SM/ring (so a wrong block is caught,
+// not masked), and the ring write position is read from a slot the
 // harness points at epio's live capture write pointer.
 // ---------------------------------------------------------------------------
 #if !REAL_HARDWARE
@@ -33,8 +33,8 @@ void set_host_monitor_write_slot(volatile uint32_t * volatile *slot) {
 }
 
 // Generic test-yield hook storage (the hook is declared in functions.h, since
-// the harness binds to the setter).  Lives here, in a firmware source compiled
-// into the test build, following the same pattern as the seams above.
+// the harness binds to the setter).  Defined here, in a firmware source
+// compiled into the test build.
 void (*onerom_test_yield_hook)(void) = NULL;
 
 void set_onerom_test_yield_hook(void (*hook)(void)) {
@@ -48,12 +48,12 @@ void set_onerom_test_yield_hook(void (*hook)(void)) {
 // capture path — a guarantee at every optimisation level, which an empty
 // inline function would leave to the compiler.
 //
-// Only call this where the loop genuinely cannot proceed without more captured
+// Only call this where the loop cannot proceed without more captured
 // data.  Under emulation nothing advances while the firmware runs, so a yield
-// is a one-way handover: the harness takes control, drives the next bus cycle,
-// and moves on.  A yield issued when the loop could have carried on therefore
-// gives away a turn that is never returned, and the firmware ends up running
-// behind the bus the harness thinks it is level with.
+// is a one-way handover: control passes to the harness, which drives the next
+// bus cycle and continues.  A yield issued when the loop could have continued
+// therefore hands over a turn that is never returned, and the firmware ends up
+// running behind the bus without the harness detecting it.
 #if !REAL_HARDWARE
 #define ONEROM_TEST_YIELD()                     \
     do {                                        \
@@ -67,7 +67,7 @@ void set_onerom_test_yield_hook(void (*hook)(void)) {
 
 // Location holding the address-monitor DMA's current ring write position.
 // The pointed-to value is the current write pointer and advances as the ring
-// fills; the returned slot itself is stable for the monitor's lifetime.
+// fills.  The returned slot itself is stable for the monitor's lifetime.
 static inline volatile uint32_t * volatile *monitor_ring_write_pos_slot(void) {
 #if REAL_HARDWARE
     return (volatile uint32_t * volatile *)&DMA_CH_REG(DMA_CH_ADDR_MONITOR)->write_addr;
@@ -106,7 +106,7 @@ static uint8_t v2_get_gpio_override(
 //
 // For each GPIO g in [addr_base, addr_base + num_addr_pins):
 //   - chip address pins (pin_map->addr[]) are skipped.
-//   - the full CS range [cs_base, cs_base + num_cs_pins) is skipped; this
+//   - the full CS range [cs_base, cs_base + num_cs_pins) is skipped.  This
 //     covers both real CS lines and any cs_ignore_index gap, and applies to
 //     all slot types (Banked sets also have CS lines as gap bits in the
 //     address span).
@@ -173,30 +173,142 @@ static v2_x_pin_gpios_t v2_get_x_pin_gpios(
     return result;
 }
 
-// Samples that must agree before the CS detector arms, and again before it
-// releases.  Three of a three instruction loop is nine PIO cycles, inside the
-// CS window of one access and well inside the gap between two.
-#define MONITOR_CS_SAMPLES 3
+// Samples AlgCs0 releases on, and arms on without a minimum CS-active time.
+// At MONITOR_CS_0_SAMPLE_CYCLES apart they span less than the CS window of one
+// access and much less than the break between two.
+#define MONITOR_CS_0_SAMPLES 3
 
-// Instructions each CS monitor emits, checked before any is built because
-// APIO_ADD_INSTR does not bounds check.  Per algorithm, because a 40 pin part
-// in /BYTE mode has 12 left and one figure for all three would refuse monitors
+// SET's value is five bits.
+#define MONITOR_MAX_SET 31u
+
+// PIO cycles between one arming sample and the next.  With a minimum CS-active
+// time the detector arms on one sample more than its starting count, so a pulse
+// no longer than that count times these cycles isn't captured.
+#define MONITOR_CS_0_SAMPLE_CYCLES 3u
+#define MONITOR_CS_1_LONE_SAMPLE_CYCLES 4u
+#define MONITOR_CS_1_SPLIT_SAMPLE_CYCLES 7u
+#define MONITOR_CS_2_SAMPLE_CYCLES 2u
+
+// The help and docs state this figure.
+STATIC_ASSERT(
+    (MONITOR_CS_0_SAMPLES - 1) * MONITOR_CS_0_SAMPLE_CYCLES * 1000u
+        == ADDR_MON_UNSET_MIN_CS_ACT_NS * TARGET_FREQ_MHZ,
+    "AlgCs0's unset arming samples don't span ADDR_MON_UNSET_MIN_CS_ACT_NS"
+);
+
+#define MONITOR_MIN_CS_ACT_NOT_SET 0xFFFFFFFFu
+
+static inline uint32_t div_ceil(uint32_t n, uint32_t d) {
+    return (n + d - 1u) / d;
+}
+
+// The minimum CS-active time in PIO cycles at the running clock, or
+// MONITOR_MIN_CS_ACT_NOT_SET.  A per-slot value overrides the header's.
+static uint32_t monitor_min_cs_act_cycles(const onerom_rom_slot_t *slot) {
+    uint8_t value = ADDR_MON_MIN_CS_ACT_NOT_SET;
+    const onerom_firmware_overrides_t *overrides = slot->firmware_overrides;
+    if ((overrides != NULL) && (overrides != (void*)0xFFFFFFFF)) {
+        value = onerom_firmware_overrides_addr_mon_min_cs_act(METADATA, overrides);
+    }
+    if (value == ADDR_MON_MIN_CS_ACT_NOT_SET) {
+        value = onerom_metadata_header_addr_mon_min_cs_act(METADATA);
+    }
+    if (value == ADDR_MON_MIN_CS_ACT_NOT_SET) {
+        return MONITOR_MIN_CS_ACT_NOT_SET;
+    }
+
+    // Counted in system clock cycles, so the CS monitor's divider has to be 1.
+    const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
+    if ((cs_alg->clkdiv_int != 1) || (cs_alg->clkdiv_frac != 0)) {
+        // LCOV_UNREACHABLE_START - the generator always writes a divider of 1.
+        ERR("CS clkdiv %u/%u lengthens min CS active time",
+            (unsigned)cs_alg->clkdiv_int, (unsigned)cs_alg->clkdiv_frac);
+        // LCOV_UNREACHABLE_STOP
+    }
+
+    uint32_t ns = (uint32_t)value * ADDR_MON_MIN_CS_ACT_UNIT_NS;
+    return div_ceil(ns * ora_get_sysclk_mhz(), 1000u);
+}
+
+#define MONITOR_CS_1_NO_LONE_PIN 0xFFu
+
+// AlgCs1's lone select pin as an offset from base_cs_pin, or
+// MONITOR_CS_1_NO_LONE_PIN.  A lone select pin is the only one on its side of
+// the ignored pin.  Where both sides have one it is the lower.
+static uint8_t monitor_cs_1_lone_pin(const onerom_alg_cs_config_t *cs_alg) {
+    const onerom_alg_cs1_param_t *params = (const onerom_alg_cs1_param_t *)cs_alg->params;
+    if (params->cs_ignore_index == 1) {
+        return 0;
+    }
+    if (params->cs_ignore_index == cs_alg->num_cs_pins - 2) {
+        return cs_alg->num_cs_pins - 1;
+    }
+    return MONITOR_CS_1_NO_LONE_PIN;
+}
+
+// Instructions in each CS monitor program, claimed before any is built because
+// APIO_ADD_INSTR doesn't bounds check.  Per program, because a 40 pin part in
+// /BYTE mode has 12 left and one figure for all of them would fail monitors
 // that fit.
 #define MONITOR_CS_0_INSTRS 9
 #define MONITOR_CS_1_INSTRS 20
+#define MONITOR_CS_1_LONE_INSTRS 13
+#define MONITOR_CS_1_SPLIT_INSTRS 17
 #define MONITOR_CS_2_INSTRS 14
+#define MONITOR_CS_2_COUNTED_INSTRS 13
 
-static uint8_t monitor_cs_instrs(uint8_t alg) {
-    switch (alg) {
+static uint8_t monitor_cs_instrs(const onerom_alg_cs_config_t *cs_alg,
+                                 uint32_t min_cycles) {
+    switch (cs_alg->alg) {
         case ALG_CS_0: return MONITOR_CS_0_INSTRS;
-        case ALG_CS_1: return MONITOR_CS_1_INSTRS;
-        case ALG_CS_2: return MONITOR_CS_2_INSTRS;
+        case ALG_CS_1:
+            if (min_cycles == MONITOR_MIN_CS_ACT_NOT_SET) {
+                return MONITOR_CS_1_INSTRS;
+            }
+            if (monitor_cs_1_lone_pin(cs_alg) != MONITOR_CS_1_NO_LONE_PIN) {
+                return MONITOR_CS_1_LONE_INSTRS;
+            }
+            return MONITOR_CS_1_SPLIT_INSTRS;
+        case ALG_CS_2:
+            if (min_cycles == MONITOR_MIN_CS_ACT_NOT_SET) {
+                return MONITOR_CS_2_INSTRS;
+            }
+            return MONITOR_CS_2_COUNTED_INSTRS;
         default:       return APIO_MAX_PIO_INSTRS;
     }
 }
 
-static void pio_setup_address_monitor_pios() {
+// Instructions in the address-read monitor program.
+#define MONITOR_ADDR_INSTRS 2
+
+static uint8_t monitor_addr_block(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_ADDR_BLOCK) >>
+           ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT;
+}
+
+static uint8_t monitor_addr_sm(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_ADDR_SM) >>
+           ADDR_MONITOR_PIO_ADDR_SM_SHIFT;
+}
+
+static uint8_t monitor_cs_block(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_CS_BLOCK) >>
+           ADDR_MONITOR_PIO_CS_BLOCK_SHIFT;
+}
+
+static uint8_t monitor_cs_sm(void) {
+    return (RUNTIME->addr_monitor_pio & ADDR_MONITOR_PIO_CS_SM) >>
+           ADDR_MONITOR_PIO_CS_SM_SHIFT;
+}
+
+static ora_pio_gpiobase_t monitor_gpiobase(uint8_t gpio_base) {
+    return (gpio_base == 0) ? ORA_PIO_GPIOBASE_0 : ORA_PIO_GPIOBASE_16;
+}
+
+static ora_result_t pio_setup_address_monitor_pios(void) {
     const onerom_rom_slot_t *slot = RUNTIME->current_rom_slot;
+    const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
+    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
 
     // APIO_ASM_CONTINUE() rather than APIO_ASM_INIT(): this function extends
     // the PIO configuration built at boot rather than starting from scratch.
@@ -233,48 +345,53 @@ static void pio_setup_address_monitor_pios() {
         } else {
             ERR("Address/CS monitor blocks %u/%u not adjacent",
                 addr_block, cs_data_block);
-            return;
+            return ORA_RESULT_INTERNAL_ERROR;
         }
     }
 
-    // Use the same block as the ROM serving CS/Data PIO, starting from
-    // where it left off
-    uint8_t cs_data_sm_pos = GET_PIO_BLOCK_INSTR_LEN(RUNTIME->cs_data_pio_block_info);
-
-    uint8_t cs_monitor_alg = slot->alg->alg_cs->alg;
-    uint8_t cs_monitor_instrs = monitor_cs_instrs(cs_monitor_alg);
-    if ((uint32_t)cs_data_sm_pos + cs_monitor_instrs > APIO_MAX_PIO_INSTRS) {
-        // LCOV_UNREACHABLE_START - the tightest combination is a 40 pin part
-        // in /BYTE mode, 12 instructions left against AlgCs0's 9.
-        ERR("CS monitor alg %u needs %u instructions, block %u has %u left",
-            (unsigned)cs_monitor_alg, (unsigned)cs_monitor_instrs,
-            (unsigned)cs_data_block,
-            (unsigned)(APIO_MAX_PIO_INSTRS - cs_data_sm_pos));
-        return;
-        // LCOV_UNREACHABLE_STOP
+    // Every JMP target below is relative to the program's start, so a program
+    // works wherever its instructions are claimed.
+    uint32_t min_cycles = monitor_min_cs_act_cycles(slot);
+    uint8_t cs_monitor_instrs = monitor_cs_instrs(cs_alg, min_cycles);
+    uint32_t cs_block = cs_data_block;
+    uint32_t cs_sm = ORA_PIO_SM_ANY;
+    uint32_t cs_first = ORA_PIO_INSTR_ANY;
+    ora_result_t rc = ora_claim_pio(&cs_block, &cs_sm, &cs_first, cs_monitor_instrs,
+                                    monitor_gpiobase(cs_alg->gpio_base), 0);
+    if (rc != ORA_RESULT_OK) {
+        return rc;
+    }
+    uint32_t addr_claim_block = addr_block;
+    uint32_t addr_sm = ORA_PIO_SM_ANY;
+    uint32_t addr_first = ORA_PIO_INSTR_ANY;
+    rc = ora_claim_pio(&addr_claim_block, &addr_sm, &addr_first, MONITOR_ADDR_INSTRS,
+                       monitor_gpiobase(addr_alg->gpio_base), 0);
+    if (rc != ORA_RESULT_OK) {
+        pio_release((uint8_t)cs_block, (uint8_t)cs_sm, (uint8_t)cs_first, cs_monitor_instrs);
+        return rc;
+    }
+    uint8_t addr_monitor_pio = (uint8_t)(
+        (addr_claim_block << ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT) |
+        (addr_sm << ADDR_MONITOR_PIO_ADDR_SM_SHIFT) |
+        (cs_block << ADDR_MONITOR_PIO_CS_BLOCK_SHIFT) |
+        (cs_sm << ADDR_MONITOR_PIO_CS_SM_SHIFT));
+    if (!addr_monitor_pio_record(addr_monitor_pio)) {
+        pio_release((uint8_t)cs_block, (uint8_t)cs_sm, (uint8_t)cs_first, cs_monitor_instrs);
+        pio_release((uint8_t)addr_claim_block, (uint8_t)addr_sm, (uint8_t)addr_first,
+                    MONITOR_ADDR_INSTRS);
+        return ORA_RESULT_IN_USE;
     }
 
-    APIO_SET_BLOCK_FROM_VAR(cs_data_block, cs_data_sm_pos);
+    APIO_SET_BLOCK_FROM_VAR(cs_block, cs_first);
 
     //
-    // SM 0: CS Monitor
+    // CS Monitor
     //
-    if (CHECK_PIO_SM_INFO(RUNTIME->cs_data_pio_sm_info, SM_ADDR_MONITOR_CS_MONITOR)) {
-        ERR("CS monitor SM already in use");
-        return;
-    }
-    APIO_SET_SM(SM_ADDR_MONITOR_CS_MONITOR);
-    const onerom_alg_cs_config_t *cs_alg = slot->alg->alg_cs;
-    if (cs_alg->gpio_base == 0) {
-        APIO_GPIOBASE_0();
-    } else {
-        APIO_GPIOBASE_16();
-    }
+    APIO_SET_SM_VAR(cs_sm);
     uint8_t base_cs_pin = cs_alg->base_cs_pin;
     uint8_t num_cs_pins = cs_alg->num_cs_pins;
-    // EXECCTRL is zero for the algorithms that reach their verdict from the CS
-    // pins alone; AlgCs2 needs JMP_PIN pointed at its enable line.
     uint32_t execctrl = 0;
+    uint32_t out_shiftdir = APIO_OUT_SHIFTDIR_L;
     switch (cs_alg->alg) {
         case ALG_CS_0: {
             // All CS pins contiguous - CS active == zero
@@ -286,7 +403,13 @@ static void pio_setup_address_monitor_pios() {
             // the detector and the address was captured twice.
             APIO_WRAP_BOTTOM();
             APIO_LABEL_NEW(cs_inactive);
-            APIO_ADD_INSTR(APIO_SET_Y(MONITOR_CS_SAMPLES - 1));
+            if (min_cycles == MONITOR_MIN_CS_ACT_NOT_SET) {
+                APIO_ADD_INSTR(APIO_SET_Y(MONITOR_CS_0_SAMPLES - 1));
+            } else {
+                // The count can be too large for SET, so it is preloaded into
+                // OSR below.
+                APIO_ADD_INSTR(APIO_MOV_Y_OSR);
+            }
             APIO_LABEL_NEW(cs_arming);
             APIO_ADD_INSTR(APIO_MOV_X_PINS);
             if (params->serve_cs_low_0 == 0) {
@@ -301,7 +424,7 @@ static void pio_setup_address_monitor_pios() {
             APIO_ADD_INSTR(irq_set_instr);
 
             APIO_LABEL_NEW(cs_active);
-            APIO_ADD_INSTR(APIO_SET_Y(MONITOR_CS_SAMPLES - 1));
+            APIO_ADD_INSTR(APIO_SET_Y(MONITOR_CS_0_SAMPLES - 1));
             APIO_LABEL_NEW(cs_releasing);
             APIO_ADD_INSTR(APIO_MOV_X_PINS);
             if (params->serve_cs_low_0 == 0) {
@@ -318,32 +441,125 @@ static void pio_setup_address_monitor_pios() {
                 base_cs_pin = params->first_rom_cs_base;
                 num_cs_pins = params->first_rom_num_cs_pins;
             }
+
+            if (min_cycles != MONITOR_MIN_CS_ACT_NOT_SET) {
+                APIO_TXF = div_ceil(min_cycles, MONITOR_CS_0_SAMPLE_CYCLES);
+                APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+            }
             break;
         }
 
         case ALG_CS_1: {
             const onerom_alg_cs1_param_t *params = (const onerom_alg_cs1_param_t *)cs_alg->params;
+            uint8_t lone_pin = monitor_cs_1_lone_pin(cs_alg);
+
+            if ((min_cycles != MONITOR_MIN_CS_ACT_NOT_SET) &&
+                (lone_pin != MONITOR_CS_1_NO_LONE_PIN)) {
+                // JMP PIN reads the lone select pin and the IN pins are the
+                // select pins on the other side.  Neither includes the ignored
+                // pin, so Y counts the arming samples instead of holding its
+                // mask.
+                APIO_WRAP_BOTTOM();
+                APIO_LABEL_NEW(cs_inactive);
+                APIO_ADD_INSTR(APIO_MOV_Y_OSR);
+                APIO_LABEL_NEW(cs_arming);
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_JMP_Y_DEC(APIO_LABEL(cs_arming)));
+
+                APIO_ADD_INSTR(irq_set_instr);
+
+                APIO_LABEL_NEW(cs_active);
+                APIO_LABEL_NEW_OFFSET(cs_releasing, 3);
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_releasing)));
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_active)));
+
+                // cs_releasing: the delay puts the second look three cycles
+                // after the first, as in test_if_inactive below.  Still active
+                // on the second look means it was a glitch.
+                APIO_ADD_INSTR(APIO_ADD_DELAY(APIO_NOP, 1));
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_WRAP_TOP();
+                APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_active)));
+
+                execctrl = APIO_EXECCTRL_JMP_PIN(base_cs_pin + lone_pin);
+                if (lone_pin == 0) {
+                    base_cs_pin += 2;
+                }
+                num_cs_pins -= 2;
+
+                // JMP PIN reads a cycle before MOV, so a pulse one cycle
+                // shorter is captured where the lone pin's edges lead the
+                // others' by a cycle.
+                APIO_TXF = div_ceil(min_cycles + 1, MONITOR_CS_1_LONE_SAMPLE_CYCLES);
+                APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+                break;
+            }
 
             APIO_LABEL_NEW(cs_inactive);
-            APIO_ADD_INSTR(APIO_MOV_X_PINS);
-            APIO_LABEL_NEW_OFFSET(check2, 2);
-            APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check2)));
-            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
-            APIO_ADD_INSTR(APIO_MOV_X_PINS);
-            APIO_LABEL_NEW_OFFSET(check3, 2);
-            APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check3)));
-            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
-            APIO_ADD_INSTR(APIO_MOV_X_PINS);
-            APIO_LABEL_NEW_OFFSET(check4, 2);
-            APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check4)));
-            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
-            APIO_ADD_INSTR(APIO_MOV_X_PINS);
-            APIO_LABEL_NEW_OFFSET(cs_active, 2);
-            APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_active)));
-            APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
+            if (min_cycles == MONITOR_MIN_CS_ACT_NOT_SET) {
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_LABEL_NEW_OFFSET(check2, 2);
+                APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check2)));
+                APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_LABEL_NEW_OFFSET(check3, 2);
+                APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check3)));
+                APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_LABEL_NEW_OFFSET(check4, 2);
+                APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(check4)));
+                APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_MOV_X_PINS);
+                APIO_LABEL_NEW_OFFSET(cs_active, 2);
+                APIO_ADD_INSTR(APIO_JMP_NOT_X(APIO_LABEL(cs_active)));
+                APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
 
-            // cs_active:
-            APIO_ADD_INSTR(irq_set_instr);
+                // cs_active:
+                APIO_ADD_INSTR(irq_set_instr);
+
+                // Preload Y with the mask of the ignored CS pin
+                APIO_TXF = (1 << params->cs_ignore_index);
+                APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+                APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
+            } else {
+                // Both sides of the ignored pin have two or more select pins.
+                // Each read is shifted out of OSR with the ignored pin's bit
+                // discarded, so Y counts the arming samples from a value
+                // preloaded into ISR.
+                uint32_t ignore_mask = 1u << params->cs_ignore_index;
+                if (ignore_mask > MONITOR_MAX_SET) {
+                    // LCOV_UNREACHABLE_START - no chip type has more than four
+                    // select pins, so with two or more on each side the
+                    // ignored pin is the third.
+                    ERR("AlgCs1 ignored pin %u is out of SET's range",
+                        (unsigned)params->cs_ignore_index);
+                    return ORA_RESULT_INTERNAL_ERROR;
+                    // LCOV_UNREACHABLE_STOP
+                }
+
+                APIO_ADD_INSTR(APIO_MOV_Y_ISR);
+                APIO_LABEL_NEW(cs_arming);
+                APIO_ADD_INSTR(APIO_MOV_OSR_PINS);
+                APIO_ADD_INSTR(APIO_OUT_X(params->cs_ignore_index));
+                APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_OUT_NULL(1));
+                APIO_ADD_INSTR(APIO_OUT_X(num_cs_pins - params->cs_ignore_index - 1));
+                APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_JMP_Y_DEC(APIO_LABEL(cs_arming)));
+
+                APIO_ADD_INSTR(irq_set_instr);
+                APIO_ADD_INSTR(APIO_SET_Y(ignore_mask));
+
+                out_shiftdir = APIO_OUT_SHIFTDIR_R;
+
+                APIO_TXF = div_ceil(min_cycles, MONITOR_CS_1_SPLIT_SAMPLE_CYCLES);
+                APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+                APIO_SM_EXEC_INSTR(APIO_MOV_ISR_OSR);
+            }
 
             // Releasing is confirmed by a second sample, as in AlgCs0.  Two
             // rather than three because Y is taken by the ignored pin's mask.
@@ -361,24 +577,20 @@ static void pio_setup_address_monitor_pios() {
             APIO_WRAP_TOP();
             APIO_ADD_INSTR(APIO_JMP_X_NOT_Y(APIO_LABEL(cs_inactive)));
             // cs_pin_2nd_match still active - wrap back to test_if_inactive
-
-            // Preload Y with the mask of the ignored CS pin
-            APIO_TXF = (1 << params->cs_ignore_index);
-            APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
-            APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
             break;
         }
 
         case ALG_CS_2: {
             // Enable + address-qualified select (23QL384).  The chip is
             // selected when the enable line is asserted AND the qualifier pins
-            // do not match the deselect pattern; the CS-active predicate here
+            // do not match the deselect pattern.  The CS-active predicate here
             // must track the serving SM's, built in setup_serving_pios()
             // (piorom2.c) - if one changes, so must the other.
             //
             // Unlike the serving SM this debounces, as the AlgCs0/AlgCs1
             // monitors do: four consecutive active samples before an access is
-            // taken as real.  Only the enable is debounced.  The qualifiers are
+            // taken as real, or enough to span the minimum CS-active time where
+            // one is set.  Only the enable is debounced.  The qualifiers are
             // address lines, which settle ahead of the enable being asserted,
             // and are read once the enable has held low - so sampling them once
             // at that point is later, not earlier, than debouncing them.
@@ -387,10 +599,19 @@ static void pio_setup_address_monitor_pios() {
 
             APIO_WRAP_BOTTOM();
             APIO_LABEL_NEW(cs_inactive);
-            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
-            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
-            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
-            APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+            if (min_cycles == MONITOR_MIN_CS_ACT_NOT_SET) {
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+            } else {
+                // Y holds the deselect pattern, so X counts the samples from a
+                // value preloaded into OSR below.
+                APIO_ADD_INSTR(APIO_MOV_X_OSR);
+                APIO_LABEL_NEW(cs_arming);
+                APIO_ADD_INSTR(APIO_JMP_PIN(APIO_LABEL(cs_inactive)));
+                APIO_ADD_INSTR(APIO_JMP_X_DEC(APIO_LABEL(cs_arming)));
+            }
 
             // Enable held low: selected unless the qualifier pins read the
             // deselect pattern preloaded into Y.
@@ -433,6 +654,15 @@ static void pio_setup_address_monitor_pios() {
             APIO_TXF = params->qualifier_inactive_pattern;
             APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
             APIO_SM_EXEC_INSTR(APIO_MOV_Y_OSR);
+
+            if (min_cycles != MONITOR_MIN_CS_ACT_NOT_SET) {
+                // The qualifier pins are read after the last sample, so a pulse
+                // they end must be longer to be captured.  A select by the
+                // qualifier pins alone, with the enable held active, isn't
+                // timed.
+                APIO_TXF = div_ceil(min_cycles, MONITOR_CS_2_SAMPLE_CYCLES);
+                APIO_SM_EXEC_INSTR(APIO_PULL_BLOCK);
+            }
             break;
         }
 
@@ -445,36 +675,25 @@ static void pio_setup_address_monitor_pios() {
     APIO_SM_EXECCTRL_SET(execctrl);
     APIO_SM_SHIFTCTRL_SET(
         APIO_IN_COUNT(num_cs_pins) |
-        APIO_IN_SHIFTDIR_L
+        APIO_IN_SHIFTDIR_L |
+        out_shiftdir
     );
     APIO_SM_PINCTRL_SET(
         APIO_IN_BASE(base_cs_pin)
     );
     APIO_SM_JMP_TO_START();
 
-    APIO_END_BLOCK_FROM(cs_data_sm_pos);
+    APIO_END_BLOCK_FROM(cs_first);
 
     //
-    // SM 1: Address read monitor
+    // Address read monitor
     //
-    uint8_t addr_sm_pos = GET_PIO_BLOCK_INSTR_LEN(RUNTIME->addr_pio_block_info);
-    APIO_SET_BLOCK_FROM_VAR(addr_block, addr_sm_pos);
-
-    // There is currently only a single address algorithm
-    const onerom_alg_addr_config_t *addr_alg = slot->alg->alg_addr;
-    APIO_SET_SM(SM_ADDR_MONITOR_ADDR_READ);
-
-    // Set this block's GPIOBASE from the address algorithm.  It may differ from
-    // the CS/data block's base — 32-pin ROMs carry the address pins in the
-    // upper GPIO bank (base 16) while CS/data stay in the lower bank (base 0).
-    // The two monitor SMs live in separate blocks, so each uses the base
-    // appropriate to the pins it reads; the CS monitor set its block's base
-    // above.
-    if (addr_alg->gpio_base == 0) {
-        APIO_GPIOBASE_0();
-    } else {
-        APIO_GPIOBASE_16();
-    }
+    // There is currently only a single address algorithm.  Its block's
+    // GPIOBASE may differ from the CS/data block's — 32-pin ROMs have the
+    // address pins in the upper GPIO bank (base 16) while CS/data stay in the
+    // lower bank (base 0).  Each claim above passes its own block's GPIOBASE.
+    APIO_SET_BLOCK_FROM_VAR(addr_claim_block, addr_first);
+    APIO_SET_SM_VAR(addr_sm);
 
     APIO_ADD_INSTR(APIO_WAIT_IRQ_HIGH(ADDR_MONITOR_IRQ));
     APIO_WRAP_TOP();
@@ -492,16 +711,16 @@ static void pio_setup_address_monitor_pios() {
     );
     APIO_SM_JMP_TO_START();
 
-    APIO_END_BLOCK_FROM(addr_sm_pos);
+    APIO_END_BLOCK_FROM(addr_first);
 
-    return;
+    return ORA_RESULT_OK;
 }
 
 #if REAL_HARDWARE
 // RX FIFO register pointer for an arbitrary PIO block/SM, built on the public
 // per-block APIO macros (block index N addresses APIO instance N).  Used so the
-// address-monitor DMA reads from whichever block the monitor SM actually lives
-// in, rather than a fixed block.
+// address-monitor DMA reads from whichever block the monitor SM is in, rather
+// than a fixed block.
 static inline volatile uint32_t *sm_rxf_ptr(uint8_t block, uint8_t sm) {
     switch (block) {
         case 0:  return &APIO0_SM_RXF(sm);
@@ -554,9 +773,9 @@ static void pio_setup_address_monitor_dma(
             )
         );
 #else // !REAL_HARDWARE
-    // No DMA registers under emulation: hand the block/SM/ring the firmware
-    // chose to the injected configure seam, which wires up epio's capture
-    // channel from that choice (so a wrong block choice is caught).
+    // No DMA registers under emulation: pass the block/SM/ring to the injected
+    // configure hook, which wires up epio's capture channel from them (so a
+    // wrong block is caught).
     (void)dma_ch;
     (void)high_priority;
     if (s_host_monitor_dma_configure != NULL) {
@@ -600,13 +819,14 @@ ora_result_t pio_setup_address_monitor(
         return ORA_RESULT_INVALID_SIZE;
     }
 
-    pio_setup_address_monitor_pios();
+    ora_result_t rc = pio_setup_address_monitor_pios();
+    if (rc != ORA_RESULT_OK) {
+        return rc;
+    }
     pio_setup_address_monitor_dma(
         DMA_CH_ADDR_MONITOR,
-        // The address-read monitor SM shares the ROM serving address block; the
-        // DMA must drain that block's RX FIFO, not the (unused) monitor block.
-        GET_PIO_BLOCK_INFO(RUNTIME->addr_pio_block_info),
-        SM_ADDR_MONITOR_ADDR_READ,
+        monitor_addr_block(),
+        monitor_addr_sm(),
         ring_buf,
         ring_size_log2,
         data_size,
@@ -627,7 +847,7 @@ ora_result_t pio_setup_address_monitor(
 //                    the table. The least-significant logical address bit
 //                    is A-1 — it selects the low (A-1=0) or high (A-1=1)
 //                    byte within a word and is NOT a scattered GPIO: it is
-//                    simply bit 0 of the table index. pin_map->addr[] holds
+//                    bit 0 of the table index. pin_map->addr[] holds
 //                    A0..A_n (the word-address lines) only. So the word
 //                    address is (logical_addr >> 1), scattered through
 //                    addr[], and A-1 (logical_addr & 1) is OR'd back in as
@@ -636,16 +856,16 @@ ora_result_t pio_setup_address_monitor(
 // Step 1: scatter logical address bits to their GPIO bit positions.
 //   NORMAL:     table bit = logical bit.
 //   INVERT:     table bit = ~logical bit.  The GPIO is inverted so the PIO
-//               sees ~A_n; the pre-processor indexes the table by that
+//               sees ~A_n.  The pre-processor indexes the table by that
 //               post-override value, so the table bit for A_n = b is ~b.
 //   GPIO_OVER_LOW:  table bit = 0 regardless.
 //   GPIO_OVER_HIGH: table bit = 1 regardless.
 //
 // Step 2: CS bits (Multi only).
 //   For Multi, chip0's CS line(s) must be 1 in the table index (active-high
-//   serving convention; serve_cs_low_0 == 1).  INVERT on a CS line normalises
+//   serving convention - serve_cs_low_0 == 1).  INVERT on a CS line normalises
 //   the physical GPIO polarity to produce this state, so the target bit value
-//   is always 1 for chip0 CS active and no INVERT check is needed here; only
+//   is always 1 for chip0 CS active and no INVERT check is needed here.  Only
 //   GPIO_OVER_LOW prevents the target being met.
 //   Single/Banked sets need no action: CS bits default to 0, which is the
 //   correct active-low state for those types.
@@ -666,7 +886,7 @@ uint32_t pio_map_addr_to_phys(
     // For 16-bit serving, A-1 is the least-significant logical address bit
     // and maps directly to the table-index LSB (selecting the low/high byte
     // of the adjacent-byte word pair), rather than to a scattered GPIO in
-    // addr[].  Split it off here; addr[] is scattered over the word address
+    // addr[].  Split it off here.  addr[] is scattered over the word address
     // (logical_addr >> 1), and a_minus_1 is re-applied as bit 0 at the end.
     uint8_t  word_size = data_alg->word_size;
     uint32_t a_minus_1 = 0;
@@ -761,8 +981,8 @@ uint32_t pio_map_addr_to_phys(
             default:
                 // AlgCs2 selects on a single enable line plus address
                 // qualifiers, which cannot express a Multi set's per-chip
-                // select; the generator rejects every Multi combination of the
-                // only chip type that resolves to it (23QL384), so reaching
+                // select.  Every Multi combination of the only chip type that
+                // resolves to it (23QL384) fails to generate, so reaching
                 // here means the metadata is inconsistent.
                 ERR("pio_map_addr_to_phys: unsupported CS algorithm %d for "
                     "Multi slot", cs_alg->alg);
@@ -775,7 +995,7 @@ uint32_t pio_map_addr_to_phys(
 
     // Step 4: 16-bit A-1 — the byte-within-word select is the table-index
     // LSB.  The scatter above produced the word-address index in the GPIO
-    // bit positions; shift it up by one and OR in A-1 so that adjacent
+    // bit positions.  Shift it up by one and OR in A-1 so that adjacent
     // logical bytes map to adjacent table offsets.
     if (word_size == 16u) {
         physical = (physical << 1) | a_minus_1;
@@ -828,7 +1048,7 @@ uint32_t pio_map_data_to_phys(
 // pio_demangle_observed_addr: converts a ring buffer entry (post-override
 // PIO-visible GPIO bitmap) to the address observed on the device's address
 // lines, with optional control pin activity checking.  This is the body shared
-// with pio_demangle_addr, which wraps it with the 16-bit A-1 fold; see the ORA
+// with pio_demangle_addr, which wraps it with the 16-bit A-1 fold.  See the ORA
 // API docs (ora_demangle_observed_addr_fn_t / ora_demangle_addr_fn_t) for the
 // observed-vs-logical-byte-address distinction.
 //
@@ -850,9 +1070,9 @@ uint32_t pio_map_data_to_phys(
 //
 // Address extraction:
 //   NORMAL:     logical bit = physical bit.
-//   INVERT:     logical bit = ~physical bit (ring buffer has post-INVERT value;
+//   INVERT:     logical bit = ~physical bit (ring buffer has post-INVERT value -
 //               invert to recover original chip pin value).
-//   GPIO_OVER_LOW:  logical bit = 0 (forced; carries no information).
+//   GPIO_OVER_LOW:  logical bit = 0 (forced - contains no information).
 //   GPIO_OVER_HIGH: logical bit = 1.
 ora_result_t pio_demangle_observed_addr(
     const onerom_rom_slot_t *slot,
@@ -899,7 +1119,7 @@ ora_result_t pio_demangle_observed_addr(
                     switch (override) {
                         case GPIO_OVER_NORMAL:
                         case GPIO_OVER_INVERT:
-                            // physical_addr is post-override; compare directly.
+                            // physical_addr is post-override.  Compare directly.
                             if (physical_bit != expected_active) {
                                 return ORA_RESULT_CONTROL_PIN_ACTIVE;
                             }
@@ -919,7 +1139,7 @@ ora_result_t pio_demangle_observed_addr(
                     }
                 }
 
-                // Multi: reject if any X pin is active (=1), indicating a
+                // Multi: fail if any X pin is active (=1), indicating a
                 // secondary chip is being addressed.
                 if (slot->slot_type == ROM_SLOT_TYPE_MULTI_ROM) {
                     v2_x_pin_gpios_t xp = v2_get_x_pin_gpios(slot, addr_base);
@@ -936,7 +1156,7 @@ ora_result_t pio_demangle_observed_addr(
             }
 
             case ALG_CS_1: {
-                // AlgCs1 is Single/Banked only; active-low (expected = 0).
+                // AlgCs1 is Single/Banked only.  Active-low (expected = 0).
                 const onerom_alg_cs1_param_t *cs_params =
                     (const onerom_alg_cs1_param_t *)cs_alg->params;
                 uint8_t cs_base = cs_alg->gpio_base + cs_alg->base_cs_pin;
@@ -957,10 +1177,10 @@ ora_result_t pio_demangle_observed_addr(
                             }
                             break;
                         case GPIO_OVER_LOW:
-                            /* forced to 0 = active; always passes */
+                            /* forced to 0 = active - always passes */
                             break;
                         case GPIO_OVER_HIGH:
-                            /* forced to 1 = inactive; always fails */
+                            /* forced to 1 = inactive - always fails */
                             return ORA_RESULT_CONTROL_PIN_ACTIVE;
                         default:
                             break;
@@ -989,10 +1209,10 @@ ora_result_t pio_demangle_observed_addr(
                         }
                         break;
                     case GPIO_OVER_LOW:
-                        /* forced to 0 = active; always passes */
+                        /* forced to 0 = active - always passes */
                         break;
                     case GPIO_OVER_HIGH:
-                        /* forced to 1 = inactive; always fails */
+                        /* forced to 1 = inactive - always fails */
                         return ORA_RESULT_CONTROL_PIN_ACTIVE;
                     default:
                         break;
@@ -1000,8 +1220,8 @@ ora_result_t pio_demangle_observed_addr(
 
                 // The qualifier field is compared whole, exactly as the PIO
                 // compares it against Y - the pattern is expressed over the
-                // whole span, so any non-qualifier GPIO inside it carries a 0.
-                // The only such GPIO is the enable line (on fire-28-c/d it sits
+                // whole span, so any non-qualifier GPIO inside it is 0.
+                // The only such GPIO is the enable line (on fire-28-c/d it is
                 // between the two qualifier pins), which the check above has
                 // already established reads 0 here.  Rebase the span from
                 // gpio_base to the captured entry's own base to line the two
@@ -1026,7 +1246,6 @@ ora_result_t pio_demangle_observed_addr(
                 ERR("pio_demangle_addr: unsupported CS algorithm %d",
                     cs_alg->alg);
                 return ORA_RESULT_ERROR;
-                // TODO: implement AlgCs2 support
         }
     }
 
@@ -1050,7 +1269,7 @@ ora_result_t pio_demangle_observed_addr(
                 if (!physical_bit) logical |= (1u << n);
                 break;
             case GPIO_OVER_LOW:
-                /* always 0; contributes 0 */
+                /* always 0 - contributes 0 */
                 break;
             case GPIO_OVER_HIGH:
                 logical |= (1u << n);
@@ -1067,7 +1286,7 @@ ora_result_t pio_demangle_observed_addr(
 // Wraps pio_demangle_observed_addr with the 16-bit A-1 fold so the result is
 // the logical byte address (the inverse of pio_map_addr_to_phys), rather than
 // the observed bus address.  For word_size == 8 the two are identical.  This is
-// the cold path (inverse-of-map use); pio_demangle_observed_addr is the hot
+// the cold path (inverse-of-map use).  pio_demangle_observed_addr is the hot
 // path used to decode address-monitor captures.
 ora_result_t pio_demangle_addr(
     const onerom_rom_slot_t *slot,
@@ -1138,7 +1357,7 @@ uint8_t pio_demangle_data(
                 if (!physical_bit) logical |= (1u << d);
                 break;
             case GPIO_OVER_LOW:
-                /* always 0; contributes 0 */
+                /* always 0 - contributes 0 */
                 break;
             case GPIO_OVER_HIGH:
                 logical |= (1u << d);
@@ -1156,7 +1375,7 @@ uint8_t pio_demangle_data(
 // entries (post-override PIO-visible values).
 //
 // Mask: bit positions of knock_bits address GPIOs.  Forced GPIOs are excluded
-// (they carry no information).
+// (they contain no information).
 //
 // Match values: ring buffer entries are post-override, so INVERT bits appear
 // flipped relative to logical knock sequence values.
@@ -1228,7 +1447,7 @@ ora_result_t pio_init_knock(
                     break;
                 case GPIO_OVER_LOW:
                 case GPIO_OVER_HIGH:
-                    /* excluded from mask; excluded from match */
+                    /* excluded from mask and match */
                     break;
                 default:
                     break;
@@ -1316,7 +1535,7 @@ void set_host_sram_ptr(uint8_t *ptr) {
 }
 
 // A hook rather than a direct call, because the test library is linked by
-// testers that have no recorder to call.
+// testers that don't have a recorder to call.
 static void (*s_sram_write_hook)(uint32_t addr, uint8_t val);
 
 void set_host_sram_write_hook(void (*hook)(uint32_t addr, uint8_t val)) {
@@ -1343,7 +1562,7 @@ uint8_t *sram_to_host(uint32_t addr) {
 // rom_slot provides the pin map and algorithm config for the mappings.
 // ram_slot is the RAM slot index to read from.
 //
-// Reads are always permitted from the active slot; no allow_active flag is
+// Reads are always permitted from the active slot.  No allow_active flag is
 // needed (the caller is responsible for any consistency requirements).
 ora_result_t pio_read_ram_rom_slot(
     const onerom_rom_slot_t *rom_slot,
@@ -1417,7 +1636,7 @@ __attribute__((always_inline)) static inline uint8_t debounce(
         }                                                                   \
         /* The inner loop exits either because the ring is drained or       \
            because the knock completed.  Only the first needs more captured \
-           data; yielding on the second would give away a turn we do not    \
+           data.  Yielding on the second would hand over a turn we do not   \
            need.  See ONEROM_TEST_YIELD. */                                 \
         if (knock_pos < knock->len) {                                       \
             ONEROM_TEST_YIELD();                                            \
@@ -1522,7 +1741,7 @@ ora_result_t pio_reprogram_ram_rom_slot(
         return ORA_RESULT_INVALID_ARG;
     }
 
-    // If allow_active is not set, refuse to write to the currently active slot
+    // If allow_active is not set, fail a write to the currently active slot
     if (!allow_active) {
         uint8_t active_slot;
         result = ora_get_active_ram_slot(&active_slot);
@@ -1555,14 +1774,15 @@ ora_result_t pio_reprogram_ram_rom_slot(
 }
 
 ora_result_t pio_start_address_monitor(void) {
-    // The monitor SMs live in the serving blocks (see
+    // The monitor SMs are in the serving blocks (see
     // pio_setup_address_monitor_pios), so enable each in its own block rather
     // than in the unused monitor block.  The serving SMs are left as they are,
     // so the CS SM stays stopped in standby mode.
-    uint8_t addr_block = GET_PIO_BLOCK_INFO(RUNTIME->addr_pio_block_info);
-    uint8_t cs_block   = GET_PIO_BLOCK_INFO(RUNTIME->cs_data_pio_block_info);
-    pio_enable_sms(addr_block, 1u << SM_ADDR_MONITOR_ADDR_READ);
-    pio_enable_sms(cs_block, 1u << SM_ADDR_MONITOR_CS_MONITOR);
+    if (RUNTIME->addr_monitor_pio == ADDR_MONITOR_PIO_NONE) {
+        return ORA_RESULT_OK;
+    }
+    pio_enable_sms(monitor_addr_block(), (uint8_t)(1u << monitor_addr_sm()));
+    pio_enable_sms(monitor_cs_block(), (uint8_t)(1u << monitor_cs_sm()));
 
     return ORA_RESULT_OK;
 }

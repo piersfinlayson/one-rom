@@ -28,6 +28,10 @@ pub const TEMPLATE: &str = "signing-request.yml";
 /// contains it too.
 pub const TITLE: &str = "[signing request]";
 
+/// This CLI's version. A request is signed only where it's at least
+/// `MIN_CLI_VERSION` in `scripts/sign-request.sh`.
+pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// The address that opens a new issue in One ROM's GitHub repository.
 pub const NEW_ISSUE_URL: &str = "https://github.com/piersfinlayson/one-rom/issues/new";
 
@@ -42,12 +46,13 @@ pub struct SigningRequest {
 impl SigningRequest {
     /// The request's fields in the issue form's order, each as its ID in the
     /// form and its value.
-    pub fn fields(&self) -> [(&'static str, String); 4] {
+    pub fn fields(&self) -> [(&'static str, String); 5] {
         [
             ("chip_id", format_chip_id(self.chip_id)),
             ("board", self.board.name().to_string()),
             ("size", self.size.to_string()),
             ("manufacturer", MANUFACTURER.to_string()),
+            ("cli_version", CLI_VERSION.to_string()),
         ]
     }
 
@@ -154,6 +159,7 @@ mod tests {
             ("board", "fire-40-a"),
             ("size", "L"),
             ("manufacturer", MANUFACTURER),
+            ("cli_version", CLI_VERSION),
         ]
         .iter()
         .map(|(id, value)| (id.to_string(), value.to_string()))
@@ -273,6 +279,15 @@ mod tests {
             assigned(&script, "KEY_ID"),
             Some(KEY_ID.to_string().as_str())
         );
+
+        // The script's minimum CLI version isn't newer than this CLI, so this
+        // CLI's requests are signed.
+        let minimum =
+            assigned(&script, "MIN_CLI_VERSION").expect("the script assigns MIN_CLI_VERSION");
+        let version = |text: &str| -> Vec<u32> {
+            text.split('.').map(|part| part.parse().unwrap()).collect()
+        };
+        assert!(version(minimum) <= version(CLI_VERSION), "{minimum}");
 
         // The script reads the issues NEW_ISSUE_URL opens.
         let repo = assigned(&script, "REPO").expect("the script assigns REPO");

@@ -219,6 +219,28 @@ pub fn test_lookup_coverage(emu: &Emulator, base_dir: &Path) -> Result<(), Strin
             "ORA_ID_FIRMWARE_STATE_QUERY",
         ),
         (ffi::api_id_t_ORA_ID_SET_STANDBY, "ORA_ID_SET_STANDBY"),
+        (ffi::api_id_t_ORA_ID_REBOOT, "ORA_ID_REBOOT"),
+        (
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_VALUE,
+            "ORA_ID_GET_COMMISSIONING_VALUE",
+        ),
+        (
+            ffi::api_id_t_ORA_ID_GET_FLASH_SLOT_ADDR,
+            "ORA_ID_GET_FLASH_SLOT_ADDR",
+        ),
+        (
+            ffi::api_id_t_ORA_ID_GET_COMMISSIONING_INSTANCE,
+            "ORA_ID_GET_COMMISSIONING_INSTANCE",
+        ),
+        (ffi::api_id_t_ORA_ID_ALLOC_MEM, "ORA_ID_ALLOC_MEM"),
+        (ffi::api_id_t_ORA_ID_GET_PEER_DATA, "ORA_ID_GET_PEER_DATA"),
+        (ffi::api_id_t_ORA_ID_CLAIM_HW, "ORA_ID_CLAIM_HW"),
+        (
+            ffi::api_id_t_ORA_ID_SET_IRQ_ENABLED,
+            "ORA_ID_SET_IRQ_ENABLED",
+        ),
+        (ffi::api_id_t_ORA_ID_CLAIM_GPIO, "ORA_ID_CLAIM_GPIO"),
+        (ffi::api_id_t_ORA_ID_CLAIM_PIO, "ORA_ID_CLAIM_PIO"),
     ];
 
     // Deprecated/invalid IDs — must resolve to null.

@@ -1,0 +1,55 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "40-min-cs-act",
+    "description": "Address monitor minimum CS-active time test for 40 pin boards",
+    "categories": [
+    ],
+    "addr_mon_min_cs_act_ns": 145,
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "27C400 with the global minimum, rounded up",
+                    "file": "images/test/rand_512KB.rom",
+                    "type": "27C400"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "27C200 with its own minimum at 300MHz",
+                    "file": "images/test/rand_256KB.rom",
+                    "type": "27C200"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "300MHz",
+                    "overclock": true,
+                    "addr_mon_min_cs_act_ns": 333
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "27C400 forced to 16 bit with its own minimum of 0 at 100MHz",
+                    "file": "images/test/rand_512KB_alt.rom",
+                    "type": "27C400"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "force_16_bit": true,
+                    "cpu_freq": "100MHz",
+                    "addr_mon_min_cs_act_ns": 0
+                }
+            }
+        }
+    ]
+}

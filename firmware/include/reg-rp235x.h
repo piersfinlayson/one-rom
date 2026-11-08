@@ -68,6 +68,8 @@
 #define CLOCK_REF_SELECTED      (*((volatile uint32_t *)(CLOCKS_BASE + 0x38)))
 #define CLOCK_SYS_CTRL          (*((volatile uint32_t *)(CLOCKS_BASE + 0x3C)))
 #define CLOCK_SYS_SELECTED      (*((volatile uint32_t *)(CLOCKS_BASE + 0x44)))
+#define CLOCK_PERI_CTRL         (*((volatile uint32_t *)(CLOCKS_BASE + 0x48)))
+#define CLOCK_PERI_DIV          (*((volatile uint32_t *)(CLOCKS_BASE + 0x4C)))
 #define CLOCK_ADC_CTRL          (*((volatile uint32_t *)(CLOCKS_BASE + 0x6C)))
 #define CLOCK_CLK_USB_CTRL      (*((volatile uint32_t *)(CLOCKS_BASE + 0x60)))
 
@@ -84,6 +86,11 @@
 #define CLOCK_USB_CTRL_ENABLE     (1 << 11)
 #define CLOCK_USB_CTRL_AUXSRC_PLL_USB (0x0 << 5)
 
+#define CLOCK_PERI_CTRL_ENABLE          (1 << 11)
+#define CLOCK_PERI_CTRL_ENABLED         (1 << 28)
+#define CLOCK_PERI_CTRL_AUXSRC_PLL_USB  (0x2 << 5)
+#define CLOCK_PERI_DIV_1                (1 << 16)
+
 // PSM Registers
 #define PSM_FRCE_OFF        (*((volatile uint32_t *)(PSM_BASE + 0x004)))
 #define PSM_FRCE_OFF_SET    (*((volatile uint32_t *)(PSM_BASE + 0x004 + 0x2000)))
@@ -92,6 +99,8 @@
 
 // Reset registers
 #define RESET_RESET     (*((volatile uint32_t *)(RESETS_BASE + 0x00)))
+#define RESET_RESET_SET (*((volatile uint32_t *)(RESETS_BASE + 0x00 + 0x2000)))
+#define RESET_RESET_CLR (*((volatile uint32_t *)(RESETS_BASE + 0x00 + 0x3000)))
 #define RESET_WDSEL     (*((volatile uint32_t *)(RESETS_BASE + 0x04)))
 #define RESET_DONE      (*((volatile uint32_t *)(RESETS_BASE + 0x08)))
 
@@ -154,6 +163,16 @@
 #define IO_BANK0_INTR2 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x238))
 #define IO_BANK0_INTR3 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x23C))
 #define IO_BANK0_PROC0_INTE0 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x248))
+// GPIO interrupt registers indexed by register number, 8 GPIOs per register.
+// Each core has its own enable and status registers.
+#define IO_BANK0_INT_REG_COUNT  6
+#define IO_BANK0_INTR(n)        (*(volatile uint32_t *)(IO_BANK0_BASE + 0x230 + ((n) * 4)))
+#define IO_BANK0_PROC_INTE(core, n) \
+    (*(volatile uint32_t *)(IO_BANK0_BASE + 0x248 + ((core) * 0x48) + ((n) * 4)))
+#define IO_BANK0_PROC_INTF(core, n) \
+    (*(volatile uint32_t *)(IO_BANK0_BASE + 0x260 + ((core) * 0x48) + ((n) * 4)))
+#define IO_BANK0_PROC_INTS(core, n) \
+    (*(volatile uint32_t *)(IO_BANK0_BASE + 0x278 + ((core) * 0x48) + ((n) * 4)))
 #define IO_BANK0_PROC0_INTE1 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x24C))
 #define IO_BANK0_PROC0_INTE2 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x250))
 #define IO_BANK0_PROC0_INTE3 (*(volatile uint32_t *)(IO_BANK0_BASE + 0x254))
@@ -259,6 +278,13 @@
 #define ADC_CS_TS_EN        (1 << 1)
 #define ADC_CS_EN           (1 << 0)
 
+// UARTs
+#define UART_COUNT          2
+
+// GPIOs
+#define RP2350A_GPIO_COUNT  30
+#define RP2350B_GPIO_COUNT  48
+
 // TIMER0 Registers
 #define TIMER0_TIMELR       (*((volatile uint32_t *)(TIMER0_BASE + 0x0C)))
 #define TIMER0_ALARM0       (*((volatile uint32_t *)(TIMER0_BASE + 0x10)))
@@ -271,6 +297,12 @@
 // Alarm bits, the same positions in INTR, INTE and INTF
 #define TIMER0_INT_ALARM0   (1 << 0)
 #define TIMER0_INT_ALARM1   (1 << 1)
+
+// Alarms across TIMER0 and TIMER1
+#define TIMER_ALARM_COUNT   8
+
+// PWM
+#define PWM_SLICE_COUNT     12
 
 // OTP registers - see datasheet S13.
 //
@@ -339,6 +371,8 @@
 // TICKS Registers
 #define TICKS_TIMER0_CTRL   (*((volatile uint32_t *)(TICKS_BASE + 0x18)))
 #define TICKS_TIMER0_CYCLES (*((volatile uint32_t *)(TICKS_BASE + 0x1C)))
+#define TICKS_WATCHDOG_CTRL   (*((volatile uint32_t *)(TICKS_BASE + 0x30)))
+#define TICKS_WATCHDOG_CYCLES (*((volatile uint32_t *)(TICKS_BASE + 0x34)))
 #define TICKS_CTRL_ENABLE   (1 << 0)
 
 // USB Registers
@@ -387,6 +421,17 @@
 // the SDK's allocator collides with them last.
 #define SPINLOCK_ORA_LOG    31
 #define SPINLOCK_LED        30
+#define SPINLOCK_MEM_POOL   29
+#define SPINLOCK_HW_CLAIM   28
+#define SPINLOCK_COUNT      32
+#define SPINLOCK_FIRMWARE_CLAIMS ((1u << SPINLOCK_ORA_LOG) | (1u << SPINLOCK_LED) | \
+                                  (1u << SPINLOCK_MEM_POOL) | (1u << SPINLOCK_HW_CLAIM))
+
+// The spinlocks usable under erratum RP2350-E2, from the datasheet's
+// workaround.  The firmware claims the others so a plugin can't claim one.
+#define SPINLOCK_RP2350_E2_USABLE ((1u << 5) | (1u << 6) | (1u << 7) | \
+                                   (1u << 10) | (1u << 11) | 0xFFFC0000u)
+#define SPINLOCK_RP2350_E2_LOCKS  (~SPINLOCK_RP2350_E2_USABLE)
 
 #define SIO_GPIO_READ(pin)  ((pin < 32) ? \
                             (((*(volatile uint32_t*)(SIO_BASE + 0x004)) >> pin) & 1) : \
@@ -414,9 +459,9 @@
 #define NVIC_ISER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E104)))
 #define NVIC_ICER0          (*((volatile uint32_t *)(PBB_BASE + 0x0E180)))
 #define NVIC_ICER1          (*((volatile uint32_t *)(PBB_BASE + 0x0E184)))
-#define DMA_IRQ_0           10
-#define IRQ_USBCTRL      14
-#define IO_IRQ_BANK0        21
+// Interrupt numbers are the onerom_irq_t values generated from the metadata
+// schema.
+#define RP2350_IRQ_COUNT    52
 
 // SCB Registers
 #define SCB_VTOR            (*((volatile uint32_t *)(SCB_BASE + 0x08)))
@@ -454,8 +499,5 @@ typedef struct {
     uint8_t pll_sys_postdiv2;
     fire_vreg_t vreg;
 } rp235x_clock_config_t;
-
-#define RP235X_STOCK_CLOCK_SPEED_MHZ 150
-#define RP235X_MAX_CONFIGURABLE_MHZ 800
 
 #endif // REG_RP235X_H

@@ -15,15 +15,19 @@ use log::{debug, error, info, trace, warn};
 
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
 
-use onerom_config::chip::ChipType;
+use onerom_config::chip::{ChipType, chip_type_names_for_pins};
 use onerom_config::hw::Board;
+use onerom_config::pin::Pin;
+use onerom_lab_bus::HostProfile;
 
 use crate::CsPolarities;
 use crate::error::Error;
+use crate::uart;
 use crate::usb;
 
 use editor::LineEditor;
@@ -153,10 +157,28 @@ pub struct SessionState {
     pub format: OutputFormat,
     /// Batch read interval in seconds. Defaults to 1.
     pub interval_secs: u32,
+    /// Fast read delay in cycles.
+    pub fast_read_delay: u32,
+    /// Data lines a drive toggles, or `None` for all of them.
+    pub drive_lines: Option<u16>,
+    /// Drive delay in cycles between toggles.
+    pub drive_delay: u32,
     /// Control line polarities for the current chip.
     pub cs: CsSettings,
     /// Tri-state testing flag for checksum mode.
     pub tri_state: bool,
+    /// Host bus timing for reads and RBCP, or `None` for Lab's own.
+    pub host: Option<HostProfile>,
+    /// Serial traffic settings.
+    pub uart: UartSettings,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct UartSettings {
+    pub tx: Pin,
+    pub rx: Pin,
+    pub baud: u32,
+    pub mode: uart::Mode,
 }
 
 impl SessionState {
@@ -169,8 +191,18 @@ impl SessionState {
             range: ReadRange::default(),
             format: OutputFormat::default(),
             interval_secs: 1,
+            fast_read_delay: crate::fast_read::DEFAULT_DELAY_CYCLES,
+            drive_lines: None,
+            drive_delay: crate::drive::DEFAULT_DELAY_CYCLES,
             cs: CsSettings::unset(),
             tri_state: true,
+            host: None,
+            uart: UartSettings {
+                tx: uart::DEFAULT_TX,
+                rx: uart::DEFAULT_RX,
+                baud: uart::DEFAULT_BAUD,
+                mode: uart::Mode::default(),
+            },
         }
     }
 }
@@ -399,6 +431,16 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  b   Batch ROM read").await?;
     send_line("        b[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
         .await?;
+    send_line("  a   Batch ROM read and RBCP query").await?;
+    send_line("        a[:<chip>[:<start>[:<len>[:<fmt>[:<secs>[:<cs1>[:<cs2>[:<cs3>]]]]]]]]]")
+        .await?;
+    send_line("  x   Continuous fast read").await?;
+    send_line("        x[:<chip>[:<cycles>[:<cs1>[:<cs2>[:<cs3>]]]]]").await?;
+    send_line("  d   Drive data lines as a square wave, chip deselected").await?;
+    send_line("        d[:<chip>[:<lines|all>[:<cycles>]]]").await?;
+    send_line("  u   Send and receive serial traffic on a UART, in the background").await?;
+    send_line("        u[:<tx>[:<rx>[:<baud>[:<mode>]]]]").await?;
+    send_line("  U   Stop u and display its counts").await?;
     send_line("  i   Chip type information").await?;
     send_line("        i[:<chip>]").await?;
     send_line("  c   Set or change chip type").await?;
@@ -412,6 +454,10 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("  p   Show board pin map (socket pin -> GPIO)").await?;
     send_line("        p[:<chip>]").await?;
     send_line("  T   List supported board types").await?;
+    send_line("  R   Query a One ROM in the socket over RBCP").await?;
+    send_line("  H   Set host bus timing for r, q, b, a and R").await?;
+    send_line("        H:off, H:c64 or H[:<cycle>[:<extra>[:<glitch>[:<cs>[:<pos>[:<every>]]]]]]")
+        .await?;
     send_line("  z   Reset to bootloader").await?;
     send_line("  ?/h This help").await?;
     send_line("").await?;
@@ -425,6 +471,18 @@ pub async fn show_help(_state: &SessionState) -> Result<(), Error> {
     send_line("           len=0 means to end of ROM.").await?;
     send_line("").await?;
     send_line("CS polarity: 0=active-low  1=active-high  ?=auto-detect").await?;
+    send_line("").await?;
+    send_line("Host bus:  <extra> non-ROM cycles precede each read. Each cycle is <cycle> ns.")
+        .await?;
+    send_line("           1 in <every> non-ROM cycles has a <glitch> ns chip select pulse,")
+        .await?;
+    send_line("           <pos> ns after the cycle starts. Chip select is active for the").await?;
+    send_line("           last <cs> ns of the read.").await?;
+    send_line("").await?;
+    send_line("UART:      <tx> and <rx> are header pins, for example sel_a, or gpio<N>.").await?;
+    send_line("           pattern sends bytes 0x00 to 0xFF repeating. echo sends back each")
+        .await?;
+    send_line("           byte received. 8N1.").await?;
     send_line("").await?;
     Ok(())
 }
@@ -462,6 +520,28 @@ pub async fn send_line(s: &str) -> Result<(), Error> {
         }
         Timer::after_millis(10).await;
     }
+}
+
+/// The chip types `l` lists for `board`, or `None` where none are known for
+/// its pin count.
+fn board_chip_names(board: Board) -> Option<Vec<&'static str>> {
+    let mut names = chip_type_names_for_pins(board.chip_pins())?.to_vec();
+    let extra_chip_types = board.extra_chip_types();
+    if !extra_chip_types.is_empty() {
+        names.extend(extra_chip_types.iter().map(|c| c.name()));
+        names.sort_unstable();
+        names.dedup();
+    }
+    Some(names)
+}
+
+/// Whether `chip` is one of the chip types `l` lists for `board`.
+fn board_has_chip(board: Board, chip: ChipType) -> bool {
+    board_chip_names(board).is_some_and(|names| {
+        names
+            .iter()
+            .any(|&name| ChipType::try_from_str(name) == Some(chip))
+    })
 }
 
 fn default_chip_for_board(board: Board) -> Option<ChipType> {

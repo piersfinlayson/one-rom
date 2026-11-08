@@ -321,7 +321,7 @@ published are on crates.io, for host-side Rust development.
 |-------|:---------:|----------------|
 | [`onerom-gen`](rust/gen) | ✓ | Generates ROM images and firmware metadata.  The heart of the toolchain — turns a config plus some ROM files into something flashable. |
 | [`onerom-config`](rust/config) | ✓ | The config model: chip types, board definitions, pin maps, JSON schema. |
-| [`onerom-fw`](rust/fw) | ✓ | Composes a complete firmware image, resolving and fetching base firmware from the release manifest. |
+| [`onerom-fw`](rust/fw) | ✓ | Fetches One ROM base firmware and ROM images. |
 | [`onerom-fw-parser`](rust/fw-parser) | ✓ | Reads metadata back out of a firmware binary — what chips, what board, what version. |
 | [`onerom-metadata`](rust/metadata) | ✓ | The embedded metadata schema itself. |
 | [`onerom-lab-metadata`](rust/lab-metadata) | ✓ | One ROM Lab's metadata structures. |
@@ -331,16 +331,18 @@ published are on crates.io, for host-side Rust development.
 | [`onerom-app`](rust/app) | ✓ | Transport-free logic shared by the CLI, Studio and the web tools. |
 | [`onerom-studio`](rust/studio) | | The desktop GUI, released at [onerom.org/studio](https://onerom.org/studio). |
 | [`onerom-lab`](rust/lab) | | One ROM Lab, above. |
+| [`onerom-lab-bus`](rust/lab-bus) | | One ROM Lab's host bus timing. |
 | [`onerom-signing-server`](rust/signing-server) | | Signs commissioning instances. |
 | [`onerom-lens`](rust/lens) | | One ROM Lens — compiles the firmware emulator to WebAssembly and draws PIO and DMA activity as waveforms in a browser, cycle by cycle. |
 | [`onerom-fw-emulator`](rust/fw-emulator) | | Compiles and runs the real firmware C on a host, PIOs and all. |
 | [`onerom-fw-tester`](rust/fw-tester) | | Drives the emulator with generated configurations and checks the results. |
 | [`onerom-plugin-tester`](rust/plugin-tester) | | The harness a plugin tester is built from — runs a plugin's own C against the emulated firmware. |
+| [`onerom-rbcp-host`](rust/rbcp-host) | | An RBCP host. One ROM Lab uses it to query a One ROM over the ROM bus. |
 | [`onerom-rbcp-tester`](rust/rbcp-tester) | | Drives the host-control plugin over emulated ROM bus cycles, as an RBCP host would. |
 | [`onerom-usb-tester`](rust/usb-tester) | | Drives the USB system plugin's commands, log forwarding and GPIO control. |
 | [`onerom-fw-driver`](rust/fw-driver), [`onerom-fw-geometry`](rust/fw-geometry) | | Pin geometry and GPIO bitmask helpers, shared and dependency-free by design. |
 | [`fw-config-gen`](rust/fw-config-gen), [`schema-gen`](rust/schema-gen) | | Code and schema generators. |
-| [`doc-gen`](rust/doc-gen) | | Checks the values `docs/` states against the sources that own them, assembles the markdown a multi-part PDF is rendered from, and fills in the fragment regions of the documents in `docs/`. |
+| [`doc-gen`](rust/doc-gen) | | Checks the values in `docs/` and `onerom-config/README.md`. |
 
 For in-browser use, [one-rom-wasm](https://github.com/piersfinlayson/one-rom-wasm)
 wraps `onerom-gen` as WASM, and is what the

@@ -233,6 +233,9 @@ pub enum Config {
 
     /// Config from the network manifest
     Network { url: String, name: String },
+
+    /// Config read back from a file or device, with its ROMs inlined
+    ReadBack { source: String, json: Vec<u8> },
 }
 
 impl std::fmt::Display for Config {
@@ -256,6 +259,9 @@ impl std::fmt::Display for Config {
             }
             Config::Built { .. } => {
                 write!(f, "Built in Studio")
+            }
+            Config::ReadBack { source, .. } => {
+                write!(f, "Loaded from {source}")
             }
         }
     }
@@ -324,6 +330,7 @@ impl Config {
                 name.to_string()
             }
             Config::Built { .. } => "Built in Studio".to_string(),
+            Config::ReadBack { source, .. } => format!("Loaded from {source}"),
         }
     }
 
@@ -346,6 +353,7 @@ impl Config {
             }
             Config::Network { .. } => self.name(),
             Config::Built { .. } => "built_in_studio".to_string(),
+            Config::ReadBack { .. } => "loaded".to_string(),
         }
     }
 }

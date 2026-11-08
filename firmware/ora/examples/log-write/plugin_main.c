@@ -14,9 +14,9 @@
 #error "PLUGIN_IS_SYSTEM is not defined - build this with ora/plugin.mk"
 #endif
 #if PLUGIN_IS_SYSTEM
-ORA_DEFINE_SYSTEM_PLUGIN(plugin_main, 0, 1, 0, 0, 0, 7, 2);
+ORA_SYSTEM_PLUGIN(plugin_setup, plugin_loop, 0, 1, 0, 0, 0, 7, 2);
 #else // User plugin
-ORA_DEFINE_USER_PLUGIN(plugin_main, 0, 1, 0, 0, 0, 7, 2);
+ORA_USER_PLUGIN(plugin_setup, plugin_loop, 0, 1, 0, 0, 0, 7, 2);
 #endif // Plugin type check
 
 // The name must stay valid until the close - the firmware keeps the pointer.
@@ -26,13 +26,7 @@ static const char line1[] = "log-write: channel claimed\n";
 static const char line2[] = "log-write: raw bytes, no formatting\n";
 static const char line3[] = "log-write: releasing the claim\n";
 
-static void park(void) {
-    while (1) {
-        __asm volatile ("wfe");
-    }
-}
-
-void plugin_main(
+void plugin_setup(
     ora_lookup_fn_t ora_lookup_fn,
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
@@ -46,9 +40,12 @@ void plugin_main(
     ora_log_write_fn_t log_write = ora_lookup_fn(ORA_ID_LOG_WRITE);
     ora_log_close_write_fn_t log_close_write = ora_lookup_fn(ORA_ID_LOG_CLOSE_WRITE);
 
+    if ((log_open_write == NULL) || (log_write == NULL) || (log_close_write == NULL)) {
+        return;
+    }
     if (log_open_write(ORA_LOG_CHANNEL_0, channel_name) ==
         ORA_RESULT_LOG_CHANNEL_IN_USE) {
-        park();
+        return;
     }
 
     // ORA_RESULT_LOG_FULL is normal when nothing drains the channel, not an error.
@@ -57,6 +54,8 @@ void plugin_main(
     log_write(ORA_LOG_CHANNEL_0, line3, sizeof(line3) - 1);
 
     log_close_write(ORA_LOG_CHANNEL_0);
+}
 
-    park();
+// Everything is done in setup.
+void plugin_loop(void) {
 }

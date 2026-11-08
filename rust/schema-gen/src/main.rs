@@ -53,6 +53,9 @@ fn generate_rom_config_schema() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use onerom_metadata::{
+        ADDR_MON_UNSET_MIN_CS_ACT_NS, ADDR_MON_UNSET_MIN_CS_ACT_NS_ALG_CS_2, TARGET_FREQ_MHZ,
+    };
 
     #[test]
     fn rom_schema_is_current() {
@@ -74,5 +77,24 @@ mod tests {
             checked_in, generated,
             "Schema out of date - run: cargo run -p schema-gen"
         );
+    }
+
+    // The description quotes these figures, typed by hand in onerom-gen.
+    #[test]
+    fn min_cs_act_description_matches_the_constants() {
+        let schema = serde_json::to_value(schema_for!(RomConfig)).unwrap();
+        let description = schema["properties"]["addr_mon_min_cs_act_ns"]["description"]
+            .as_str()
+            .expect("addr_mon_min_cs_act_ns has a description");
+        for figure in [
+            format!(" {ADDR_MON_UNSET_MIN_CS_ACT_NS}ns "),
+            format!(" {ADDR_MON_UNSET_MIN_CS_ACT_NS_ALG_CS_2}ns "),
+            format!(" {TARGET_FREQ_MHZ}MHz"),
+        ] {
+            assert!(
+                description.contains(&figure),
+                "{figure:?} in {description:?}"
+            );
+        }
     }
 }

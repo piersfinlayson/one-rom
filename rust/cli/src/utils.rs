@@ -12,6 +12,7 @@ use onerom_cli::{Device, DeviceState, Error, Firmware, LogLevel, Options};
 use onerom_cli::{LIVE_ROM_BASE, LIVE_ROM_MAX_OFFSET};
 use onerom_config::chip::ChipType;
 use onerom_config::hw::{Board, Model};
+use onerom_gen::MAX_ADDR_MON_MIN_CS_ACT_NS;
 
 /// The board types the CLI can act on, comma-separated.
 ///
@@ -93,7 +94,53 @@ pub fn init_logging(options: &Options) {
         let level = format!("{}: ", record.level());
         writeln!(buf, "{:07}{}", level, record.args())
     });
-    log_builder.init();
+    let logger = log_builder.build();
+    log::set_max_level(logger.filter());
+    log::set_boxed_logger(Box::new(CliLogger(logger))).expect("logging already initialised");
+}
+
+/// Wraps env_logger to change the level of some log records.
+struct CliLogger(env_logger::Logger);
+
+impl log::Log for CliLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        self.0.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record) {
+        // nusb logs a failed USB transfer submission as an error and also
+        // returns the error to the caller.
+        if is_nusb_submit_failed(record) {
+            self.0.log(
+                &log::Record::builder()
+                    .level(log::Level::Info)
+                    .target(record.target())
+                    .args(*record.args())
+                    .module_path(record.module_path())
+                    .file(record.file())
+                    .line(record.line())
+                    .build(),
+            );
+        } else {
+            self.0.log(record);
+        }
+    }
+
+    fn flush(&self) {
+        self.0.flush();
+    }
+}
+
+fn is_nusb_submit_failed(record: &log::Record) -> bool {
+    if record.level() != log::Level::Error {
+        return false;
+    }
+    let prefix = match record.target() {
+        "nusb::platform::windows_winusb::device" => "submit failed:",
+        "nusb::platform::macos_iokit::device" => "Failed to submit ",
+        _ => return false,
+    };
+    record.args().to_string().starts_with(prefix)
 }
 
 pub fn check_device_nand_board(options: &Options, board_arg: &Option<String>) -> Result<(), Error> {
@@ -238,6 +285,18 @@ pub fn parse_gpio_hold_ms(s: &str) -> Result<u32, String> {
     }
 
     Ok(value)
+}
+
+/// Parse a minimum CS-active time in nanoseconds, bounded by what a config can
+/// set.
+pub fn parse_addr_mon_min_cs_act_ns(s: &str) -> Result<u16, String> {
+    let value = parse_u32(s)
+        .map_err(|_| "Minimum CS-active time must be a number of nanoseconds".to_string())?;
+
+    u16::try_from(value)
+        .ok()
+        .filter(|&ns| ns <= MAX_ADDR_MON_MIN_CS_ACT_NS)
+        .ok_or_else(|| format!("Minimum CS-active time is at most {MAX_ADDR_MON_MIN_CS_ACT_NS}ns"))
 }
 
 /// The shortest period each repeating mode accepts, in milliseconds.
@@ -498,12 +557,7 @@ pub fn resolve_firmware_output(
     let version_part = version.map(|v| format!("_v{v}")).unwrap_or_default();
 
     let config_suffix = config
-        .map(|c| {
-            std::path::Path::new(c)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or(c)
-        })
+        .and_then(config_stem)
         .map(|s| format!("_{s}"))
         .unwrap_or_default();
 
@@ -518,6 +572,33 @@ pub fn resolve_firmware_output(
     } else {
         default_filename
     }
+}
+
+const WINDOWS_FILENAME_RESERVED: &str = r#"<>:"/\|?*"#;
+
+/// The file stem of a `--config` path or of an http(s) URL's last path segment.
+fn config_stem(config: &str) -> Option<String> {
+    let name = if config.starts_with("http://") || config.starts_with("https://") {
+        let url = reqwest::Url::parse(config).ok()?;
+        let segment = url.path_segments()?.rev().find(|s| !s.is_empty())?;
+        percent_encoding::percent_decode_str(segment)
+            .decode_utf8_lossy()
+            .chars()
+            .map(|c| {
+                if c.is_control() || WINDOWS_FILENAME_RESERVED.contains(c) {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .collect()
+    } else {
+        config.to_string()
+    };
+    std::path::Path::new(&name)
+        .file_stem()?
+        .to_str()
+        .map(str::to_string)
 }
 
 pub fn read_char() -> Result<KeyEvent, Error> {
@@ -535,6 +616,60 @@ pub fn read_char() -> Result<KeyEvent, Error> {
 mod tests {
     use super::*;
     use onerom_config::hw::BOARDS;
+
+    /// The targets and messages are nusb's own, from
+    /// `src/platform/windows_winusb/device.rs` and
+    /// `src/platform/macos_iokit/device.rs`.
+    #[test]
+    fn only_nusbs_submit_failed_error_is_logged_as_info() {
+        const NUSB: &str = "nusb::platform::windows_winusb::device";
+        const NUSB_MACOS: &str = "nusb::platform::macos_iokit::device";
+        let matches = |level, target, args: std::fmt::Arguments| {
+            is_nusb_submit_failed(
+                &log::Record::builder()
+                    .level(level)
+                    .target(target)
+                    .args(args)
+                    .build(),
+            )
+        };
+        use log::Level::{Error, Warn};
+        assert!(matches(
+            Error,
+            NUSB,
+            format_args!("submit failed: gone (os error 22)")
+        ));
+        assert!(!matches(
+            Warn,
+            NUSB,
+            format_args!("submit failed: gone (os error 22)")
+        ));
+        assert!(!matches(
+            Error,
+            "nusb::device",
+            format_args!("submit failed: gone")
+        ));
+        assert!(!matches(
+            Error,
+            NUSB,
+            format_args!("Failed to read config descriptor")
+        ));
+        assert!(matches(
+            Error,
+            NUSB_MACOS,
+            format_args!("Failed to submit control In 0x0: e00002c0")
+        ));
+        assert!(matches(
+            Error,
+            NUSB_MACOS,
+            format_args!("Failed to submit In transfer 0x0 of len 64 on endpoint 84: e00002d8")
+        ));
+        assert!(!matches(
+            Error,
+            NUSB_MACOS,
+            format_args!("submit failed: gone (os error 22)")
+        ));
+    }
 
     /// Every board must fall into exactly one of the two lists the CLI shows -
     /// a board in neither would be invisible to `board list`, and one in both
@@ -673,6 +808,55 @@ mod tests {
                 out_of_bounds(live_range_of("27C080", offset, Some(length)), 0x80000),
                 "0x{offset:x} 0x{length:x}"
             );
+        }
+    }
+
+    #[test]
+    fn default_firmware_filename_from_config() {
+        for (config, filename) in [
+            ("configs/c64.json", "onerom_fire-24-e_v0.8.0_c64.bin"),
+            (
+                "https://images.onerom.org/configs/c64-bootloader-longboard.json",
+                "onerom_fire-24-e_v0.8.0_c64-bootloader-longboard.bin",
+            ),
+            (
+                "https://host/c64.json?ref=a/b#c/d",
+                "onerom_fire-24-e_v0.8.0_c64.bin",
+            ),
+            (
+                "https://host/c64%20pal%2Fntsc:1.json",
+                "onerom_fire-24-e_v0.8.0_c64 pal_ntsc_1.bin",
+            ),
+            (
+                "https://host/configs/",
+                "onerom_fire-24-e_v0.8.0_configs.bin",
+            ),
+            ("https://host/", "onerom_fire-24-e_v0.8.0.bin"),
+        ] {
+            assert_eq!(
+                resolve_firmware_output(&None, &None, &Board::Fire24E, Some("0.8.0"), Some(config)),
+                filename,
+                "{config}"
+            );
+        }
+    }
+
+    /// A value that isn't a number and a value above the maximum fail with
+    /// different errors. Only the second contains the maximum.
+    #[test]
+    fn an_addr_mon_min_cs_act_ns_parses_up_to_the_maximum() {
+        let max = MAX_ADDR_MON_MIN_CS_ACT_NS;
+        assert_eq!(parse_addr_mon_min_cs_act_ns("0"), Ok(0));
+        assert_eq!(parse_addr_mon_min_cs_act_ns(&max.to_string()), Ok(max));
+
+        let max_ns = format!("{max}ns");
+        for value in ["-1", "140ns", ""] {
+            let err = parse_addr_mon_min_cs_act_ns(value).unwrap_err();
+            assert!(!err.contains(&max_ns), "{value}: {err}");
+        }
+        for value in [u32::from(max) + 1, 70000] {
+            let err = parse_addr_mon_min_cs_act_ns(&value.to_string()).unwrap_err();
+            assert!(err.contains(&max_ns), "{value}: {err}");
         }
     }
 }

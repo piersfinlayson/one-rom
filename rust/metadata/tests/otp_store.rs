@@ -6,16 +6,18 @@
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 // MIT License
 
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_metadata::otp::{
     AreaIssue, BuildError, CommissioningArea, CommissioningValues, GeneralStore,
-    NewCommissioningInstance, RowWrite, StoreEntry, check_manufacturer,
+    NewCommissioningInstance, RowWrite, StoreEntry, check_batch, check_manufacturer,
+    check_revision,
 };
 use onerom_metadata::{
-    OTP_COMMISSIONING_AREA_FIRST_ROW, OTP_COMMISSIONING_AREA_LAST_ROW, OTP_GENERAL_STORE_FIRST_ROW,
-    OTP_GENERAL_STORE_LAST_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW,
-    OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_STORE_MAGIC, OTP_STORE_VERSION, OneromOtpEntry,
-    SerializeContext,
+    COMMISSIONING_BATCH_MAX_LEN, COMMISSIONING_MANUFACTURER_MAX_LEN,
+    COMMISSIONING_REVISION_MAX_LEN, MaybeKnown, OTP_COMMISSIONING_AREA_FIRST_ROW,
+    OTP_COMMISSIONING_AREA_LAST_ROW, OTP_GENERAL_STORE_FIRST_ROW, OTP_GENERAL_STORE_LAST_ROW,
+    OTP_GENERAL_STORE_TERMINATOR_ROW, OTP_GENERAL_STORE_TERMINATOR_ROW_COUNT, OTP_STORE_MAGIC,
+    OTP_STORE_VERSION, OneromBoardSize, OneromOtpEntry, SerializeContext,
 };
 use serde_json::json;
 
@@ -197,13 +199,84 @@ fn an_instance_must_end_before_the_general_store() {
     );
 }
 
-/// The area's 1024 rows hold fire-24-f's 54 rows and a manufacturer of up to
-/// 1940 bytes. The values are refused before they're placed.
+/// A manufacturer's name longer than COMMISSIONING_MANUFACTURER_MAX_LEN is
+/// refused before the values are built.
 #[test]
-fn values_too_long_for_the_area_are_refused() {
+fn a_manufacturer_longer_than_its_maximum_is_refused() {
     let values = |len| CommissioningValues::new(Board::Fire24F, &"x".repeat(len), "20260926", 1);
-    assert!(values(1940).is_ok());
-    assert_eq!(values(1941).err(), Some(BuildError::DoesNotFit));
+    assert!(values(COMMISSIONING_MANUFACTURER_MAX_LEN).is_ok());
+    assert_eq!(
+        values(COMMISSIONING_MANUFACTURER_MAX_LEN + 1).err(),
+        Some(BuildError::BadManufacturer)
+    );
+}
+
+/// A revision and a batch are non-empty printable ASCII without a leading or
+/// trailing space, up to their maximum lengths. Unlike a manufacturer's name
+/// they may contain `*`.
+#[test]
+fn a_revision_and_batch_are_checked() {
+    let revision = "r".repeat(COMMISSIONING_REVISION_MAX_LEN);
+    let batch = "b".repeat(COMMISSIONING_BATCH_MAX_LEN);
+    for text in ["A1", "a", "Y1-2345*", "rev 2"] {
+        assert_eq!(check_revision(text), Ok(()), "{text:?}");
+        assert_eq!(check_batch(text), Ok(()), "{text:?}");
+    }
+    assert_eq!(check_revision(&revision), Ok(()));
+    assert_eq!(check_batch(&batch), Ok(()));
+    assert_eq!(
+        check_revision(&format!("{revision}r")),
+        Err(BuildError::BadRevision)
+    );
+    assert_eq!(check_batch(&format!("{batch}b")), Err(BuildError::BadBatch));
+    for text in ["", " ", " A1", "A1 ", "A\t1", "Café", "\u{7f}"] {
+        assert_eq!(
+            check_revision(text),
+            Err(BuildError::BadRevision),
+            "{text:?}"
+        );
+        assert_eq!(check_batch(text), Err(BuildError::BadBatch), "{text:?}");
+    }
+
+    let builder = || CommissioningValues::builder(Board::Fire24F, "piers.rocks", "20260926", 1);
+    assert_eq!(
+        builder().revision(" A1").build().err(),
+        Some(BuildError::BadRevision)
+    );
+    assert_eq!(
+        builder().batch("").build().err(),
+        Some(BuildError::BadBatch)
+    );
+}
+
+/// The size, revision and batch follow the signer in that order, whatever
+/// order they're set in.
+#[test]
+fn optional_values_follow_the_signer_in_a_fixed_order() {
+    let builder = || CommissioningValues::builder(Board::Fire24F, "piers.rocks", "20260926", 1);
+    let one = builder()
+        .size(BoardSize::L)
+        .revision("A1")
+        .batch("B")
+        .build()
+        .unwrap();
+    let other = builder()
+        .batch("B")
+        .revision("A1")
+        .size(BoardSize::L)
+        .build()
+        .unwrap();
+    assert_eq!(one, other);
+
+    #[rustfmt::skip]
+    let optional: [u16; 9] = [
+        0x0008, 0x0002, 0x0002, // size L
+        0x0006, 0x0002, 0x3141, // revision "A1"
+        0x0007, 0x0001, 0x0042, // batch "B"
+    ];
+    let mut expected = values().message(CHIP_ID);
+    expected.extend(optional.iter().flat_map(|row| row.to_le_bytes()));
+    assert_eq!(one.message(CHIP_ID), expected);
 }
 
 #[test]
@@ -262,8 +335,51 @@ fn a_written_instance_parses_back() {
     assert_eq!(current.date(), Some("20260926"));
     assert_eq!(current.signer(), Some(1));
     assert_eq!(current.signature(), Some(&signature()));
+    assert_eq!(current.size(), None);
+    assert_eq!(current.revision(), None);
+    assert_eq!(current.batch(), None);
     assert!(current.is_valid());
     assert_eq!(current.message(CHIP_ID), Some(values().message(CHIP_ID)));
+}
+
+#[test]
+fn optional_values_parse_back() {
+    let values = CommissioningValues::builder(Board::Fire24F, "piers.rocks", "20260926", 1)
+        .size(BoardSize::M)
+        .revision("A1")
+        .batch("Y1-2345")
+        .build()
+        .unwrap();
+    let mut area = blank_area();
+    commission(
+        &mut area,
+        &NewCommissioningInstance::new(&values, 0x0c0).unwrap(),
+    );
+    let parsed = CommissioningArea::parse(&area);
+    let current = parsed.current().expect("a current instance");
+    assert_eq!(
+        current.size(),
+        Some(MaybeKnown::Known(OneromBoardSize::BoardSizeM))
+    );
+    assert_eq!(current.revision(), Some("A1"));
+    assert_eq!(current.batch(), Some("Y1-2345"));
+    assert!(current.is_valid());
+    assert_eq!(current.message(CHIP_ID), Some(values.message(CHIP_ID)));
+}
+
+/// A size missing from this build's `OneromBoardSize` is read as its number.
+#[test]
+fn an_unknown_size_is_read_as_its_number() {
+    let mut entries = valid_entries();
+    entries.insert(
+        4,
+        rows_of(&OneromOtpEntry::OtpKeyCommissioningSize { size: 0x0103 }),
+    );
+    let mut area = blank_area();
+    put(&mut area, 0x0c0, &entries);
+    let parsed = CommissioningArea::parse(&area);
+    let current = parsed.current().expect("a current instance");
+    assert_eq!(current.size(), Some(MaybeKnown::Unknown(0x0103)));
 }
 
 #[test]
@@ -572,6 +688,28 @@ fn an_area_serialises_its_entries_flat() {
             "current": 0x0c0,
             "next_instance_row": 0x140,
         })
+    );
+}
+
+/// The size is its number, and the revision and batch are strings.
+#[test]
+fn optional_values_serialise_with_their_names() {
+    let json = |entry| serde_json::to_value(StoreEntry::Entry { row: 0x0e1, entry }).unwrap();
+    assert_eq!(
+        json(OneromOtpEntry::OtpKeyCommissioningSize { size: 2 }),
+        json!({ "row": 0x0e1, "key": "COMMISSIONING_SIZE", "value": 2 })
+    );
+    assert_eq!(
+        json(OneromOtpEntry::OtpKeyCommissioningRevision {
+            revision: "A1".into()
+        }),
+        json!({ "row": 0x0e1, "key": "COMMISSIONING_REVISION", "value": "A1" })
+    );
+    assert_eq!(
+        json(OneromOtpEntry::OtpKeyCommissioningBatch {
+            batch: "Y1-2345".into()
+        }),
+        json!({ "row": 0x0e1, "key": "COMMISSIONING_BATCH", "value": "Y1-2345" })
     );
 }
 

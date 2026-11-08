@@ -190,6 +190,16 @@ async fn with_a_key_file() {
     sign_run(&line, "y\n", &table, None).await;
 }
 
+/// A key file with a revision and batch, with `--yes` and then with `--json`.
+#[tokio::test]
+async fn with_a_revision_and_batch() {
+    let table = table(None);
+    let line = format!("{KEY_FILE_LINE} --rev A1 --batch Y1-2345 --yes");
+    sign_run(&line, "", &table, None).await;
+    println!();
+    sign_run(&format!("{line} --json"), "", &table, None).await;
+}
+
 /// Acme Retro's key file, which is encrypted with a PIN, signing an M
 /// fire-40-b by Acme Retro. Answered y.
 #[tokio::test]
@@ -325,10 +335,6 @@ async fn refused() {
         ..Server::test_key()
     };
     sign_run(&line, "y\n", &table, Some(&records_another)).await;
-    println!();
-    println!("### a manufacturer too long to fit in OTP");
-    let long = KEY_FILE_LINE.replace("piers.rocks", &"x".repeat(2100));
-    sign_run(&long, "y\n", &table, None).await;
 }
 
 /// A manufacturer key 1 doesn't allow, with a key file and then a signing

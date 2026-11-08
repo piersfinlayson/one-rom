@@ -50,7 +50,7 @@ async fn reserved_pins() {
     use crate::test_board::image_2364;
     use onerom_cli::image::parse_firmware;
 
-    let image = parse_firmware(&image_2364(3, &["sel_c", "x1"])).await;
+    let image = parse_firmware(&image_2364(3, &["sel_c", "x1"]).await).await;
     println!("$ onerom inspect slots");
     println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
     println!("  {}", slot_count_line(3, Some(0), false));
@@ -93,8 +93,45 @@ fn a_standby_override() {
     println!("~ One ROM Fire 24 F - Firmware: v0.8.0 State: Running Serial: DE3F9C232F655B6B");
     println!("  {}", slot_count_line(1, Some(0), true));
     println!("  {}", slot_heading(0, true, true));
-    for line in override_lines(&overrides) {
+    for line in override_lines(&overrides, false) {
         println!("  {line}");
     }
     println!("~     Chip 0: 2364");
+}
+
+/// The address monitor's minimum CS-active time set globally and for slot 0,
+/// then not set. The device and chip lines don't come from running the code.
+#[tokio::test]
+async fn addr_mon_min_cs_act_ns() {
+    use crate::inspect::{
+        addr_mon_min_cs_act_line, slot_count_line, slot_heading, slot_override_lines,
+    };
+    use crate::test_board::image_addr_mon;
+    use onerom_cli::image::parse_firmware;
+
+    for (case, global, slots) in [
+        ("set", Some(140), [Some(300), None]),
+        ("not set", None, [None, None]),
+    ] {
+        println!("### {case}");
+        let image = parse_firmware(&image_addr_mon(global, &slots).await).await;
+        let metadata = image
+            .as_schema()
+            .and_then(|onerom| onerom.metadata())
+            .unwrap();
+        println!("$ onerom inspect slots");
+        println!("~ One ROM Fire 24 F - Firmware: v0.8.1 State: Running Serial: DE3F9C232F655B6B");
+        println!("  {}", slot_count_line(slots.len(), Some(0), false));
+        if let Some(line) = addr_mon_min_cs_act_line(&image) {
+            println!("  {line}");
+        }
+        for (n, slot) in metadata.rom_slots.iter().enumerate() {
+            println!("  {}", slot_heading(n, n == 0, false));
+            for line in slot_override_lines(slot) {
+                println!("{line}");
+            }
+            println!("~     Chip 0: 2364");
+        }
+        println!();
+    }
 }

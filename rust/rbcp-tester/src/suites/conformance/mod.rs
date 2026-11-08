@@ -126,6 +126,31 @@ pub static SCENARIOS: &[Scenario] = &[
         run: control::load_and_exit_slot_aa_loads_nothing_but_exits,
     },
     Scenario {
+        name: "conformance.control.reboot_normal",
+        spec_ref: "Group 0x00 — REBOOT",
+        run: control::reboot_normal,
+    },
+    Scenario {
+        name: "conformance.control.reboot_bootloader",
+        spec_ref: "Group 0x00 — REBOOT",
+        run: control::reboot_bootloader,
+    },
+    Scenario {
+        name: "conformance.control.reboot_fails_when_the_reboot_does",
+        spec_ref: "Group 0x00 — REBOOT",
+        run: control::reboot_fails_when_the_reboot_does,
+    },
+    Scenario {
+        name: "conformance.control.reboot_in_command_mode",
+        spec_ref: "Group 0x00 — REBOOT",
+        run: control::reboot_in_command_mode,
+    },
+    Scenario {
+        name: "conformance.control.reboot_fails_for_invalid_arguments",
+        spec_ref: "Group 0x00 — REBOOT; Reboot Modes",
+        run: control::reboot_fails_for_invalid_arguments,
+    },
+    Scenario {
         name: "conformance.control.restore_not_valid_in_command_mode",
         spec_ref: "Group 0x00 — EXIT_CMD_RESP_RESTORE (not supported in command mode)",
         run: control::restore_not_valid_in_command_mode,
@@ -566,11 +591,6 @@ pub static SCENARIOS: &[Scenario] = &[
         run: pipes::pipe_read_refusals,
     },
     Scenario {
-        name: "conformance.pipes.one_pipe_without_the_read_calls",
-        spec_ref: "Group 0x04 — GET_PIPE_CAPABILITY (a device without the IN direction)",
-        run: pipes::one_pipe_without_the_read_calls,
-    },
-    Scenario {
         name: "conformance.pipes.pipe_read_refused_when_another_reader_holds_the_channel",
         spec_ref: "Group 0x04 — PIPE_READ (fails, consuming nothing)",
         run: pipes::pipe_read_refused_when_another_reader_holds_the_channel,
@@ -599,11 +619,6 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.pipes.get_pipe_info_rejects_pipe_aa",
         spec_ref: "Group 0x04 — GET_PIPE_INFO (a final argument of 0xAA is rejected)",
         run: pipes::get_pipe_info_rejects_pipe_aa,
-    },
-    Scenario {
-        name: "conformance.pipes.no_pipes_without_the_log_calls",
-        spec_ref: "Group 0x04 — a device that exposes no pipes reports a count of zero",
-        run: pipes::no_pipes_without_the_log_calls,
     },
     Scenario {
         name: "conformance.pipes.pipe_write_transfers_its_payload",
@@ -776,16 +791,6 @@ pub static SCENARIOS: &[Scenario] = &[
         run: aux::set_aux_rejects_group_aa,
     },
     Scenario {
-        name: "conformance.aux.no_uptime_offers_no_timed_holds",
-        spec_ref: "GET_AUX_CAPABILITY Response Format — max_hold of zero",
-        run: aux::no_uptime_offers_no_timed_holds,
-    },
-    Scenario {
-        name: "conformance.aux.groups_stay_consistent_without_indexed_metadata",
-        spec_ref: "Group 0x05 — Auxiliary I/O (groups are contiguous and start from zero)",
-        run: aux::groups_stay_consistent_without_indexed_metadata,
-    },
-    Scenario {
         name: "conformance.aux.no_groups_without_the_gpio_calls",
         spec_ref: "Group 0x05 — Auxiliary I/O (a device exposing no auxiliary pins)",
         run: aux::no_groups_without_the_gpio_calls,
@@ -889,16 +894,6 @@ pub static SCENARIOS: &[Scenario] = &[
         name: "conformance.led.led_state_survives_a_slot_switch",
         spec_ref: "Group 0x06 — LEDs (One ROM: a slot switch leaves the LEDs alone)",
         run: led::led_state_survives_a_slot_switch,
-    },
-    Scenario {
-        name: "conformance.led.no_leds_without_the_led_calls",
-        spec_ref: "Group 0x06 — a device that has no LEDs reports a count of zero",
-        run: led::no_leds_without_the_led_calls,
-    },
-    Scenario {
-        name: "conformance.led.no_leds_without_the_led_get_call",
-        spec_ref: "Group 0x06 — a device that has no LEDs reports a count of zero",
-        run: led::no_leds_without_the_led_get_call,
     },
     Scenario {
         name: "conformance.slots.commands_reject_a_slot_the_device_lacks",

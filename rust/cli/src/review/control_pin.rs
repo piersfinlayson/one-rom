@@ -6,6 +6,7 @@
 
 use onerom_cli::Error;
 use onerom_cli::image::parse_firmware;
+use onerom_cli::picobootx::GpioUse;
 use onerom_config::chip::ChipType;
 use onerom_config::hw::Board;
 
@@ -48,7 +49,7 @@ fn helps() {
 #[tokio::test]
 async fn a_data_pin_serving_and_in_standby() {
     let board = Board::Fire24F;
-    let image = parse_firmware(&image_2364(1, &[])).await;
+    let image = parse_firmware(&image_2364(1, &[]).await).await;
     let gpio_use = served_entries(&image, &board)[0].gpio_use().unwrap();
     let name = describe_gpio(Some(&board), Some(ChipType::Chip2364), 0);
     for (state, standby) in [("serving", false), ("in standby", true)] {
@@ -66,4 +67,13 @@ fn firmware_that_predates_gpio_control() {
     written_failure(&Error::FirmwareTooOldForGpio(
         "One ROM Fire 24 F - Firmware: v0.7.0 State: Running Serial: DE3F9C232F655B6B".to_string(),
     ));
+}
+
+/// GPIO8 is X2 on a fire-24-f, claimed by a plugin.
+#[test]
+fn a_pin_a_plugin_has_claimed() {
+    let board = Board::Fire24F;
+    let name = describe_gpio(Some(&board), Some(ChipType::Chip2364), 8);
+    println!("$ onerom control pin --pin x2 --state low");
+    failed(gpio_in_use(&name, GpioUse::Plugin, false, PIN_FORCE_HINT));
 }

@@ -13,9 +13,14 @@ use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_fw_emulator::{
     Emulator, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS, ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS,
+    OraResult,
 };
 use onerom_gen::Config;
-use onerom_metadata::MAX_ROM_IMAGE_SIZE;
+use onerom_metadata::{
+    FLASH_CS1_BASE_ADDR, MAX_ROM_IMAGE_SIZE, MaybeKnown, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
+    OTP_BOOT_FLAGS0_ROW, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT, OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT,
+    OTP_FLASH_DEVINFO_ROW, OneromFlashSize, Pointer, RomSlotType,
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -266,6 +271,198 @@ pub fn test_flash_slot_ext_info(emu: &Emulator, config: &Config) -> Result<(), S
     } else {
         Err(errors.join("; "))
     }
+}
+
+/// Verify `ORA_ID_GET_FLASH_SLOT_ADDR` for every slot under each filter against
+/// the metadata the generator builds for the config.
+///
+/// - For a slot with an image the call returns its flash address and size.
+/// - A slot without an image and an index past the last slot return
+///   `InvalidSlot` and leave both outputs unchanged.
+/// - A NULL output is skipped and the other is still written.
+pub fn test_flash_slot_addr(
+    emu: &Emulator,
+    config: &Config,
+    board: Board,
+    fw_version: FirmwareVersion,
+    base_dir: &std::path::Path,
+) -> Result<(), String> {
+    let header = onerom_fw_tester::geometry::build_header(config, board, fw_version, base_dir)?;
+    let mut errors = Vec::new();
+    let mut checked = 0;
+
+    for (label, flags) in [
+        ("all slots", 0),
+        ("EXCLUDE_PLUGINS", ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS),
+        (
+            "EXCLUDE_NON_PLUGINS",
+            ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS,
+        ),
+    ] {
+        let slots: Vec<_> = header
+            .rom_slots
+            .iter()
+            .filter(|slot| {
+                let plugin = matches!(
+                    slot.slot_type,
+                    MaybeKnown::Known(
+                        RomSlotType::RomSlotTypePluginSystem
+                            | RomSlotType::RomSlotTypePluginUser
+                            | RomSlotType::RomSlotTypePluginPio
+                    )
+                );
+                match flags {
+                    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS => !plugin,
+                    ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS => plugin,
+                    _ => true,
+                }
+            })
+            .collect();
+
+        for (index, slot) in slots.iter().enumerate() {
+            let got = emu.get_flash_slot_addr(index as u8, flags);
+            let want = match slot.data {
+                Pointer::Addr32(addr) => (OraResult::Ok, addr, slot.size),
+                Pointer::Null => (OraResult::InvalidSlot, u32::MAX, u32::MAX),
+            };
+            if got != want {
+                errors.push(format!(
+                    "{label} slot {index}: got {:?} {:#010x} {:#x}, want {:?} {:#010x} {:#x}",
+                    got.0, got.1, got.2, want.0, want.1, want.2
+                ));
+            }
+            checked += 1;
+        }
+
+        for index in [slots.len() as u8, u8::MAX] {
+            let got = emu.get_flash_slot_addr(index, flags);
+            if got != (OraResult::InvalidSlot, u32::MAX, u32::MAX) {
+                errors.push(format!(
+                    "{label} slot {index}, past the last one: got {:?} {:#010x} {:#x}",
+                    got.0, got.1, got.2
+                ));
+            }
+        }
+    }
+
+    match header
+        .rom_slots
+        .iter()
+        .position(|slot| matches!(slot.data, Pointer::Addr32(_)))
+    {
+        Some(index) => {
+            let slot = &header.rom_slots[index];
+            let Pointer::Addr32(addr) = slot.data else {
+                unreachable!("position() matched an address")
+            };
+            for (label, null_addr, null_size, want) in [
+                ("NULL address", true, false, (u32::MAX, slot.size)),
+                ("NULL size", false, true, (addr, u32::MAX)),
+                ("both NULL", true, true, (u32::MAX, u32::MAX)),
+            ] {
+                let got = emu.get_flash_slot_addr_null_out(index as u8, 0, null_addr, null_size);
+                if got != (OraResult::Ok, want.0, want.1) {
+                    errors.push(format!(
+                        "slot {index} with {label}: got {:?} {:#010x} {:#x}",
+                        got.0, got.1, got.2
+                    ));
+                }
+            }
+        }
+        None => errors.push("the config doesn't have a slot with an image".to_string()),
+    }
+
+    if errors.is_empty() {
+        println!("  {checked} flash slot address(es) verified");
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// Verify `ORA_ID_GET_FLASH_SLOT_ADDR` for a slot on chip select 1.
+///
+/// - On an M board the slot is outside the flash so the call returns
+///   `InvalidSlot` and leaves both outputs unchanged.
+/// - On an L board with a secondary flash chip select it returns the slot's
+///   chip select 1 address.
+pub fn test_flash_slot_addr_on_cs1(emu: &Emulator, board: Board) -> Result<(), String> {
+    let count = emu.get_flash_slot_count(0);
+    let Some(index) = (0..count).find(|&i| emu.get_flash_slot_addr(i, 0).0 == OraResult::Ok) else {
+        return Err("the config doesn't have a slot with an image".to_string());
+    };
+    let saved = Emulator::rom_slot_flash_addr(index);
+    let size = Emulator::rom_slot_size(index);
+    Emulator::set_rom_slot_flash_addr(index, FLASH_CS1_BASE_ADDR);
+
+    let mut errors = Vec::new();
+    let cs1_counts = board.external_flash_cs_pin().is_some();
+    let mb2 = OneromFlashSize::FlashSize2mb as u16;
+    for (label, l_board, want) in [
+        (
+            "an M board",
+            false,
+            (OraResult::InvalidSlot, u32::MAX, u32::MAX),
+        ),
+        (
+            "an L board",
+            true,
+            if cs1_counts {
+                (OraResult::Ok, FLASH_CS1_BASE_ADDR, size)
+            } else {
+                (OraResult::InvalidSlot, u32::MAX, u32::MAX)
+            },
+        ),
+    ] {
+        Emulator::clear_otp();
+        if l_board {
+            Emulator::set_otp_raw(
+                OTP_BOOT_FLAGS0_ROW,
+                &[OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE; 3],
+            );
+            let devinfo = (mb2 << OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT)
+                | (mb2 << OTP_FLASH_DEVINFO_CS1_SIZE_SHIFT);
+            Emulator::set_otp_ecc(OTP_FLASH_DEVINFO_ROW, &[devinfo]);
+        }
+        let got = emu.get_flash_slot_addr(index, 0);
+        if got != want {
+            errors.push(format!(
+                "slot {index} on chip select 1 of {label}: got {:?} {:#010x} {:#x}, want {:?} \
+                 {:#010x} {:#x}",
+                got.0, got.1, got.2, want.0, want.1, want.2
+            ));
+        }
+    }
+
+    Emulator::clear_otp();
+    Emulator::set_rom_slot_flash_addr(index, saved);
+    if errors.is_empty() {
+        println!("  slot {index} on chip select 1 of an M and an L board");
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// Verify `ORA_ID_GET_FLASH_SLOT_ADDR` for a slot without an image returns
+/// `InvalidSlot` and leaves both outputs unchanged.
+pub fn test_flash_slot_addr_no_image(emu: &Emulator) -> Result<(), String> {
+    let count = emu.get_flash_slot_count(0);
+    let Some(index) = (0..count).find(|&i| emu.get_flash_slot_addr(i, 0).0 == OraResult::Ok) else {
+        return Err("the config doesn't have a slot with an image".to_string());
+    };
+    Emulator::set_rom_slot_no_image(index);
+    let got = emu.get_flash_slot_addr(index, 0);
+    Emulator::restore_rom_slots();
+
+    if got != (OraResult::InvalidSlot, u32::MAX, u32::MAX) {
+        return Err(format!(
+            "slot {index} without an image: got {:?} {:#010x} {:#x}",
+            got.0, got.1, got.2
+        ));
+    }
+    println!("  slot {index} without an image");
+    Ok(())
 }
 
 // ── RAM slot tests ────────────────────────────────────────────────────────────

@@ -18,7 +18,8 @@ unsafe extern "C" {
     /// back as the harness takes bytes.
     pub fn usb_host_test_set_tx_capacity(capacity: u32);
 
-    /// Whether the bus can carry data, as `tud_cdc_n_connected` reports it.
+    /// Whether the bus is ready, as `tud_ready` reports it.
+    /// `tud_cdc_n_connected` also requires DTR.
     pub fn usb_host_test_set_connected(connected: u8);
 
     /// Raise or drop DTR, through the plugin's own line-state callback.
@@ -30,6 +31,10 @@ unsafe extern "C" {
 
     /// Bytes flushed and not yet taken.
     pub fn usb_host_test_tx_pending() -> u32;
+
+    /// The CDC interfaces written to since the plugin was reset, bit N for
+    /// interface N.
+    pub fn usb_host_test_tx_itfs() -> u8;
 
     /// Queue bytes from the terminal.  They enter the endpoint's FIFO a packet
     /// at a time, as the plugin empties it.  Returns how many were queued.
@@ -71,6 +76,17 @@ unsafe extern "C" {
     /// does by entering a plugin with its .bss zeroed.
     pub fn usb_host_test_reset_plugin();
 
+    /// The `ORA_ENTRY_FLAG_` values the plugin starts with.
+    pub fn usb_host_test_set_entry_flags(flags: u8);
+
+    pub fn stub_usb_dpram() -> *mut u8;
+
+    pub fn usb_host_test_tinyusb_inits() -> u32;
+
+    /// How many of the plugin's tinyusb initialisations reset the USB
+    /// controller.
+    pub fn usb_host_test_controller_resets() -> u32;
+
     /// Whether the shim's picoboot handler claims a control request before the
     /// plugin's own sees it.
     pub fn usb_host_test_set_picoboot_claims_control(claims: u8);
@@ -90,6 +106,27 @@ unsafe extern "C" {
     /// What the last offer carried.  Returns the length the plugin declared,
     /// which may exceed `max_len`.
     pub fn usb_host_test_take_control_xfer(buf: *mut u8, max_len: u32) -> u32;
+
+    /// How many `ORA_ID_SET_IRQ_ENABLED` calls the plugin has made.
+    pub fn usb_host_test_irq_enabled_calls() -> u32;
+
+    /// The last `ORA_ID_SET_IRQ_ENABLED` call's interrupt, enable argument and
+    /// result, as `irq | (enable << 8) | (result << 16)`.
+    pub fn usb_host_test_last_irq_enabled() -> u32;
+
+    /// The plugin header's `properties1`.
+    pub fn usb_host_test_header_properties1() -> u8;
+
+    /// Calls the plugin header's `irq_handler` as the firmware does.
+    pub fn usb_host_test_header_irq(irq: u8);
+
+    /// How many times the stand-in for dcd_rp2040's `dcd_int_handler()` has
+    /// run.
+    pub fn usb_host_test_dcd_int_handler_calls() -> u32;
+
+    /// Enables or disables the USB controller interrupt through the plugin, as
+    /// tinyusb's dcd_rp2040 driver does.
+    pub fn usb_host_test_enable_usb_irq(enabled: u8);
 }
 
 // The descriptor callbacks tinyusb fetches from the plugin.
@@ -116,4 +153,10 @@ unsafe extern "C" {
 unsafe extern "C" {
     pub fn onerom_usb_test_configuration_desc_size() -> u32;
     pub fn onerom_usb_test_bos_desc_size() -> u32;
+}
+
+// The plugin's own peer data, compiled into the plugin under `ORA_HOST_TEST`.
+// A host build's address doesn't fit the header's 32-bit `peer_data`.
+unsafe extern "C" {
+    pub fn onerom_usb_test_peer_data() -> *const u32;
 }

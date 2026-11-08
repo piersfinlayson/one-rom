@@ -468,6 +468,72 @@ uint32_t ora_host_test_nv_storage_size(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Metadata stand-in
+// ---------------------------------------------------------------------------
+
+// Replaces the firmware's metadata calls for keys the firmware doesn't define,
+// so a scenario can test plugin failures the firmware's metadata can't
+// produce:
+// - a key whose most significant byte is 0xAA succeeds
+// - the harness's array key returns the harness's elements
+// Every other key is passed to the firmware.
+
+#define STAND_IN_MAX_ELEMS 4u
+
+static uint32_t stand_in_key;
+static uint32_t stand_in_elems[STAND_IN_MAX_ELEMS];
+static uint32_t stand_in_count;
+
+// Enable the stand-in with an array key and its elements, or disable it with a
+// count of 0.  Set before the plugin starts, as the plugin looks up its
+// pointers then.
+void rbcp_host_test_metadata_stand_in(uint32_t key, const uint32_t *elems, uint32_t count) {
+    if (count > STAND_IN_MAX_ELEMS) {
+        count = STAND_IN_MAX_ELEMS;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        stand_in_elems[i] = elems[i];
+    }
+    stand_in_key = key;
+    stand_in_count = count;
+}
+
+static bool stand_in_reserved(ora_metadata_key_t key) {
+    return ((uint32_t)key >> 24) == 0xAAu;
+}
+
+static ora_result_t stand_in_str(ora_metadata_key_t key, const char **out) {
+    if (stand_in_reserved(key)) {
+        *out = "stand-in";
+        return ORA_RESULT_OK;
+    }
+    ora_get_metadata_str_fn_t fw = ora_fn_lookup(ORA_ID_GET_METADATA_STR);
+    return fw(key, out);
+}
+
+static ora_result_t stand_in_uint(ora_metadata_key_t key, uint32_t *out) {
+    if (stand_in_reserved(key)) {
+        *out = 0;
+        return ORA_RESULT_OK;
+    }
+    ora_get_metadata_uint_fn_t fw = ora_fn_lookup(ORA_ID_GET_METADATA_UINT);
+    return fw(key, out);
+}
+
+static ora_result_t stand_in_uint_at(ora_metadata_key_t key, uint32_t index, uint32_t *out) {
+    if (stand_in_reserved(key) || ((uint32_t)key == stand_in_key)) {
+        uint32_t count = stand_in_reserved(key) ? 1u : stand_in_count;
+        if (index >= count) {
+            return ORA_RESULT_INVALID_ARG;
+        }
+        *out = stand_in_reserved(key) ? 0u : stand_in_elems[index];
+        return ORA_RESULT_OK;
+    }
+    ora_get_metadata_uint_at_fn_t fw = ora_fn_lookup(ORA_ID_GET_METADATA_UINT_AT);
+    return fw(key, index, out);
+}
+
+// ---------------------------------------------------------------------------
 // Plugin entry
 // ---------------------------------------------------------------------------
 
@@ -494,11 +560,24 @@ void ora_host_test_withhold_api(const uint32_t *ids, uint32_t count) {
 
 // The lookup the plugin is given.  Stands in front of the firmware's own so
 // that a withheld identifier answers NULL, which is what a plugin sees on
-// firmware older than the call.
+// firmware older than the call, and to put the metadata stand-in in place of
+// the firmware's metadata calls.
 static void *shim_fn_lookup(api_id_t id) {
     for (uint32_t i = 0; i < shim_withheld_count; i++) {
         if (shim_withheld[i] == (uint32_t)id) {
             return NULL;
+        }
+    }
+    if (stand_in_count != 0) {
+        switch (id) {
+            case ORA_ID_GET_METADATA_STR:
+                return stand_in_str;
+            case ORA_ID_GET_METADATA_UINT:
+                return stand_in_uint;
+            case ORA_ID_GET_METADATA_UINT_AT:
+                return stand_in_uint_at;
+            default:
+                break;
         }
     }
     return ora_fn_lookup(id);

@@ -162,7 +162,7 @@ pub enum ControlCommands {
     /// times the hold, not this command, so an interrupted CLI cannot leave a
     /// pin latched.
     ///
-    /// A GPIO One ROM is itself using is refused unless --force is given.
+    /// A GPIO One ROM is itself using is refused unless --force is provided.
     /// Forcing a pin One ROM drives (a data pin) breaks ROM serving until the
     /// device is rebooted; forcing one it only reads (address, chip-select,
     /// /BYTE) is undone by setting it back to z.
@@ -774,7 +774,7 @@ pub struct ControlPinArgs {
     #[arg(long, value_name = "STATE", requires = "hold")]
     pub then: Option<GpioState>,
 
-    /// Drive the GPIO even though One ROM is using it for serving.
+    /// Drive the GPIO even though One ROM or a plugin is using it.
     #[arg(long, short)]
     pub force: bool,
 }
@@ -887,7 +887,7 @@ pub enum ControlPokeCommands {
     /// over 'memory' for poking the live ROM image.
     ///
     /// When writing a file, the entire file contents are written starting
-    /// at the given address. When writing a single byte, only that byte is
+    /// at the provided address. When writing a single byte, only that byte is
     /// written.
     ///
     /// Note: writing to arbitrary SRAM addresses can corrupt firmware state.

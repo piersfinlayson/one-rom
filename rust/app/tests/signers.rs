@@ -38,6 +38,9 @@ const CHIP_ID: [u16; 4] = [0x5b6b, 0x2f65, 0x9c23, 0xde3f];
 // Tables
 // ---------------------------------------------------------------------------
 
+/// Each listed manufacturer's contact in the helpers' entries.
+const CONTACT: &str = "https://example.com/contact";
+
 /// The test key made from `seed`.
 fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -53,6 +56,7 @@ fn signer(id: u16, name: &str, key: &SigningKey) -> Value {
         "public_key": hex::encode(key.verifying_key().as_bytes()),
         "proof": hex::encode(proof.to_bytes()),
         "manufacturers": ["piers.rocks"],
+        "contacts": { "piers.rocks": CONTACT },
     })
 }
 
@@ -62,9 +66,20 @@ fn retired(mut entry: Value, retired: Value) -> Value {
     entry
 }
 
-/// `entry` with `manufacturers` as its `manufacturers` list.
+/// `entry` with `manufacturers` as its `manufacturers` list and [`CONTACT`] as
+/// each one's contact. `["*"]` gets empty contacts.
 fn allowing(mut entry: Value, manufacturers: &[&str]) -> Value {
     entry["manufacturers"] = json!(manufacturers);
+    entry["contacts"] = match manufacturers {
+        ["*"] => json!({}),
+        names => names.iter().map(|name| (*name, CONTACT)).collect(),
+    };
+    entry
+}
+
+/// `entry` with `contacts` as its `contacts` object.
+fn contacting(mut entry: Value, contacts: Value) -> Value {
+    entry["contacts"] = contacts;
     entry
 }
 
@@ -411,6 +426,110 @@ fn a_key_allowing_any_manufacturer_allows_every_name() {
     for name in ["piers.rocks", "onerom.org", "Acme", "*"] {
         assert!(signer.allows(name), "{name:?}");
     }
+}
+
+#[test]
+fn a_signer_without_contacts_is_refused() {
+    let mut entry = signer(1, "piers.rocks", &key(1));
+    entry.as_object_mut().unwrap().remove("contacts");
+    assert!(matches!(refusal(vec![entry]), SignerError::Json(_)));
+}
+
+/// Each key's contacts are refused:
+/// - a listed manufacturer without a contact
+/// - a contact for a manufacturer the key doesn't list
+/// - a contact that isn't printable ASCII or is empty
+/// - for a key allowing any manufacturer, a contact for a name that isn't a
+///   valid `COMMISSIONING_MANUFACTURER` value
+#[test]
+fn bad_contacts_are_refused() {
+    let listed = |contacts| {
+        let entry = allowing(signer(256, "another signer", &key(1)), &["Acme", "a b"]);
+        contacting(entry, contacts)
+    };
+    let any = |contacts| {
+        contacting(
+            allowing(signer(1, "piers.rocks", &key(1)), &["*"]),
+            contacts,
+        )
+    };
+    for entry in [
+        listed(json!({})),
+        listed(json!({ "Acme": CONTACT })),
+        listed(json!({ "Acme": CONTACT, "a b": CONTACT, "acme": CONTACT })),
+        listed(json!({ "Acme": "", "a b": CONTACT })),
+        listed(json!({ "Acme": "Café", "a b": CONTACT })),
+        listed(json!({ "Acme": "a\tb", "a b": CONTACT })),
+        any(json!({ "": CONTACT })),
+        any(json!({ " Acme": CONTACT })),
+        any(json!({ "a*b": CONTACT })),
+        any(json!({ "*": CONTACT })),
+        any(json!({ "Acme": "" })),
+    ] {
+        let id = entry["id"].as_u64().unwrap() as u16;
+        assert_eq!(
+            refusal(vec![entry.clone()]),
+            SignerError::BadField {
+                id,
+                field: "contacts"
+            },
+            "{entry}"
+        );
+    }
+}
+
+/// Read into a map, the second contact would replace the first.
+#[test]
+fn a_manufacturer_with_two_contacts_is_refused() {
+    for manufacturers in [&["Acme"][..], &["*"]] {
+        let entry = allowing(signer(1, "piers.rocks", &key(1)), manufacturers);
+        let entry = contacting(entry, json!({ "Acme": CONTACT }));
+        let once = format!(r#""Acme":"{CONTACT}""#);
+        let json = String::from_utf8(table(vec![entry])).unwrap();
+        let twice = json.replace(&once, &format!("{once},{once}"));
+        assert_ne!(json, twice);
+        assert_eq!(
+            SignerTable::parse(twice.as_bytes()).unwrap_err(),
+            SignerError::BadField {
+                id: 1,
+                field: "contacts"
+            },
+            "{manufacturers:?}"
+        );
+    }
+}
+
+/// A contact is found by its manufacturer byte for byte, whether the key lists
+/// its manufacturers or allows any.
+#[test]
+fn a_contact_is_found_by_its_manufacturer() {
+    let listed = allowing(signer(256, "another signer", &key(1)), &["Acme", "a b"]);
+    let listed = contacting(
+        listed,
+        json!({ "Acme": "https://acme.example", "a b": "ab@example.com" }),
+    );
+    let any = allowing(signer(1, "piers.rocks", &key(2)), &["*"]);
+    let any = contacting(any, json!({ "Acme": "https://acme.example" }));
+    let table = SignerTable::parse(&table(vec![listed, any])).unwrap();
+    for id in [256, 1] {
+        let signer = table.get(id).unwrap();
+        assert_eq!(signer.contact("Acme"), Some("https://acme.example"), "{id}");
+        for missing in ["acme", " Acme", "Acme ", "Zeta", "", "*"] {
+            assert_eq!(signer.contact(missing), None, "{id} {missing:?}");
+        }
+    }
+    assert_eq!(
+        table.get(256).unwrap().contact("a b"),
+        Some("ab@example.com")
+    );
+}
+
+#[test]
+fn a_key_allowing_any_manufacturer_can_have_empty_contacts() {
+    let entry = allowing(signer(1, "piers.rocks", &key(1)), &["*"]);
+    assert_eq!(entry["contacts"], json!({}));
+    let table = SignerTable::parse(&table(vec![entry])).unwrap();
+    assert_eq!(table.get(1).unwrap().contact("piers.rocks"), None);
 }
 
 // ---------------------------------------------------------------------------

@@ -9,10 +9,12 @@
 //!
 //! * [`ffi`] — raw, unsafe bindgen-generated bindings (escape hatch)
 //! * [`Emulator`] — safe wrapper for test code
+//! * [`epio::Epio`] — an epio instance apart from the firmware's
 //! * [`driver`] — GPIO bitmask builders shared by the tester and One ROM Lens
 //! * [`build_options`] — the logging the C under test was compiled with
 
 mod emulator;
+pub mod epio;
 pub mod ffi;
 
 // The bitmask builders that feed `Emulator::drive_gpios` need no emulator to
@@ -49,5 +51,6 @@ pub mod build_options {
 
 pub use emulator::{
     Emulator, FlashSlotInfo, GpioInfo, LedState, ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS,
-    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS, OraResult, RamSlotInfo, ServingAlg,
+    ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS, OraResult, RamSlotInfo, RttUp, ServingAlg, UsbReset,
+    UsbResetStep,
 };

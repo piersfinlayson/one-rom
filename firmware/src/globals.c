@@ -5,6 +5,7 @@
 // One ROM globals
 
 #include "include.h"
+#include "piodma/piodma.h"
 
 #if defined(REAL_HARDWARE)
 // Linker variable containing location of metadata header
@@ -54,8 +55,21 @@ onerom_runtime_info_t onerom_runtime_info SECTION_ONEROM_RUNTIME_INFO = {
     .cs_data_pio_block_info = 0,
     .cs_data_pio_sm_info = 0,
     .dma_pio_ch = 0,
-    .current_ram_slot = 0xFF
+    .current_ram_slot = 0xFF,
+    .usb_dpram_pool_offset = USB_DPRAM_SIZE,
+    .dma_channel_claims = DMA_FIRMWARE_CHANNELS,
+    // TIMER0 alarm 1 drives the LEDs.  Alarm 0 is reserved for plugins that use
+    // the old ora_register_irq for TIMER0_IRQ_0, so it cannot be separately claimed.
+    .timer_alarm_claims = TIMER0_INT_ALARM0 | TIMER0_INT_ALARM1,
+    .spinlock_claims = SPINLOCK_FIRMWARE_CLAIMS | SPINLOCK_RP2350_E2_LOCKS,
+    .rgb_led_pio = RGB_LED_PIO_NONE,
+    .addr_monitor_pio = ADDR_MONITOR_PIO_NONE,
 };
+
+STATIC_ASSERT(DMA_FIRMWARE_CHANNELS & (1u << DMA_CH_ADDR_READ), "DMA_CH_ADDR_READ not in DMA_FIRMWARE_CHANNELS");
+STATIC_ASSERT(DMA_FIRMWARE_CHANNELS & (1u << DMA_CH_DATA_WRITE), "DMA_CH_DATA_WRITE not in DMA_FIRMWARE_CHANNELS");
+STATIC_ASSERT(DMA_FIRMWARE_CHANNELS & (1u << DMA_CH_ADDR_MONITOR), "DMA_CH_ADDR_MONITOR not in DMA_FIRMWARE_CHANNELS");
+STATIC_ASSERT(DMA_FIRMWARE_CHANNELS & (1u << DMA_COPY_CHANNEL), "DMA_COPY_CHANNEL not in DMA_FIRMWARE_CHANNELS");
 
 // Main One ROM build info structure, located at known point in flash
 _Static_assert(sizeof(ONEROM_FAMILY_MAGIC) == 5, "ONEROM_FAMILY_MAGIC must be 4 bytes + NULL TERMINATOR");

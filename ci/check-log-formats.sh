@@ -34,6 +34,7 @@ DIRS=(
     plugins/user/blink/src
     plugins/user/host-control/src
     plugins/user/rgb/src
+    plugins/user/slot-colour/src
 )
 
 FLAGS='[-+#0]*'

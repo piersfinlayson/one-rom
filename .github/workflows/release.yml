@@ -126,6 +126,7 @@ jobs:
         make -C plugins/user/ext-flash
         make -C plugins/user/host-control
         make -C plugins/user/rgb
+        make -C plugins/user/slot-colour
         make -C firmware/ora/examples
 
   release:

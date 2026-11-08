@@ -1,0 +1,9 @@
+{
+    "name": "slot-colour",
+    "display_name": "One ROM Slot Colour",
+    "description": "Lights One ROM's RGB LED based on the booted ROM image",
+    "author": "Piers Finlayson",
+    "source": "https://github.com/piersfinlayson/one-rom",
+    "license": "MIT",
+    "build_output": "build/plugin_user.bin"
+}

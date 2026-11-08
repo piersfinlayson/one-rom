@@ -11,7 +11,9 @@ use super::{command_of, failed};
 use crate::args::Commands;
 use crate::args::firmware::FirmwareCommands;
 use crate::firmware::cmd_inspect;
-use crate::test_board::{base_firmware, image_2364, image_file, original_image};
+use crate::test_board::{
+    base_firmware, image_2364, image_addr_mon, image_file, image_overrides, original_image,
+};
 
 /// Prints the transcript of `line`, which starts `onerom firmware inspect` and
 /// refers to `image.bin`, with `image` in `image.bin`. There isn't a One ROM
@@ -62,13 +64,47 @@ fn help() {
 /// 27C400 chip sets.
 #[tokio::test]
 async fn a_built_image() {
-    inspect_both(&image_file(BoardSize::M, 2)).await;
+    inspect_both(&image_file(BoardSize::M, 2).await).await;
 }
 
 /// A fire-24-f image with SEL_C and X1 reserved.
 #[tokio::test]
 async fn an_image_with_reserved_pins() {
-    inspect_both(&image_2364(1, &["sel_c", "x1"])).await;
+    inspect_both(&image_2364(1, &["sel_c", "x1"]).await).await;
+}
+
+/// An image built for an M fire-40-a with v0.8.0 firmware, holding two single
+/// 27C400 chip sets. Set 0 has the Status LED off, a CPU frequency, standby
+/// at boot and force-16-bit.
+#[tokio::test]
+async fn an_image_with_firmware_overrides() {
+    let overrides = serde_json::json!({
+        "led": { "enabled": false },
+        "fire": { "cpu_freq": "200MHz", "standby": true, "force_16_bit": true },
+    });
+    inspect(
+        "onerom firmware inspect --firmware image.bin",
+        &image_overrides(overrides).await,
+    )
+    .await;
+}
+
+/// A fire-24-f image with v0.8.1 firmware whose address monitor minimum
+/// CS-active time is set globally and for slot 0.
+#[tokio::test]
+async fn an_image_with_addr_mon_min_cs_act_ns() {
+    inspect_both(&image_addr_mon(Some(140), &[Some(300), None]).await).await;
+}
+
+/// A fire-24-f image with v0.8.1 firmware whose address monitor minimum
+/// CS-active time is set globally to 141ns. It's stored rounded up to 150ns.
+#[tokio::test]
+async fn an_image_with_addr_mon_min_cs_act_ns_rounded_up() {
+    inspect(
+        "onerom firmware inspect --firmware image.bin",
+        &image_addr_mon(Some(141), &[None]).await,
+    )
+    .await;
 }
 
 /// v0.8.0 base firmware, which doesn't contain metadata.
@@ -80,7 +116,7 @@ async fn base_firmware_alone() {
 /// A built image cut off part way through its metadata.
 #[tokio::test]
 async fn an_image_cut_off_in_its_metadata() {
-    let mut image = image_file(BoardSize::M, 1);
+    let mut image = image_file(BoardSize::M, 1).await;
     image.truncate(FIRMWARE_SIZE + 0x100);
     inspect("onerom firmware inspect --firmware image.bin", &image).await;
 }

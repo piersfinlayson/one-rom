@@ -112,7 +112,7 @@ A simple way of testing the USB plugin is to run Raspberry Pi's `picotool` on th
 
 ## Writing Plugins
 
-Start with the [One ROM Plugin API](../firmware/ora/api.h) documentation.
+Start with [plugin.h](../firmware/ora/plugin.h). Its file comment contains a minimal plugin's source and guidelines for writing one, including yielding to the other plugin. The calls a plugin can make are documented in [api.h](../firmware/ora/api.h).
 
 Then view the [examples](../firmware/ora/examples/) and the released plugins:
 - [The system USB plugin](system/usb/).

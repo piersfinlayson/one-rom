@@ -74,7 +74,6 @@ pub static ANNOTATIONS: &[(&str, &str, Source)] = &[
     ("image swap-bytes", "output", Source::SaveFile),
     ("image deinterleave", "input", Source::OpenFile),
     ("image deinterleave", "output", Source::SaveFile),
-    ("inspect image", "output", Source::SaveFile),
     ("inspect peek live", "output", Source::SaveFile),
     ("inspect peek memory", "output", Source::SaveFile),
     ("inspect gpio", "pin", Source::Pin),

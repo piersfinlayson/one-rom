@@ -62,6 +62,9 @@ impl SignerTable {
     ///   `COMMISSIONING_MANUFACTURER` value. `["*"]` in place of a list allows
     ///   any manufacturer, and only a piers.rocks key with an ID from 1 to 255
     ///   can have it.
+    /// - contacts, each printable ASCII and not empty, for valid
+    ///   `COMMISSIONING_MANUFACTURER` values, none twice. A key that lists its
+    ///   manufacturers has exactly one contact for each of them.
     ///
     /// Unknown fields are ignored.
     pub fn parse(json: &[u8]) -> Result<Self, SignerError> {
@@ -87,6 +90,16 @@ impl SignerTable {
                     return Err(SignerError::BadField {
                         id,
                         field: "manufacturers",
+                    });
+                }
+                if entry
+                    .contacts
+                    .iter()
+                    .any(|(manufacturer, _)| check_manufacturer(manufacturer).is_err())
+                {
+                    return Err(SignerError::BadField {
+                        id,
+                        field: "contacts",
                     });
                 }
                 Ok(Signer::from_entry(entry))
@@ -132,6 +145,8 @@ pub struct Signer {
     public_key: [u8; 32],
     status: Status,
     manufacturers: Manufacturers,
+    /// Each manufacturer and its contact.
+    contacts: Cow<'static, [(Cow<'static, str>, Cow<'static, str>)]>,
 }
 
 impl Signer {
@@ -163,6 +178,15 @@ impl Signer {
         }
     }
 
+    /// `manufacturer`'s contact, an email address or URL. `None` where the key
+    /// doesn't have one for `manufacturer`, matched byte for byte.
+    pub fn contact(&self, manufacturer: &str) -> Option<&str> {
+        self.contacts
+            .iter()
+            .find(|(contacted, _)| contacted == manufacturer)
+            .map(|(_, contact)| contact.as_ref())
+    }
+
     /// Whether `signature` is this key's Ed25519 signature over `message`.
     pub fn verify(&self, message: &[u8], signature: &[u8; 64]) -> bool {
         // parse() refuses a key that isn't a curve point so this fails only
@@ -180,6 +204,11 @@ impl Signer {
             public_key: entry.public_key,
             status: entry.status,
             manufacturers: entry.manufacturers,
+            contacts: entry
+                .contacts
+                .into_iter()
+                .map(|(manufacturer, contact)| (Cow::Owned(manufacturer), Cow::Owned(contact)))
+                .collect(),
         }
     }
 }
@@ -208,8 +237,8 @@ pub enum Verdict {
     UnknownSigner,
     /// `COMMISSIONING_SIG` doesn't end the instance.
     Incomplete,
-    /// The instance doesn't have a value for each of the five commissioning
-    /// keys.
+    /// The instance doesn't have a value for each key every commissioning
+    /// instance requires.
     Invalid,
 }
 
@@ -226,6 +255,22 @@ impl Verdict {
             | Self::Incomplete
             | Self::Invalid => false,
         }
+    }
+}
+
+/// `verdict` as a phrase about an instance's signature.
+pub fn verdict_text(verdict: Verdict) -> &'static str {
+    match verdict {
+        Verdict::Verified => "verified",
+        Verdict::Recorded => "verified and recorded before the key was retired",
+        Verdict::NotRecorded | Verdict::RecordChanged => "invalid due to retired key",
+        Verdict::ManufacturerNotAllowed => {
+            "invalid because the signing key cannot sign this manufacturer"
+        }
+        Verdict::BadSignature => "invalid",
+        Verdict::UnknownSigner => "invalid due to unknown signing key",
+        Verdict::Incomplete => "incomplete",
+        Verdict::Invalid => "missing values",
     }
 }
 
@@ -317,10 +362,10 @@ mod tests {
     /// `tests/fixtures/signing-keys.json` as `build.rs` writes a table.
     const FIXTURE: &[Signer] = include!(concat!(env!("OUT_DIR"), "/fixture_signers.rs"));
 
-    /// The fixture has a signer with each status, a key allowing any
-    /// manufacturer, keys listing one and two manufacturers, and a name and a
-    /// manufacturer needing escapes. So this covers every form `build.rs`
-    /// writes.
+    /// The fixture has a signer with each status, keys allowing any
+    /// manufacturer with and without contacts, keys listing one and two
+    /// manufacturers, and a name, a manufacturer and a contact needing escapes.
+    /// So this covers every form `build.rs` writes.
     #[test]
     fn build_rs_writes_the_table_the_parser_reads() {
         let json = include_bytes!("../../tests/fixtures/signing-keys.json");

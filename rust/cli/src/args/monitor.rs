@@ -36,6 +36,9 @@ pub enum MonitorCommands {
     /// What the One ROM has logged since anything last listened arrives first,
     /// so attaching after a reboot still shows the boot log.
     ///
+    /// When a plugin has exclusive use of the serial port the log is read from
+    /// the One ROM's RAM.
+    ///
     /// The One ROM must be running, and must have been programmed with the USB
     /// system plugin.  A debug probe reading the log over SWD consumes the same
     /// bytes, so do not use one at the same time.

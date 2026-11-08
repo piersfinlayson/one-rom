@@ -26,10 +26,15 @@ ORICP builds on top of the [ROM Bus Control Protocol
 ORICP replaces RBCP's ROM bus transport with I2C, adding a transport to control
 One ROM alongside USB and the ROM bus.
 
+ORICP also provides [PICOBOOT and picobootx](#picobootx-device) over I2C.
+
 ## Summary
 
 - The device is an I2C slave at a 7-bit address, at 100 kHz or 400 kHz.
-- A command is an I2C write consisting of:
+- The register pointer selects a virtual device on that address:
+  - the RBCP device, at 0x00 to 0xDF
+  - the picoboot(x) device, at 0xE0 to 0xEF.
+- An RBCP command is an I2C write consisting of:
   - register 0x00
   - RBCP command frame of
     - GROUP
@@ -42,12 +47,15 @@ One ROM alongside USB and the ROM bus.
   - the RBCP response data section.
 - The device processes a command once the write completes. The host polls
   the header for status, as in RBCP.
-- During a read the device may hold SCL low for at most 2 ms, or longer while
-  it writes its flash.
+- The RBCP device runs RBCP's commands. Those that enter or leave
+  command-response mode are omitted, except RBCP_RESET.
+- A picoboot(x) command is a 32-byte PICOBOOT command packet written at 0xE0.
+  The host reads or writes the command's data at 0xE1 and reads its status at
+  0xE2.
+- The device may hold SCL low for at most 2 ms, or longer while it writes its
+  flash.
 - In Normal mode the device acknowledges its address at once. In Knock mode it
   stays silent until the host knocks.
-- The command set is RBCP's, without the commands that enter or leave
-  command-response mode other than RBCP_RESET.
 
 ---
 
@@ -82,13 +90,22 @@ the host (the I2C master).
 **Register pointer:** The byte after the address in a write. It selects what
 the transaction's remaining bytes are, and where a following read begins.
 
+**Virtual device:** The part of the device at one range of register pointers.
+
+**RBCP device:** The virtual device at register pointers 0x00 to 0xDF. It runs
+RBCP commands.
+
+**picoboot(x) device:** The virtual device at register pointers 0xE0 to 0xEF.
+It runs PICOBOOT and picobootx commands. See [picoboot(x)
+Device](#picobootx-device).
+
 **RBCP command frame:** The GROUP, CMD and argument bytes of one RBCP command,
 as RBCP's [Command
 Framing](https://github.com/piersfinlayson/rom-bus-control-protocol/blob/main/spec/rbcp.md#command-framing)
 defines them.
 
-**Back-channel region:** The response to the last command, read from register
-pointer 0x00.
+**Back-channel region:** The response to the last RBCP command, read from
+register pointer 0x00.
 
 **RBCP response header:** The first 8 bytes of the back-channel region.
 Contains the following fields:
@@ -100,9 +117,17 @@ Contains the following fields:
 **RBCP response data section:** The back-channel region from offset 8.
 Contains command-specific response data.
 
+**Command packet:** The 32 bytes a host writes to start a picoboot(x) command.
+
+**IN data, OUT data:** The data of a picoboot(x) command. The host reads IN
+data and writes OUT data.
+
+**Command status:** 16 bytes containing the progress and result of the last
+picoboot(x) command.
+
 **Identity block:** 16 bytes read at register pointers 0xF0 to 0xFF. Contains
-the magic, the ORICP version, the bus mode, the region size and the idle
-timeout.
+the magic, the ORICP version, the bus mode, whether the picoboot(x) device is
+present, the region size and the idle timeout.
 
 **Token, Progress, Response:** As RBCP defines them. The progress and response
 values are fixed by ORICP, unlike RBCP where the host defines them.
@@ -160,11 +185,13 @@ ORICP runs on an I2C bus.
   address is 0x4F, but a device may use another. The configuration mechanism
   for a device's address is outside the scope of this document.
 - **Speed:** I2C standard mode, 100 kHz, and fast mode, 400 kHz.
-- **Clock stretching:** the device holds SCL low while it prepares the bytes of
-  a read, for at most 2 ms within any transaction. While the device writes its
-  flash, for example during an NV commit, the hold lasts until the write ends.
+- **Clock stretching:** the device holds SCL low for at most 2 ms within any
+  transaction. While the device writes its flash, for example during an NV
+  commit or a picoboot(x) flash page write, the hold lasts until the write
+  ends.
   A host allows at least 2 ms. A transaction the host's own timeout ends is a
-  failed transaction, and the host repeats it.
+  failed transaction, and the host repeats it unless it was at pointer 0xE1
+  (see [Data](#data)).
 
 All multi-byte values are little-endian.
 
@@ -175,36 +202,41 @@ All multi-byte values are little-endian.
 The register pointer selects what a transaction reads or writes.
 
 ```
-pointer   0x00      0x08                                 0xEF 0xF0     0xFF
-          +---------+----------------------------------------+-------------+
-read      | RBCP    | RBCP response data section,            |  identity   |
-          | response| continuing past 0xEF                   |  block      |
-          | header  |                                        |             |
-          +---------+----------------------------------------+-------------+
-write     | 0x00: RBCP command frame. Any other pointer is ignored.        |
-          +----------------------------------------------------------------+
+pointer   0x00      0x08                   0xDF 0xE0          0xEF 0xF0     0xFF
+          +---------+--------------------------+------------------+-------------+
+read      | RBCP    | RBCP response data       | picoboot(x)      |  identity   |
+          | response| section, continuing past | device           |  block      |
+          | header  | 0xDF                     |                  |             |
+          +---------+--------------------------+------------------+-------------+
+write     | 0x00: RBCP command frame.          | picoboot(x)      |  ignored    |
+          | 0x01 to 0xDF: ignored.             | device           |             |
+          +------------------------------------+------------------+-------------+
 ```
 
 Writes:
 - Two or more bytes after pointer 0x00 are an RBCP command frame.
+- Bytes after pointers 0xE0 to 0xEF go to the [picoboot(x)
+  device](#picobootx-device).
 - Any other bytes after the pointer are ignored.
 
 Reads:
 - A read starts at the register pointer last written. The pointer is 0x00
   when the device starts.
-- A read starting at 0x00 to 0xEF returns the back-channel region from that
-  offset to the end of the region, which may be past 0xEF.
+- A read starting at 0x00 to 0xDF returns the back-channel region from that
+  offset to the end of the region, which may be past 0xDF.
+- A read starting at 0xE0 to 0xEF returns bytes from the [picoboot(x)
+  device](#picobootx-device).
 - A read starting at 0xF0 to 0xFF returns the identity block from that offset.
-- A read returns 0x00 for each byte past the end of the back-channel region
-  or the identity block.
+- A read returns 0x00 for each byte past the end of the back-channel region,
+  the command status or the identity block.
 
 ---
 
 ## Transactions
 
-### Sending a command
+### Sending an RBCP command
 
-Sending a command is done with a single write transaction consisting of:
+Sending an RBCP command is done with a single write transaction consisting of:
 - the device's address
 - the register pointer 0x00
 - the RBCP command frame.
@@ -227,10 +259,11 @@ sequence](#command-processing-sequence) with response = failed.
 
 The device acknowledges every byte of a write.
 
-While the device is processing a command it discards any frame, including
+While the device is processing an RBCP command it discards any frame, including
 RBCP_RESET. A discarded frame doesn't change the header.
 
-A host waits for progress to read complete before sending the next command.
+A host waits for progress to read complete before sending the next RBCP
+command.
 
 ### Reading
 
@@ -298,11 +331,11 @@ On receipt of an RBCP command frame the device performs, in order:
 5. Set response = status-OK or failed
 6. Set progress = complete
 
-The device processes one ORICP command at a time.
+The device processes one RBCP command at a time.
 
 ### Host Polling Sequence
 
-To issue a command the host:
+To issue an RBCP command the host:
 
 1. Reads the token LSB
 2. Sends the RBCP command frame
@@ -319,7 +352,7 @@ required. A single read of 8 bytes serves steps 3 to 5 together.
 ## Bus Modes
 
 A device uses Normal or Knock bus mode. The bus mode is in the [identity
-block](#identity-block).
+block](#identity-block). A session covers both virtual devices.
 
 ### Normal
 
@@ -366,8 +399,8 @@ can:
 - make a transaction fail with a not-acknowledge or a failed response
 - corrupt the bytes of a transaction without it failing.
 
-After a failure the host issues another knock then reads the header to check
-whether the last command ran.
+After a failure the host issues another knock then reads the header or the
+command status to check whether the last command ran.
 
 ---
 
@@ -382,7 +415,7 @@ before and after any command.
 | 4 | 1 | major | ORICP major version. |
 | 5 | 1 | minor | ORICP minor version. |
 | 6 | 1 | patch | ORICP patch version. |
-| 7 | 1 | flags | Bit 0: set in Knock mode, clear in Normal mode. Bits 1 to 7 reserved. |
+| 7 | 1 | flags | Bit 0: set in Knock mode, clear in Normal mode. Bit 1: set where the picoboot(x) device is present. Bits 2 to 7 reserved. |
 | 8 | 2 | region_size | Size of the back-channel region in bytes, at least 64. |
 | 10 | 1 | idle_timeout | The session idle timeout in Knock mode, 1 to 255, in units of 10 ms. Zero in Normal mode. |
 | 11 | 5 | Reserved | Zero. |
@@ -396,7 +429,8 @@ a command.
 
 ## Command Set
 
-ORICP uses the RBCP command set and doesn't define any commands of its own.
+ORICP doesn't define any commands of its own. The RBCP device runs these RBCP
+commands:
 
 | GROUP | Name | ORICP at RBCP 0.1.3 |
 |-------|------|---------------------|
@@ -429,17 +463,138 @@ A host doesn't poll for the token to change after RBCP_RESET.
 
 ---
 
-## Coexistence with RBCP
+## picoboot(x) Device
 
-A device may implement RBCP on its ROM bus and ORICP on I2C simultaneously.
+The picoboot(x) device runs the same commands as the [USB plugin](README.md):
+- PICOBOOT commands, defined in section 5.6 of the [RP2350
+  datasheet](https://datasheets.raspberrypi.com/rp2350/rp2350-datasheet.pdf),
+  *USB PICOBOOT interface*
+- [picobootx](https://github.com/piersfinlayson/picobootx) commands, which
+  use their own dMagic.
 
-- Each transport has a separate back-channel region and state.
+| Pointer | Write | Read |
+|---------|-------|------|
+| 0xE0 | Command packet | 0x00 |
+| 0xE1 | OUT data | IN data |
+| 0xE2 | Ignored | Command status |
+| 0xE3 | Reset | 0x00 |
+| 0xE4 to 0xEF | Reserved, ignored | Reserved, 0x00 |
+
+Where bit 1 of flags in the identity block is clear, the picoboot(x) device is
+absent. Reads at 0xE0 to 0xEF then return 0x00 and writes to them are ignored.
+
+The RBCP device and the picoboot(x) device have separate state. An RBCP
+command may run while a picoboot(x) command does.
+
+### Command Packet
+
+A write of 32 bytes after pointer 0xE0 is a command packet, laid out as RP2350
+datasheet section 5.6.4 defines. A write of any other number of bytes after
+0xE0 is ignored.
+
+```
+ S | ADDR+W | A | 0xE0 | A | P0 | A | P1 | A | ... | P31 | A | P
+```
+
+The device starts the command once the write completes.
+
+While a picoboot(x) command is in progress the device discards any command
+packet. A discarded packet doesn't change the command status. A host waits for
+the command to complete, or resets the picoboot(x) device, before writing the
+next command packet.
+
+### Data
+
+Where a command's dTransferLength isn't zero, the host reads or writes that
+many bytes at pointer 0xE1. Bit 7 of bCmdId sets the direction:
+- set: IN data
+- clear: OUT data.
+
+```
+ S | ADDR+W | A | 0xE1 | A | D0 | A | D1 | A | ... | Dn | A | P               OUT data
+
+ S | ADDR+W | A | 0xE1 | A | Sr | ADDR+R | A | D0 | A | ... | Dn | N | P      IN data
+```
+
+Every byte after pointer 0xE1 is a data byte. The pointer doesn't advance. The
+host may split the data across transactions of any length.
+
+Reads at 0xE1 return 0x00 and writes to it are ignored, except while the
+command in progress has data left to transfer in that direction.
+
+When a command writes flash, the device holds SCL low on the last OUT data
+byte of each page until the page is written.
+
+A failed transaction at 0xE1 may have transferred some of its bytes, so the
+host doesn't repeat it. The host resets the picoboot(x) device and sends the
+command again.
+
+### Command Status
+
+A read at pointer 0xE2 returns the 16-byte command status, laid out as
+GET_COMMAND_STATUS returns it over USB (RP2350 datasheet section 5.6.5.2).
+
+- dToken and bCmdId are from the last command packet.
+- bInProgress is 1 while the command is in progress and 0 once it completes
+  or fails.
+- dStatusCode is the result once bInProgress is 0.
+
+When the device starts, the command status is zero.
+
+A command completes:
+- without data, once the device has run it
+- with OUT data, once the device has written the last byte
+- with IN data, once the host has read the last byte.
+
+Over USB a zero-length packet acknowledges completion. Over I2C the command
+status is the only indication of completion.
+
+Over USB a failed command stalls the endpoints. Over I2C nothing stalls, and
+a host may write the next command packet without a reset.
+
+### Host Sequence
+
+To issue a picoboot(x) command the host:
+
+1. Writes the command packet at 0xE0
+2. Reads any IN data or writes any OUT data at 0xE1
+3. Polls the command status at 0xE2 until dToken matches the command packet's
+   and bInProgress reads 0
+4. Reads dStatusCode
+
+IN data is valid only where dStatusCode reads OK. A host may read the command
+status at any step, for example to check for a failure before transferring
+data.
+
+### Reset
+
+A write at pointer 0xE3 resets the picoboot(x) device as INTERFACE_RESET does
+over USB (RP2350 datasheet section 5.6.5.1). Bytes after the pointer are
+ignored.
+
+A reset doesn't affect the RBCP device or a Knock mode session.
+
+---
+
+## Coexistence with Other Transports
+
+A device may implement RBCP on its ROM bus, picoboot(x) on USB and ORICP on
+I2C simultaneously.
+
+- Each transport has separate state, including any back-channel region or
+  command status.
 - A command over one transport may execute while a command over another
-  does.
+  does, except picoboot(x) commands over USB and I2C. The device has one flash
+  write buffer for both, so only one runs at a time.
+- A picoboot(x) command sent over USB or I2C while one is in progress over the
+  other fails with dStatusCode INVALID_STATE (9).
+- An NV commit over I2C and a picoboot(x) flash write don't overlap. The one
+  received second waits until the first ends. While it waits, progress reads
+  pending for an NV commit and bInProgress reads 1 for a flash write.
 - Commands over every transport act on the same slots, NV storage, pins, LEDs
   and pipes.
 - The device applies changes in the order it receives them.
-- RBCP_RESET over one transport doesn't affect any other.
+- A reset over one transport doesn't affect any other.
 - While an NV write transaction begun over one transport is in progress,
   commands over any other transport that start or use an NV write transaction
   fail.

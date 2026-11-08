@@ -95,9 +95,6 @@ extern uint32_t _ram_size;
 #include "test/stub_rp235x_inlines.h"
 #endif // !TEST_BUILD
 
-// Target frequency
-#define TARGET_FREQ_MHZ    150
-
 // PLL configuration
 //   CLK_REF=12MHz
 //   VCO_input=12MHz

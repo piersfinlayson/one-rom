@@ -23,6 +23,23 @@ static int checks = 0;
 
 static onerom_rtt_ring_t *up0(void) { return &_SEGGER_RTT.up[0]; }
 
+// Set while a test moves the log.  barrier_early_moves counts the barriers
+// where up[1] has its buffer before the move is complete.
+static int barrier_checks_move;
+static int barrier_early_moves;
+
+void onerom_rtt_test_barrier(void) {
+    const onerom_rtt_ring_t *up1 = &_SEGGER_RTT.up[1];
+
+    __atomic_signal_fence(__ATOMIC_SEQ_CST);
+    if (barrier_checks_move && (up1->buffer != NULL) &&
+        ((up1->name == NULL) || (up1->size == 0u) ||
+         (up1->write_offset == 0u) || (up0()->write_offset != 0u) ||
+         (up0()->read_offset != 0u))) {
+        barrier_early_moves++;
+    }
+}
+
 // Drain the ring the way a host does: advance RdOff, copying out.
 static unsigned drain(char *out, unsigned max) {
     onerom_rtt_ring_t *r = up0();
@@ -703,6 +720,111 @@ static void test_down_channel(void) {
     d->read_offset = 0u;
 }
 
+// ---------------------------------------------------------------------------
+// Moving the log
+// ---------------------------------------------------------------------------
+
+static void unmove(void) {
+    memset(&_SEGGER_RTT, 0, sizeof(_SEGGER_RTT));
+    onerom_rtt_plugins_init();
+}
+
+static void test_move_log(void) {
+    static char moved[64];
+    static char other[64];
+    static const char name[] = "claimed";
+    onerom_rtt_ring_t *up1 = &_SEGGER_RTT.up[1];
+    char got[16];
+
+    // Arm: channel 0 renamed, a record already read, and the boot log unread
+    // behind it.
+    unmove();
+    char *ram = up0()->buffer;
+    CHECK(onerom_rtt_set_name(0, name) == 1u, "set_name on channel 0 refused");
+    CHECK(onerom_rtt_write(0, "read", 4) == 4u, "setup write rejected");
+    CHECK(onerom_rtt_read(0, got, sizeof(got)) == 4u, "setup read short");
+    CHECK(onerom_rtt_write(ONEROM_RTT_CH_BOOT, "boot log", 8) == 8u,
+          "boot log write rejected");
+    CHECK(onerom_rtt_log_moved() == 0u, "the log moved before the move");
+    CHECK(up1->buffer == NULL, "up[1] has a buffer before the move");
+
+    // Stimulate.
+    barrier_checks_move = 1;
+    barrier_early_moves = 0;
+    CHECK(onerom_rtt_move_log(moved, sizeof(moved)) == 1u, "move failed");
+    barrier_checks_move = 0;
+
+    // Fence: the move wasn't visible before it was complete.
+    CHECK(barrier_early_moves == 0,
+          "up[1] had its buffer before the move was complete, at %d "
+          "barrier(s)", barrier_early_moves);
+
+    // up[0] is still channel 0 and its RAM buffer is empty.
+    CHECK(onerom_rtt_log_moved() == 1u, "the log didn't move");
+    CHECK(up0()->buffer == ram, "up[0] isn't channel 0's RAM buffer");
+    CHECK(up0()->size == 3072u, "up[0] size %u, want 3072", up0()->size);
+    CHECK(up0()->name == name, "up[0] lost channel 0's name");
+    CHECK(up0()->flags == ONEROM_RTT_MODE_NO_BLOCK_SKIP, "up[0] not skip mode");
+    CHECK(up0()->read_offset == 12u && up0()->write_offset == 12u,
+          "up[0] RdOff %u WrOff %u, want 12 and 12", up0()->read_offset,
+          up0()->write_offset);
+    CHECK(onerom_rtt_read(0, got, sizeof(got)) == 0u, "channel 0 returned data");
+
+    // up[1] is the moved log and contains only the unread bytes.
+    CHECK(up1->buffer == moved, "up[1] isn't the new buffer");
+    CHECK(up1->size == sizeof(moved), "up[1] size %u, want %zu", up1->size,
+          sizeof(moved));
+    CHECK(up1->name != NULL && up1->name != name, "up[1] has channel 0's name");
+    CHECK(up1->flags == ONEROM_RTT_MODE_NO_BLOCK_SKIP, "up[1] not skip mode");
+    CHECK(up1->read_offset == 0u && up1->write_offset == 8u,
+          "up[1] RdOff %u WrOff %u, want 0 and 8", up1->read_offset,
+          up1->write_offset);
+    CHECK(memcmp(moved, "boot log", 8) == 0, "the boot log didn't move");
+
+    // The log's writes reach the moved log and not channel 0.
+    CHECK(onerom_rtt_write(ONEROM_RTT_CH_BOOT, "log", 3) == 3u,
+          "log write rejected");
+    CHECK(memcmp(moved + 8, "log", 3) == 0, "the log write missed the log");
+    CHECK(up0()->write_offset == 12u, "the log write reached channel 0");
+
+    // Channel 0's writes reach channel 0 and not the log.
+    CHECK(onerom_rtt_write(0, "reply", 5) == 5u, "channel 0 write rejected");
+    CHECK(up1->write_offset == 11u, "a channel 0 write reached the log");
+    CHECK(onerom_rtt_read(0, got, sizeof(got)) == 5u &&
+              memcmp(got, "reply", 5) == 0,
+          "channel 0 didn't return its write");
+
+    // A second move does nothing.
+    CHECK(onerom_rtt_move_log(other, sizeof(other)) == 0u,
+          "a second move succeeded");
+    CHECK(up1->buffer == moved, "a second move replaced the log");
+
+    onerom_rtt_set_name(0, NULL);
+    unmove();
+}
+
+// Bytes that don't fit in the new buffer are lost.  A buffer too small for a
+// ring isn't used.
+static void test_move_log_truncates(void) {
+    static char moved[8];
+    onerom_rtt_ring_t *up1 = &_SEGGER_RTT.up[1];
+
+    unmove();
+    CHECK(onerom_rtt_write(0, "0123456789", 10) == 10u, "setup write rejected");
+
+    CHECK(onerom_rtt_move_log(moved, 1u) == 0u, "a 1 byte log accepted");
+    CHECK(onerom_rtt_move_log(NULL, sizeof(moved)) == 0u, "a NULL log accepted");
+    CHECK(onerom_rtt_log_moved() == 0u, "a failed move moved the log");
+
+    // The ring leaves one byte free, so 7 of the 10 bytes fit.
+    CHECK(onerom_rtt_move_log(moved, sizeof(moved)) == 1u, "move failed");
+    CHECK(up1->write_offset == 7u, "up[1] WrOff %u, want 7", up1->write_offset);
+    CHECK(memcmp(moved, "0123456", 7) == 0, "the first 7 bytes didn't move");
+    CHECK(up0()->read_offset == up0()->write_offset, "channel 0 kept bytes");
+
+    unmove();
+}
+
 void fmt_tests(int *checks, int *failures, const char *const **first,
                int *first_count);
 
@@ -729,6 +851,8 @@ int main(void) {
     test_read_wroff_clamp();
     test_read_inactive_channel();
     test_down_channel();
+    test_move_log();
+    test_move_log_truncates();
     printf("  ring: %d checks, %d failures\n", checks, failures);
 
     int fchecks = 0, ffailures = 0, fcount = 0;

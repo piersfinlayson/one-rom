@@ -415,7 +415,7 @@ fn check(out: &mut String) -> bool {
     let Ok(text) = std::fs::read_to_string(&path) else {
         let _ = writeln!(
             out,
-            "no baseline at {}; create it with --write-baseline",
+            "no baseline at {} - create it with --write-baseline",
             path.display()
         );
         return false;

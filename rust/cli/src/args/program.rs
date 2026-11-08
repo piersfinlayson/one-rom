@@ -4,10 +4,32 @@
 
 //! Argument definitions for `onerom program`.
 
-use crate::args::CommandTrait;
+use crate::args::{CommandTrait, arg_error};
+use crate::utils::parse_addr_mon_min_cs_act_ns;
 use clap::Args;
+use clap::error::ErrorKind;
 use onerom_cli::pin::{Pin, parse_pin, parse_reserve_pin};
 use onerom_cli::usb::RebootArgs;
+
+// See the `const_str!` macro in this module's parent.
+pub(crate) const HELP_MIN_CS_ACT: &str = "Set the minimum time in nanoseconds chip select \
+     has to stay active for the address monitor to capture an access. A pulse \
+     slightly longer than this may also not be captured";
+
+pub(crate) const LONG_HELP_MIN_CS_ACT: &str = concat!(
+    "Set the minimum time in nanoseconds chip select has to stay active for the \
+     address monitor to capture an access. A pulse slightly longer than this may \
+     also not be captured.\n\n\
+     Unset, a pulse of ",
+    const_str!("ADDR_MON_UNSET_MIN_CS_ACT_NS"),
+    "ns or less isn't captured, or ",
+    const_str!("ADDR_MON_UNSET_MIN_CS_ACT_NS_ALG_CS_2"),
+    "ns or less for a 23QL384, at the default CPU frequency of ",
+    const_str!("TARGET_FREQ_MHZ"),
+    "MHz. With a lower value, shorter pulses can be captured. The value may need \
+     tuning for a particular host. A per-slot value overrides it.\n\n\
+     Requires firmware v0.8.1 or later."
+);
 
 const HELP_RESET_HOST: &str = "After programming, pulse this pin low to reset \
      the host system the One ROM is installed in, so it boots the ROM image just \
@@ -28,17 +50,17 @@ const LONG_HELP_RESET_HOST: &str = concat!(
      control reset' for a different hold, or to reset a host without programming \
      it.\n\n\
      Requires the One ROM to reboot into running mode with a USB system plugin, \
-     which is why it cannot be combined with --stopped or --no-reboot, and needs \
-     the re-enumeration pause --fast skips."
+     which is why it cannot be combined with --stopped, --no-reboot or \
+     --no-plugin, and needs the re-enumeration pause --fast skips."
 );
 
 // See Commands::Program in args/mod.rs for the top-level documentation of
 // this command and examples.
 #[derive(Debug, Args)]
 pub struct ProgramArgs {
-    /// ROM configuration JSON file. Mutually exclusive with --slot,
-    /// --config-name, --config-description, --save-config, --no-config,
-    /// and --firmware.
+    /// ROM configuration JSON file or http(s) URL. Mutually exclusive with
+    /// --slot, --config-name, --config-description, --save-config,
+    /// --no-config, and --firmware.
     #[arg(
         long = "config",
         short='j',
@@ -50,7 +72,9 @@ pub struct ProgramArgs {
 
     /// ROM slot specification. May be repeated for multiple slots.
     ///
-    /// Format: file=<path_or_url>,type=<romtype>[,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,size-handling=<handling>][,format=<binary|ihex>][,load-address=<addr>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>]
+    /// Format: file=<path_or_url>,type=<romtype>[,label=<text>][,cs1=<logic>][,cs2=<logic>][,cs3=<logic>][,cs4=<logic>][,size-handling=<handling>][,format=<binary|ihex|srec>][,load-address=<addr>][,transform=<list>][,cpu-freq=<freq>][,cpu-vreg=<voltage>][,led=<bool>][,force-16-bit=<bool>][,standby=<bool>][,addr-mon-min-cs-act-ns=<ns>]
+    ///
+    /// Label: text stored in the device metadata in place of the filename.
     ///
     /// CS logic values: active-low (or 0), active-high (or 1), ignore.  The
     /// snake_case config spellings are also accepted.
@@ -59,9 +83,17 @@ pub struct ProgramArgs {
     ///
     /// Size handling values: none, duplicate (or dup), truncate (or trunc), pad.
     ///
-    /// Format values: binary (default), ihex (Intel HEX). load-address is only
-    /// valid with format=ihex and gives the Intel HEX address mapping to byte 0
-    /// of the ROM, as a decimal or 0x-/$-prefixed hex value (e.g. $E000).
+    /// Format values:
+    /// - binary (default)
+    /// - ihex (Intel HEX)
+    /// - srec (Motorola S-record)
+    ///
+    /// load-address is valid only with ihex or srec. It is the address in the
+    /// file that maps to byte 0 of the ROM, in decimal or 0x-/$-prefixed hex
+    /// (e.g. $E000).
+    ///
+    /// Transform values: swap_bytes, deinterleave:<offset>/<stride>[/<bytes>].
+    /// Join several with + to apply them in order.
     ///
     /// CPU frequency: e.g. 150, 150mhz, 150MHz. Values above 150MHz require
     /// confirmation (suppressed with --yes). Sets overclock automatically.
@@ -76,6 +108,9 @@ pub struct ProgramArgs {
     /// In standby mode One ROM doesn't serve the ROM. With standby=on, file is
     /// optional. Requires firmware v0.8.0 or later.
     ///
+    /// addr-mon-min-cs-act-ns overrides --addr-mon-min-cs-act-ns when this slot
+    /// is selected. Requires firmware v0.8.1 or later.
+    ///
     /// Examples:
     ///
     ///   --slot file=kernal.bin,type=2364,cs1=active-low
@@ -83,6 +118,8 @@ pub struct ProgramArgs {
     ///   --slot file=chargen.bin,type=2332,cs1=active-low,cs2=active-high
     ///
     ///   --slot file=https://example.com/basic.bin,type=2716
+    ///
+    ///   --slot file=https://example.com/c64/roms/901227-03.bin,type=2364,cs1=active-low,label=kernal
     ///
     ///   --slot file=small.bin,type=2364,cs1=active-low,size-handling=duplicate
     ///
@@ -111,6 +148,7 @@ pub struct ProgramArgs {
         long,
         value_name = "SPEC",
         visible_alias = "rom",
+        verbatim_doc_comment,
         conflicts_with_all = ["config_file", "no_config", "firmware"]
     )]
     pub slot: Vec<String>,
@@ -123,10 +161,10 @@ pub struct ProgramArgs {
     ///
     /// System plugins are always placed in slot 0, user plugins in slot 1.
     ///
-    /// May be combined with --config: the plugins are inserted ahead of
-    /// the config's ROM slots (shifting them up). It is an error if the config
-    /// already defines a plugin of its own. Still mutually exclusive with
-    /// --firmware, since a pre-built firmware already contains its plugins.
+    /// May be combined with --config if the config file doesn't contain a
+    /// plugin. Mutually exclusive with --firmware.
+    ///
+    /// The USB plugin is automatically added when a system plugin isn't specified.
     ///
     /// Forms:
     ///
@@ -142,6 +180,13 @@ pub struct ProgramArgs {
     ///
     #[arg(long, value_name = "SPEC", conflicts_with = "firmware")]
     pub plugin: Vec<String>,
+
+    /// Build without plugins. Without this, the USB plugin is automatically
+    /// added if a system plugin isn't specified.
+    ///
+    /// Mutually exclusive with --plugin and --firmware.
+    #[arg(long, conflicts_with_all = ["plugin", "firmware"])]
+    pub no_plugin: bool,
 
     /// Name for the generated ROM configuration.
     ///
@@ -167,21 +212,26 @@ pub struct ProgramArgs {
     ///
     /// Mutually exclusive with --config, --slot, --base-firmware,
     /// and --plugin because a pre-built firmware already contains all of the
-    /// ROMs, plugins, etc.  Also conflicts with --version.
+    /// ROMs, plugins, etc.  Also conflicts with --version, --config-name,
+    /// --config-description, --save-config, --instance-name, --serial-override,
+    /// --logging, --disable-swd, --turbo-boot, --reserve-pin and
+    /// --addr-mon-min-cs-act-ns.
     #[arg(
         long,
         value_name = "FILE",
         visible_alias = "fw",
-        conflicts_with_all = ["config_file", "slot", "base_firmware", "version", "plugin"]
+        conflicts_with_all = ["config_file", "slot", "base_firmware", "version", "plugin", "config_name", "config_description", "save_config", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin", "addr_mon_min_cs_act_ns"]
     )]
     pub firmware: Option<String>,
 
     /// Use a local minimal firmware binary instead of downloading from the
     /// release server.
     ///
-    /// When used with --slot, the ROM images are built into this firmware.
-    /// When used alone, requires --no-config to confirm flashing without
-    /// ROM images.
+    /// Without --config or --slot it requires --no-config and is flashed as
+    /// is. It then can't be used with --plugin, --no-plugin, --config-name,
+    /// --config-description, --save-config, --instance-name, --serial-override,
+    /// --logging, --disable-swd, --turbo-boot, --reserve-pin or
+    /// --addr-mon-min-cs-act-ns.
     ///
     /// Must be built with EXCLUDE_METADATA=1 and ROM_CONFIGS= in order to
     /// be suitable.
@@ -198,7 +248,7 @@ pub struct ProgramArgs {
     /// Mutually exclusive with --config, --slot, and --firmware.
     #[arg(
         long,
-        conflicts_with_all = ["config_file", "slot", "firmware", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin"]
+        conflicts_with_all = ["config_file", "slot", "firmware", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin", "addr_mon_min_cs_act_ns"]
     )]
     pub no_config: bool,
 
@@ -267,10 +317,8 @@ pub struct ProgramArgs {
     /// bus, so it shows the boot log of the firmware just flashed.
     ///
     /// Requires the One ROM to reboot into running mode with a USB system
-    /// plugin, which is why it cannot be combined with --stopped or
-    /// --no-reboot, and needs the re-enumeration pause --fast skips.  With
-    /// --batch there would be no one One ROM to follow.
-    #[arg(long, conflicts_with_all = ["fast", "stopped", "no_reboot", "batch"])]
+    /// plugin.
+    #[arg(long, conflicts_with_all = ["fast", "stopped", "no_reboot", "no_plugin", "batch"])]
     pub follow: bool,
 
     // `help` and `long_help` rather than a doc comment, because the pulse length
@@ -282,7 +330,7 @@ pub struct ProgramArgs {
         alias = "host-reset",
         value_name = "PIN",
         value_parser = parse_pin,
-        conflicts_with_all = ["fast", "stopped", "no_reboot"],
+        conflicts_with_all = ["fast", "stopped", "no_reboot", "no_plugin"],
         help = HELP_RESET_HOST,
         long_help = LONG_HELP_RESET_HOST
     )]
@@ -292,7 +340,7 @@ pub struct ProgramArgs {
     #[arg(long, visible_aliases = ["name", "instance_name", "onerom", "onerom-name", "one-rom", "one-rom-name"], value_name = "NAME", conflicts_with_all = ["no_config"])]
     pub instance_name: Option<String>,
 
-    /// Give this One ROM a custom USB serial number, in place of the RP2350
+    /// Assign this One ROM a custom USB serial number, in place of the RP2350
     /// chip ID it would otherwise report.
     ///
     /// Used by the USB plugin while One ROM is running. A stopped One ROM is on
@@ -313,7 +361,7 @@ pub struct ProgramArgs {
 
     /// Enable turbo boot - starts ROM serving faster by not reading the image
     /// select jumpers, so the first non-plugin slot is always the one served.
-    /// More than one non-plugin slot is refused unless --force is given.
+    /// More than one non-plugin slot is refused unless --force is provided.
     #[arg(long, visible_aliases = ["turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
 
@@ -325,11 +373,65 @@ pub struct ProgramArgs {
     /// Example: --reserve-pin sel_c --reserve-pin x1
     #[arg(long, visible_aliases = ["reserved-pin", "reserved_pins"], value_name = "PIN", value_parser = parse_reserve_pin, conflicts_with_all = ["no_config"])]
     pub reserve_pin: Vec<Pin>,
+
+    // `help` and `long_help` rather than a doc comment: see HELP_MIN_CS_ACT.
+    #[arg(
+        long,
+        visible_aliases = ["addr_mon_min_cs_act_ns"],
+        value_name = "NS",
+        value_parser = parse_addr_mon_min_cs_act_ns,
+        conflicts_with_all = ["no_config"],
+        help = HELP_MIN_CS_ACT,
+        long_help = LONG_HELP_MIN_CS_ACT
+    )]
+    pub addr_mon_min_cs_act_ns: Option<u16>,
 }
 
 impl CommandTrait for ProgramArgs {
     fn requires_device(&self) -> bool {
         true
+    }
+
+    fn check_args(&self) -> Result<(), clap::Error> {
+        // clap can't express a conflict or a requirement that applies only
+        // without a config source.
+        if self.base_firmware.is_none() || self.config_file.is_some() || !self.slot.is_empty() {
+            return Ok(());
+        }
+        let given = [
+            ("--plugin", !self.plugin.is_empty()),
+            ("--no-plugin", self.no_plugin),
+            ("--config-name", self.config_name.is_some()),
+            ("--config-description", self.config_description.is_some()),
+            ("--save-config", self.save_config.is_some()),
+            ("--instance-name", self.instance_name.is_some()),
+            ("--serial-override", self.serial_override.is_some()),
+            ("--logging", self.logging.is_some()),
+            ("--disable-swd", self.disable_swd.is_some()),
+            ("--turbo-boot", self.turbo_boot.is_some()),
+            ("--reserve-pin", !self.reserve_pin.is_empty()),
+            (
+                "--addr-mon-min-cs-act-ns",
+                self.addr_mon_min_cs_act_ns.is_some(),
+            ),
+        ];
+        if let Some((option, _)) = given.iter().find(|(_, given)| *given) {
+            return Err(arg_error(
+                &["program"],
+                ErrorKind::ArgumentConflict,
+                format!(
+                    "the argument '--base-firmware <FILE>' cannot be used with '{option}' without --config or --slot"
+                ),
+            ));
+        }
+        if !self.no_config {
+            return Err(arg_error(
+                &["program"],
+                ErrorKind::MissingRequiredArgument,
+                "the argument '--base-firmware <FILE>' requires '--no-config' without --config or --slot",
+            ));
+        }
+        Ok(())
     }
 }
 

@@ -6,24 +6,18 @@
 // environment that do not exist when the plugin is compiled natively and run
 // against the firmware emulator.
 //
-// Three kinds of thing live here:
+// It contains:
 //
-// 1. tinyusb.  The plugin calls ten of its functions and tinyusb calls back
-//    into the plugin; nothing below that boundary — the device controller, the
-//    USB bus itself — is modelled, because none of it is One ROM's code.  What
-//    is modelled is the CDC endpoint in both directions, in enough detail for
-//    the log drain's and the input's behaviour to be a response to something.
+// 1. tinyusb.  The plugin calls tinyusb and tinyusb calls back into the
+//    plugin.  Nothing below that boundary is modelled because none of it is
+//    One ROM's code.  The CDC endpoint is modelled in both directions.
 //
 // 2. picoboot.  picobootx has its own conformance suite in its own repository,
 //    so it is not compiled here.  The shim keeps what the plugin registered and
 //    stands in for the default command implementations, which the plugin's ops
-//    table names and so must exist at link time.
+//    table points to and so must exist at link time.
 //
 // 3. The entry point the harness calls to start the plugin.
-//
-// This file is specific to one plugin: it names usb_main, and two plugins
-// cannot share a binary in any case — each defines its own ora_plugin_header
-// and its own file-scope state.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -51,6 +45,14 @@ void *ora_fn_lookup(api_id_t id);
 // have.  See the comment where it is called.
 void ora_log_reset_claims(void);
 
+// firmware/test — the memory standing in for USB DPRAM.  Declared here for the
+// same reason.
+char *stub_usb_dpram(void);
+
+// firmware/test — the flash bytes a test sets.  Declared here for the same
+// reason.
+uint8_t stub_flash_read8(uint32_t addr);
+
 // ---------------------------------------------------------------------------
 // The plugin under test
 // ---------------------------------------------------------------------------
@@ -60,6 +62,10 @@ void usb_main(
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
 );
+
+// The interrupt function in usb_main.c that tinyusb's dcd_rp2040 driver calls
+// on a device.
+void irq_set_enabled(uint32_t num, bool enabled);
 
 // The plugin's own header, as the firmware would read it before launching the
 // plugin.  Useful to the harness for asserting the plugin's declared version
@@ -107,6 +113,11 @@ static uint32_t s_tx_inflight;
 static uint8_t  s_tx_fifo[USB_SHIM_TX_CAPACITY];
 static uint32_t s_tx_fifo_len;
 static uint8_t  s_connected = 1;
+static uint8_t  s_dtr;
+
+// The CDC interfaces written to since the plugin was reset, bit N for
+// interface N.
+static uint8_t  s_tx_itfs;
 
 // Flushed bytes accumulate here.  Sized for a whole banner and several log
 // lines, so a scenario can run many passes before reading.
@@ -124,6 +135,10 @@ void usb_host_test_set_connected(uint8_t connected) {
 
 uint32_t usb_host_test_tx_pending(void) {
     return s_tx_log_len;
+}
+
+uint8_t usb_host_test_tx_itfs(void) {
+    return s_tx_itfs;
 }
 
 uint32_t usb_host_test_take_tx(uint8_t *buf, uint32_t max_len) {
@@ -148,9 +163,11 @@ uint32_t tud_cdc_n_write_available(uint8_t itf) {
 }
 
 uint32_t tud_cdc_n_write(uint8_t itf, const void *buffer, uint32_t bufsize) {
-    (void)itf;
     uint32_t room = tud_cdc_n_write_available(itf);
     uint32_t n = (bufsize < room) ? bufsize : room;
+    if (n > 0u) {
+        s_tx_itfs |= (uint8_t)(1u << itf);
+    }
     memcpy(&s_tx_fifo[s_tx_fifo_len], buffer, n);
     s_tx_fifo_len += n;
     return n;
@@ -182,7 +199,15 @@ bool tud_cdc_n_write_clear(uint8_t itf) {
 
 bool tud_cdc_n_connected(uint8_t itf) {
     (void)itf;
+    return (s_connected != 0) && (s_dtr != 0);
+}
+
+bool tud_mounted(void) {
     return s_connected != 0;
+}
+
+bool tud_suspended(void) {
+    return false;
 }
 
 // The receive side.
@@ -245,6 +270,8 @@ uint32_t tud_cdc_n_read(uint8_t itf, void *buffer, uint32_t bufsize) {
 }
 
 void usb_host_test_set_dtr(uint8_t dtr) {
+    s_dtr = dtr ? 1 : 0;
+
     // Through the plugin's own callback, so the transition is delivered exactly
     // as tinyusb delivers it — which is what the plugin keys a new session off.
     tud_cdc_line_state_cb(0, dtr != 0, false);
@@ -254,9 +281,31 @@ void usb_host_test_set_dtr(uint8_t dtr) {
 // The rest of tinyusb
 // ---------------------------------------------------------------------------
 
+// The plugin's hook into tinyusb's rp2usb_init().  tinyusb's rp2040_usb.h
+// declares it but doesn't compile on a host.
+bool rp2usb_app_reset_cb(void);
+
+static uint32_t s_tinyusb_inits;
+static uint32_t s_controller_resets;
+
 bool tusb_rhport_init(uint8_t rhport, const tusb_rhport_init_t *rh_init) {
     (void)rhport; (void)rh_init;
+
+    // As rp2usb_init() does on a device.  Its DPRAM clear isn't modelled
+    // because it stops below the USB DPRAM log.
+    s_tinyusb_inits++;
+    if (rp2usb_app_reset_cb()) {
+        s_controller_resets++;
+    }
     return true;
+}
+
+uint32_t usb_host_test_tinyusb_inits(void) {
+    return s_tinyusb_inits;
+}
+
+uint32_t usb_host_test_controller_resets(void) {
+    return s_controller_resets;
 }
 
 void tud_task_ext(uint32_t timeout_ms, bool in_isr) {
@@ -391,10 +440,9 @@ pb_status_t picoboot_default_exclusive_access(uint8_t excl, void *ctx) {
 }
 pb_status_t picoboot_default_exit_xip(void *ctx) { (void)ctx; return PB_DEFAULT_REFUSED; }
 pb_status_t picoboot_default_enter_xip(void *ctx) { (void)ctx; return PB_DEFAULT_REFUSED; }
-pb_status_t picoboot_default_reboot2_prepare(const pb_reboot2_args_t *args, void *ctx) {
+pb_status_t picoboot_default_reboot2(const pb_reboot2_args_t *args, void *ctx) {
     (void)args; (void)ctx; return PB_DEFAULT_REFUSED;
 }
-void picoboot_default_reboot2_execute(void *ctx) { (void)ctx; }
 pb_status_t picoboot_default_read_prepare(uint32_t addr, uint32_t size, void *ctx) {
     (void)addr; (void)size; (void)ctx; return PB_STATUS_NOT_FOUND;
 }
@@ -517,6 +565,16 @@ uint8_t usb_host_test_custom_handlers(void) {
                    | (s_custom_ops->fill != NULL ? 2u : 0u));
 }
 
+const volatile uint8_t *usb_host_test_dpram(void) {
+    return (const volatile uint8_t *)stub_usb_dpram();
+}
+
+// Flash the plugin reads the serial ports' descriptions from.  See
+// stub_flash_read8().
+uint8_t usb_host_test_flash_read8(uint32_t addr) {
+    return stub_flash_read8(addr);
+}
+
 // Route a read through the ops table the plugin registered, as picoboot would:
 // prepare first, and read only if it was allowed.
 int32_t usb_host_test_read(uint32_t addr, uint8_t *buf, uint32_t len) {
@@ -565,6 +623,63 @@ void ora_host_test_withhold_api(const uint32_t *ids, uint32_t count) {
     s_withheld_count = count;
 }
 
+// The number of ORA_ID_SET_IRQ_ENABLED calls the plugin has made, and the last
+// call's arguments and result.  The plugin logs only a failure so the tests read
+// them from here.
+static uint32_t s_irq_enabled_calls;
+static ora_irq_t s_irq_enabled_irq;
+static uint8_t s_irq_enabled_enable;
+static ora_result_t s_irq_enabled_result;
+
+static ora_result_t shim_set_irq_enabled(ora_irq_t irq, uint8_t enable, uint32_t flags) {
+    ora_set_irq_enabled_fn_t set_irq_enabled = ora_fn_lookup(ORA_ID_SET_IRQ_ENABLED);
+    s_irq_enabled_calls++;
+    s_irq_enabled_irq = irq;
+    s_irq_enabled_enable = enable;
+    s_irq_enabled_result = set_irq_enabled(irq, enable, flags);
+    return s_irq_enabled_result;
+}
+
+uint32_t usb_host_test_irq_enabled_calls(void) {
+    return s_irq_enabled_calls;
+}
+
+// The last call's interrupt, enable argument and result, packed as
+// irq | (enable << 8) | (result << 16).
+uint32_t usb_host_test_last_irq_enabled(void) {
+    return (uint32_t)s_irq_enabled_irq
+        | ((uint32_t)s_irq_enabled_enable << 8)
+        | ((uint32_t)s_irq_enabled_result << 16);
+}
+
+// Plugin header fields the firmware reads or calls.
+uint8_t usb_host_test_header_properties1(void) {
+    return ora_plugin_header.properties1;
+}
+
+void usb_host_test_header_irq(ora_irq_t irq) {
+    ora_plugin_header.irq_handler(irq);
+}
+
+// A stand-in for dcd_rp2040's dcd_int_handler(), which the plugin calls for
+// the USB controller interrupt.  It counts its calls.
+static uint32_t s_dcd_int_handler_calls;
+
+void dcd_int_handler(uint8_t rhport) {
+    (void)rhport;
+    s_dcd_int_handler_calls++;
+}
+
+uint32_t usb_host_test_dcd_int_handler_calls(void) {
+    return s_dcd_int_handler_calls;
+}
+
+// Enable or disable the USB controller interrupt, as tinyusb's dcd_rp2040
+// driver does.
+void usb_host_test_enable_usb_irq(uint8_t enabled) {
+    irq_set_enabled(ORA_IRQ_USBCTRL_IRQ, enabled != 0);
+}
+
 // The lookup provided to the plugin.  A withheld identifier returns NULL, as on
 // firmware older than the call.
 static void *shim_fn_lookup(api_id_t id) {
@@ -573,18 +688,27 @@ static void *shim_fn_lookup(api_id_t id) {
             return NULL;
         }
     }
+    if (id == ORA_ID_SET_IRQ_ENABLED) {
+        return shim_set_irq_enabled;
+    }
     return ora_fn_lookup(id);
 }
 
-// Start the plugin.  Does not return: the plugin's main loop is infinite by
-// design, so the harness runs this on a thread it is willing to abandon.
+static uint8_t s_entry_flags;
+
+void usb_host_test_set_entry_flags(uint8_t flags) {
+    s_entry_flags = flags;
+}
+
+// Start the plugin.  Doesn't return, so the harness runs this on a thread it
+// abandons.
 //
-// The entry arguments describe the plugin's static RAM and stack on a device.
-// This plugin voids both that and its plugin-type argument, and on a host its
-// data and stack are the host's, so a zeroed struct is passed rather than an
-// invented layout that nothing would honour.
+// The plugin reads only the entry arguments' flags, so the other fields are
+// zero.
 void ora_host_test_run_plugin(void) {
-    static const ora_entry_args_t args = {0};
+    static ora_entry_args_t args;
+    memset(&args, 0, sizeof(args));
+    args.flags = s_entry_flags;
     usb_main(shim_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &args);
 }
 
@@ -612,6 +736,11 @@ void usb_host_test_reset_plugin(void) {
     s_control_xfer_len = 0;
     s_control_xfer_count = 0;
     s_picoboot_claims_control = 0;
+
+    s_entry_flags = 0;
+    s_tinyusb_inits = 0;
+    s_controller_resets = 0;
+    s_tx_itfs = 0;
 }
 
 // Version fields from the plugin's own header, so the harness can report which

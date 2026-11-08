@@ -233,7 +233,10 @@ fn an_sdrr_image_below_v0_7_0_is_never_a_lab() {
 
     let mut reader = MemoryReader::new(image.clone(), RP235X_FLASH_BASE);
     let err = block_on(parser(&mut reader).parse_format_schema()).unwrap_err();
-    assert!(err.contains("not schema format"), "unexpected error: {err}");
+    assert!(
+        err.contains("doesn't use the schema format"),
+        "unexpected error: {err}"
+    );
 
     assert!(matches!(device_of(image), ParsedDevice::Original(_)));
 }

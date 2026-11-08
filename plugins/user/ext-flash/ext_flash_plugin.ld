@@ -26,8 +26,9 @@
  * its plugin region.  The build system selects the region via
  * --defsym PLUGIN_TYPE=<type>.
  *
- * The plugin header must be defined in the plugin source using
- * ORA_DEFINE_SYSTEM_PLUGIN() or ORA_DEFINE_USER_PLUGIN() from ora/plugin.h.
+ * The plugin source must define the plugin header in one of these ways:
+ * - with ORA_SYSTEM_PLUGIN() or ORA_USER_PLUGIN() from ora/plugin.h
+ * - as an ora_plugin_header_t in the .plugin_header section
  */
 
 INCLUDE onerom_linker_constants_generated.ld

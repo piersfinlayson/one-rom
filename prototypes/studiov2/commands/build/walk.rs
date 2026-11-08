@@ -199,13 +199,37 @@ fn fields(item: &ItemStruct) -> impl Iterator<Item = &Field> {
     }
 }
 
+/// A struct's fields with each `#[command(flatten)]` field replaced in place by
+/// the fields of its struct.
+fn arg_fields<'a>(item: &'a ItemStruct, index: &'a Index) -> Vec<&'a Field> {
+    fields(item)
+        .flat_map(|field| {
+            if !CommandSpec::read(&field.attrs).flatten {
+                return vec![field];
+            }
+            let inner = index.struct_def(&type_name(&field.ty));
+            assert!(
+                CommandSpec::read(&inner.attrs).groups.is_empty(),
+                "{} declares a group, which this description does not read through #[command(flatten)]",
+                inner.ident
+            );
+            arg_fields(inner, index)
+        })
+        .collect()
+}
+
 /// Everything one args struct declares: its options and its groups.
 ///
 /// Both come out together because they name each other.  A group can list its
 /// members, and an option can name a group it conflicts with, so neither can be
 /// resolved without the other in hand.
-fn options(item: &ItemStruct, index: &Index, values: &ValueSets) -> (Vec<Opt>, Vec<Group>) {
-    let declared: Vec<(&Field, ArgSpec)> = fields(item)
+fn options<'a>(
+    item: &'a ItemStruct,
+    index: &'a Index,
+    values: &ValueSets,
+) -> (Vec<Opt>, Vec<Group>) {
+    let declared: Vec<(&Field, ArgSpec)> = arg_fields(item, index)
+        .into_iter()
         .filter(|field| !CommandSpec::read(&field.attrs).subcommand)
         .map(|field| (field, ArgSpec::read(&field.attrs)))
         .filter(|(_, spec)| !spec.skip)

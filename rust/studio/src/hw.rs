@@ -8,10 +8,10 @@
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use onerom_config::fw::{FirmwareProperties, ServeAlg};
+use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
 use onerom_config::hw::{Board, BoardSize, Model};
 use onerom_config::mcu::{Family, Variant as McuVariant};
-use onerom_fw::net::Release;
+use onerom_fw::net::{Release, Releases};
 use onerom_fw_parser::ParsedDevice;
 use onerom_gen::supports_board_size;
 
@@ -80,6 +80,19 @@ impl HardwareInfo {
     /// Returns true if all hardware information is present
     pub fn is_complete(&self) -> bool {
         self.board.is_some() && self.model.is_some() && self.mcu_variant.is_some()
+    }
+
+    /// Returns the release of `version` from `releases` where it supports
+    /// this hardware
+    pub fn offered_release<'a>(
+        &self,
+        releases: &'a Releases,
+        version: FirmwareVersion,
+    ) -> Option<&'a Release> {
+        let (board, mcu) = (self.board?, self.mcu_variant?);
+        releases
+            .release(&version)
+            .filter(|release| release.supports_hw(&board, &mcu))
     }
 
     /// Constructs firmware properties from hardware info and a release.  This

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-use onerom_config::hw::Board;
+use onerom_config::hw::{Board, BoardSize};
 use onerom_metadata::otp::{RecordLine, format_chip_id, parse_record};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -39,9 +39,18 @@ pub struct PrivateLine {
     pub chip_id: [u16; 4],
     /// The board, written as its canonical name.
     pub board: Board,
+    /// Omitted where the request doesn't contain one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<BoardSize>,
+    /// Omitted where the request doesn't contain one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
     pub manufacturer: String,
     /// The UTC commissioning date, `YYYYMMDD`.
     pub date: String,
+    /// Omitted where the request doesn't contain one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<String>,
     /// The signature, written as 128 lowercase hex digits.
     #[serde(with = "signature_hex")]
     pub signature: [u8; 64],

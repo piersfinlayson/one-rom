@@ -128,22 +128,21 @@ void ora_host_test_sram_write8(uint32_t addr, uint8_t val);
  * @brief Allow a host-side test build to make progress inside a busy-wait
  *
  * Place this in any loop whose exit condition depends on state only the other
- * core or external hardware can change — a spin on a ring-buffer write
- * pointer, a poll of a location the host writes, a wait on a DMA pointer.
+ * core or external hardware can change, for example:
+ * - a spin on a ring-buffer write pointer
+ * - a poll of a location the host writes
+ * - a wait on a DMA pointer
  *
  * On a device it compiles to nothing whatsoever.  It is therefore *not* a
  * delay, *not* a scheduling primitive, and carries no timing guarantee of any
- * kind; never reach for it to pace a loop.  It is also unrelated to
+ * kind. It must not be used to pace a loop.  It is also unrelated to
  * @ref ORA_ID_YIELD, which is about co-operating with the other plugin over
- * exclusive access — a different concern entirely, despite the name.
+ * exclusive access, which is a different concern.
  *
  * Under a host-side test build the emulated hardware only advances when the
  * harness advances it, so a loop like the above would spin forever with
- * nothing to change its exit condition.  This macro hands control back so the
+ * nothing to change its exit condition.  This macro returns control so the
  * harness can drive the next stimulus.
- *
- * Omitting it costs nothing on a device; the only consequence is that the loop
- * cannot be exercised on a host.
  *
  * @code
  * while (read_idx == write_idx) {
@@ -380,18 +379,21 @@ typedef enum {
     /**
      * @brief Reboot into BOOTSEL mode
      * @sa ora_reboot_bootsel_fn_t
+     * @deprecated Use ORA_ID_REBOOT
      */
     ORA_ID_REBOOT_BOOTSEL = 0x00000000,
 
     /**
      * @brief Allocate memory
      * @sa ora_alloc_fn_t
+     * @deprecated Has always returned NULL.  Use @ref ORA_ID_ALLOC_MEM.
      */
     ORA_ID_ALLOC = 0x00000001,
 
     /**
      * @brief Get One ROM information
      * @sa ora_get_firmware_info_fn_t
+     * @deprecated Returns NULL from v0.7.0
      */
     ORA_ID_GET_FIRMWARE_INFO = 0x00000002,
 
@@ -416,6 +418,7 @@ typedef enum {
     /**
      * @brief Get free memory size
      * @sa ora_get_free_mem_fn_t
+     * @deprecated Has always returned 0.
      */
     ORA_ID_GET_FREE_MEM = 0x00000006,
 
@@ -440,6 +443,11 @@ typedef enum {
     /**
      * @brief Register an IRQ handler
      * @sa ora_register_irq_fn_t
+     * @deprecated Use ora_plugin_header_t::irq_handler and
+     *             @ref ORA_ID_SET_IRQ_ENABLED.
+     *             ORA_IRQ_TIMER0_IRQ_0 can't be claimed.  Claim another timer
+     *             alarm and its interrupt with @ref ORA_ID_CLAIM_HW.
+     *             ORA_IRQ_USBCTRL_IRQ requires ORA_PROPERTY1_RESERVE_USB.
      */
     ORA_ID_REGISTER_IRQ = 0x0000000A,
 
@@ -464,6 +472,8 @@ typedef enum {
     /**
      * @brief Enable an IRQ
      * @sa ora_enable_irq_fn_t
+     * @deprecated Claim the interrupt with @ref ORA_ID_CLAIM_HW, then use
+     *             @ref ORA_ID_SET_IRQ_ENABLED.
      */
     ORA_ID_ENABLE_IRQ = 0x0000000E,
 
@@ -476,6 +486,7 @@ typedef enum {
     /**
      * @brief Get a pointer to the runtime info structure
       * @sa ora_ntime_info_fn_t
+     * @deprecated Returns NULL from v0.7.0
      */
     ORA_ID_GET_RUNTIME_INFO = 0x00000010,
 
@@ -627,6 +638,7 @@ typedef enum {
     /**
      * @brief Yield to allow another core to enter exclusive mode
      * @sa ora_yield_fn_t
+     * @since firmware 0.6.9
      */
     ORA_ID_YIELD                = 0x00000029,
 
@@ -763,7 +775,7 @@ typedef enum {
     ORA_ID_GET_PLUGIN_UPTIME_MS      = 0x0000003B,
 
     /**
-     * @brief Get one element of an array-valued unsigned metadata datum
+     * @brief Get one value of an array metadata key
      * @sa ora_get_metadata_uint_at_fn_t
      * @since firmware 0.7.2
      */
@@ -796,6 +808,76 @@ typedef enum {
      * @since firmware 0.8.0
      */
     ORA_ID_SET_STANDBY               = 0x00000040,
+
+    /**
+     * @brief Reboot One ROM
+     * @sa ora_reboot_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_REBOOT                    = 0x00000041,
+
+    /**
+     * @brief Get a commissioning value
+     * @sa ora_get_commissioning_value_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_COMMISSIONING_VALUE   = 0x00000042,
+
+    /**
+     * @brief Get a flash slot's address and size
+     * @sa ora_get_flash_slot_addr_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_FLASH_SLOT_ADDR       = 0x00000043,
+
+    /**
+     * @brief Get the commissioning instance
+     * @sa ora_get_commissioning_instance_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_COMMISSIONING_INSTANCE = 0x00000044,
+
+    /**
+     * @brief Allocate memory
+     * @sa ora_alloc_mem_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_ALLOC_MEM                 = 0x00000045,
+
+    /**
+     * @brief Retrieve one of the other plugin's peer data blocks
+     * @sa ora_get_peer_data_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_GET_PEER_DATA             = 0x00000046,
+
+    /**
+     * @brief Claim hardware or an interrupt
+     * @sa ora_claim_hw_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_CLAIM_HW                  = 0x00000047,
+
+    /**
+     * @brief Enable or disable a claimed interrupt
+     * @sa ora_set_irq_enabled_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_SET_IRQ_ENABLED           = 0x00000048,
+
+    /**
+     * @brief Claim a GPIO
+     * @sa ora_claim_gpio_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_CLAIM_GPIO                = 0x00000049,
+
+    /**
+     * @brief Claim a PIO state machine and an instruction range
+     * @sa ora_claim_pio_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_ID_CLAIM_PIO                 = 0x0000004A,
 
     /** Invalid API identifier */
     ORA_ID_INVALID = 0xFFFFFFFF,
@@ -830,13 +912,11 @@ typedef enum {
 _Static_assert(sizeof(ora_core_t) == 1, "ora_core_t must be 1 byte");
 
 /**
- * @brief IRQ numbers
+ * @brief An RP2350 interrupt number
+ *
+ * The values are the ORA_IRQ_ constants in onerom_constants_generated.h.
  */
-typedef enum {
-    ORA_IRQ_TIMER0_IRQ_0 = 0,
-    ORA_IRQ_USBCTRL_IRQ = 14,
-    ORA_IRQ_INVALID = 0xFF,
-} ora_irq_t;
+typedef uint8_t ora_irq_t;
 _Static_assert(sizeof(ora_irq_t) == 1, "ora_irq_t must be 1 byte");
 
 /**
@@ -880,6 +960,24 @@ typedef enum {
      * @since firmware 0.7.3
      */
     ORA_LOG_CHANNEL_1       = 1,
+
+    /**
+     * @brief Channel 2 - No fixed purpose
+     *
+     * Exists only if channel_2_size is set in a plugin header.
+     *
+     * @since firmware 0.8.1
+     */
+    ORA_LOG_CHANNEL_2       = 2,
+
+    /**
+     * @brief Channel 3 - No fixed purpose
+     *
+     * Exists only if channel_3_size is set in a plugin header.
+     *
+     * @since firmware 0.8.1
+     */
+    ORA_LOG_CHANNEL_3       = 3,
 
     ORA_LOG_CHANNEL_INVALID = 0xFFFFFFFF,
 } ora_log_channel_t;
@@ -1172,6 +1270,29 @@ typedef struct {
  */
 typedef void (*ora_irq_handler_t)(void);
 
+/**
+ * @brief A plugin's interrupt handler
+ * @sa ora_plugin_header_t::irq_handler
+ * @since firmware 0.8.1
+ *
+ * The firmware calls a plugin's interrupt handler in interrupt context on the
+ * plugin's core for any interrupt the plugin has claimed and enabled, when that
+ * interrupt fires.  The plugin's handler is responsible for clearing the
+ * interrupt's cause.
+ *
+ * If a handler is registered for ORA_IRQ_USBCTRL_IRQ using
+ * @ref ora_register_irq_fn_t, that handler is called instead.  One ROM
+ * firmware uses ORA_IRQ_IO_IRQ_BANK0, for example for VBUS detection.  When
+ * using ORA_IRQ_IO_IRQ_BANK0, a plugin's handler must only clear or change the
+ * GPIO interrupts the plugin enabled.
+ *
+ * The firmware disables any firing interrupt on a core if the plugin has no
+ * interrupt handler, or if the plugin hasn't claimed that interrupt.
+ *
+ * @param irq  The ORA_IRQ_ number of the interrupt
+ */
+typedef void (*ora_plugin_irq_handler_t)(ora_irq_t irq);
+
 /** @} */ // plugin_api_types
 
 /**
@@ -1230,13 +1351,18 @@ typedef struct {
     ora_core_t core;
 
     /**
-     * @brief Reserved. Set to zero.
+     * @brief ORA_ENTRY_FLAG_ values
      *
-     * Declared rather than left to the compiler: @ref static_ram_base is
-     * four-byte aligned, so these three bytes exist either way, and a reader
-     * following the fields down should not have to work that out.
+     * Zero on firmware before 0.8.1.
+     *
+     * @since firmware 0.8.1
      */
-    uint8_t reserved[3];
+    uint8_t flags;
+
+    /**
+     * @brief Reserved, written as zero
+     */
+    uint8_t reserved[2];
 
     /**
      * @brief The plugin's static RAM base address
@@ -1272,6 +1398,25 @@ typedef struct {
      */
     uint32_t stack_size;
 } ora_entry_args_t;
+
+/**
+ * @brief Exclusive serial IN mode is on
+ * @sa ora_entry_args_t
+ * @sa ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN
+ * @since firmware 0.8.1
+ *
+ * In this mode only @c ORA_LOG_CHANNEL_0 is written to the serial port.
+ * Firmware and plugin logging aren't written to channel 0.
+ */
+#define ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN   (1u << 0)
+
+/**
+ * @brief The USB controller and its interrupt are reserved for this plugin
+ * @sa ora_entry_args_t
+ * @sa ORA_PROPERTY1_RESERVE_USB
+ * @since firmware 0.8.1
+ */
+#define ORA_ENTRY_FLAG_USB_RESERVED          (1u << 1)
 
 /**
  * @brief Monitor mode
@@ -1352,6 +1497,10 @@ _Static_assert(sizeof(ora_address_monitor_options_t) == 2, "ora_address_monitor_
 
 /**
  * @brief Return code for One ROM API functions
+ *
+ * New result codes may be added in future and applied to existing API calls.
+ * Plugins should handle unexpected failure (not ORA_RESULT_OK) codes
+ * gracefully.
  */
 typedef enum {
     ORA_RESULT_OK    = 0,
@@ -1384,6 +1533,28 @@ typedef enum {
      * @since firmware 0.8.0
      */
     ORA_RESULT_NOT_READY = 15,
+    /**
+     * @brief The hardware is already claimed or set up
+     * @sa ora_claim_hw_fn_t
+     * @sa ora_claim_gpio_fn_t
+     * @sa ora_claim_pio_fn_t
+     * @sa ora_setup_address_monitor_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_RESULT_IN_USE = 16,
+    /**
+     * @brief The request doesn't match how the hardware is already
+     * configured
+     * @sa ora_claim_pio_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_RESULT_CONFLICT = 17,
+    /**
+     * @brief The requested item or resource doesn't exist
+     * @sa ora_get_peer_data_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_RESULT_NOT_FOUND = 18,
 } ora_result_t;
 
 /**
@@ -1410,8 +1581,9 @@ typedef void *(*ora_lookup_fn_t)(api_id_t id);
  * @brief Plugin entry point function type
  *
  * This typedef defines the signature that all plugin entry point functions
- * must conform to.  Use @ref ORA_DEFINE_SYSTEM_PLUGIN or
- * @ref ORA_DEFINE_USER_PLUGIN to define your entry point.
+ * must conform to.  @ref ORA_SYSTEM_PLUGIN and @ref ORA_USER_PLUGIN are
+ * helper macros for simple plugins that implement this entry point and
+ * instead require a plugin to provide setup and loop functions.
  *
  * @param ora_lookup_fn A pointer to the API lookup function
  * @param plugin_type   Whether this is a system or user plugin
@@ -1427,7 +1599,11 @@ typedef void (*ora_plugin_entry_t)(
 /**
  * @brief Reboot into BOOTSEL mode
  * @sa ORA_ID_REBOOT_BOOTSEL
+ * @deprecated Use ORA_ID_REBOOT
  * 
+ * DEPRECATED AS OF v0.8.1 - use ORA_ID_REBOOT with ORA_REBOOT_MODE_BOOTLOADER.
+ * This function is still functional.
+ *
  * Reboots One ROM into the RP2350's BOOTSEL mode, for repogramming or
  * recovery.  This (obviously) stops One ROM serving the ROM image and does
  * not return.  There may be a slight (e.g. 10ms) delay before the reboot.
@@ -1437,16 +1613,7 @@ typedef void (*ora_reboot_bootsel_fn_t)(void);
 /**
  * @brief Allocate memory
  * @sa ORA_ID_ALLOC
- *
- * This allocates memory on a 4 byte boundary from the start of One ROM's
- * spare pool of memory.  Allocations are for the lifetime of the firmware
- * and are not freed until the device is reset.  The firmware does not track
- * individual allocations, so it is the caller's responsibility to ensure that
- * they do not exceed the allocated memory.
- *
- * The amount of free memory will vary dramatically depending on the ROM image
- * currently being served.  A One ROM 24 will have around 450KB of free memory,
- * while a One ROM 32 or 40 will have 1-2KB.
+ * @deprecated Has always returned NULL.  Use @ref ora_alloc_mem_fn_t.
  *
  * @param size The number of bytes to allocate.
  * @return A pointer to the allocated memory, or NULL if allocation failed.
@@ -1456,6 +1623,7 @@ typedef void *(*ora_alloc_fn_t)(size_t size);
 /**
  * @brief Get One ROM information
  * @sa ORA_ID_GET_FIRMWARE_INFO
+ * @deprecated Returns NULL from v0.7.0
  *
  * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
  * NULL.
@@ -1543,6 +1711,7 @@ typedef void (*ora_debug_log_fn_t)(const char *msg, ...)
 /**
  * @brief Get the amount of free memory
  * @sa ORA_ID_GET_FREE_MEM
+ * @deprecated Has always returned 0.
  *
  * @return The number of bytes of free memory available.
  */
@@ -1573,8 +1742,11 @@ typedef void (*ora_set_status_led_fn_t)(uint8_t on);
  * @brief Setup the USB controller including clocking it
  * @sa ORA_ID_SETUP_USB
  * 
- * This is used by plugins that want to use the USB functionality of the
- * RP2350, to set up the USB PLL.
+ * Sets up the USB PLL and the USB controller's clock.
+ *
+ * Firmware 0.8.1 and later starts the USB PLL and resets the USB controller
+ * before starting the plugins.  A plugin must not reset it because the
+ * firmware stores data in USB DPRAM that a reset may corrupt.
  */
 typedef void (*ora_setup_usb_fn_t)(void);
 
@@ -1582,15 +1754,22 @@ typedef void (*ora_setup_usb_fn_t)(void);
  * @brief Setup the ADC
  * @sa ORA_ID_SETUP_ADC
  *
- * This is used by plugins that want to use the ADC functionality of the
- * RP2350, to set up the ADC.  This function setups up the USB PLL as well, if
- * it has not already been set up.
+ * Sets up the ADC.  The ADC is clocked from the USB PLL.  Firmware 0.8.1 and
+ * later starts the USB PLL before starting the plugins.  This function in
+ * earlier firmware starts the USB PLL if it isn't already running.
  */
 typedef void (*ora_setup_adc_fn_t)(void);
 
 /**
  * @brief Register an IRQ handler
  * @sa ORA_ID_REGISTER_IRQ
+ * @deprecated Use ora_plugin_header_t::irq_handler and
+ *             @ref ora_set_irq_enabled_fn_t.
+ *             ORA_IRQ_TIMER0_IRQ_0 can't be claimed.  Claim another timer
+ *             alarm and its interrupt with @ref ora_claim_hw_fn_t.
+ *             ORA_IRQ_USBCTRL_IRQ requires ORA_PROPERTY1_RESERVE_USB.
+ *
+ * DEPRECATED AS OF v0.8.1.  This function is still functional.
  * 
  * This is used by plugins that want to register an IRQ handler for a specific
  * IRQ.
@@ -1641,10 +1820,13 @@ typedef uint32_t (*ora_get_sysclk_mhz_fn_t)(void);
 /**
  * @brief Enable an IRQ
  * @sa ORA_ID_ENABLE_IRQ
+ * @deprecated Claim the interrupt with @ref ora_claim_hw_fn_t, then use
+ *             @ref ora_set_irq_enabled_fn_t.
+ *
+ * DEPRECATED AS OF v0.8.1.  This function is still functional.
  * 
- * This is used by plugins to enable an IRQ for which they have registered a
- * handler.  If the plugin has not registered a handler for the specified IRQ,
- * this function silently fails.
+ * Enables or disables @p irq on the calling plugin's core, whether or not a
+ * handler was registered for it with @ref ora_register_irq_fn_t.
  *
  * @param irq The IRQ to enable
  * @param enable Set to 1 to enable the IRQ, or 0 to disable it.
@@ -1680,6 +1862,7 @@ typedef uint32_t (*ora_get_plugin_uptime_ms_fn_t)(void);
 /**
  * @brief Get a pointer to the runtime info structure
  * @sa ORA_ID_GET_RUNTIME_INFO
+ * @deprecated Returns NULL from v0.7.0
  * 
  * DEPRECATED AS OF v0.7.0 - attempt to retrieve this function pointer returns
  * NULL.
@@ -1762,6 +1945,10 @@ typedef uint8_t (*ora_get_data_pin_nums_fn_t)(uint8_t *data_pins_out, uint8_t nu
  * internal knowledge of pin assignments to configure the PIO correctly for
  * the current hardware variant.
  *
+ * From firmware 0.8.1, a chip select pulse shorter than the config's
+ * addr_mon_min_cs_act_ns isn't captured.  A slightly longer one may not be
+ * captured either.
+ *
  * The ring buffer must be allocated by the caller, aligned to its own size
  * in bytes (i.e. aligned to 2^ring_size_log2 * sizeof(uint32_t) bytes), and
  * remain valid for the lifetime of the monitor. Each entry is a uint32_t
@@ -1783,7 +1970,10 @@ typedef uint8_t (*ora_get_data_pin_nums_fn_t)(uint8_t *data_pins_out, uint8_t nu
  *                        @since firmware 0.7.3
  * @return ORA_RESULT_INVALID_SIZE if @p options->size is smaller than the
  *         structure was when it first shipped, ORA_RESULT_INVALID_ARG if
- *         @p options->priority is not an @ref ora_address_monitor_priority_t
+ *         @p options->priority is not an @ref ora_address_monitor_priority_t,
+ *         ORA_RESULT_IN_USE if the monitor is already configured or there are
+ *         no free PIO state machines or instructions for it.  Before firmware
+ *         0.8.1 a second call set the monitor up again.
  */
 typedef ora_result_t (*ora_setup_address_monitor_fn_t)(
     volatile uint32_t *ring_buf,
@@ -2335,6 +2525,35 @@ typedef ora_result_t (*ora_get_flash_slot_ext_info_fn_t)(
     uint32_t *rbcp_rom_type_out
 );
 
+/**
+ * @brief Get a flash slot's address and size
+ * @sa ORA_ID_GET_FLASH_SLOT_ADDR
+ * @since firmware 0.8.1
+ *
+ * The slot's data is stored as it is served by One ROM.  Its address and data
+ * bits are rearranged to match the board's pins.  @sa ora_map_addr_to_phys_fn_t
+ *
+ * @param flash_slot  Index of the flash slot, filtered as per
+ *                    @ref ora_get_flash_slot_count_fn_t
+ * @param flags       Filtering flags, must match those passed to
+ *                    @ref ora_get_flash_slot_count_fn_t
+ *                    @sa ORA_FLASH_SLOT_FLAG_EXCLUDE_PLUGINS
+ *                    @sa ORA_FLASH_SLOT_FLAG_EXCLUDE_NON_PLUGINS
+ * @param addr_out    Set to the slot's address in the XIP flash window. May
+ *                    be NULL.
+ * @param size_out    Set to the slot's size in bytes. May be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_INVALID_SLOT if @p flash_slot is out of range for
+ *         @p flags, the slot doesn't have an image or the slot is
+ *         outside the board's flash.
+ */
+typedef ora_result_t (*ora_get_flash_slot_addr_fn_t)(
+    uint8_t flash_slot,
+    uint32_t flags,
+    uint32_t *addr_out,
+    uint32_t *size_out
+);
+
 /** @brief Perform the copy asynchronously via DMA */
 #define ORA_COPY_FLAG_ASYNC  0x00000001
 
@@ -2444,30 +2663,24 @@ typedef ora_result_t (*ora_get_metadata_str_fn_t)(ora_metadata_key_t key, const 
 typedef ora_result_t (*ora_get_metadata_uint_fn_t)(ora_metadata_key_t key, uint32_t *out);
 
 /**
- * @brief Get one element of an array-valued unsigned metadata datum
+ * @brief Get one value of an array metadata key
  * @sa ORA_ID_GET_METADATA_UINT_AT
- *
- * Indexed sibling of @ref ora_get_metadata_uint_fn_t over the same unified key
- * space - a key means the same datum whichever accessor is asked for it. This
- * accessor resolves keys whose datum is an array of unsigned values, such as
- * the image select and X expansion pin maps (ORA_METADATA_KEY_GPIO_SEL,
- * ORA_METADATA_KEY_GPIO_X1, ORA_METADATA_KEY_GPIO_X2).
- *
- * There is no companion call reporting an array's length. A caller reads
- * upwards from index 0 until the call stops returning @c ORA_RESULT_OK, which
- * needs no sentinel value in the data and so works whatever the elements mean.
- * Learning a length that way costs one call per element, plus one.
- *
- * @param key   The metadata datum to retrieve. @sa ora_metadata_key_t
- * @param index Element to read, counting from 0.
- * @param out   Output pointer to receive the value. Must not be NULL.
- * @return ORA_RESULT_OK on success;
- *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware;
- *         ORA_RESULT_TYPE_MISMATCH if @p key is valid but not an array of
- *         unsigned values;
- *         ORA_RESULT_INVALID_ARG if @p out is NULL, or @p index is beyond the
- *         last element of the array.
  * @since firmware 0.7.2
+ *
+ * Returns the value at @p index of an array key, for example
+ * ORA_METADATA_KEY_GPIO_SEL or ORA_METADATA_KEY_CHIP_ID.
+ *
+ * To find an array's length, read from index 0 until the call returns
+ * ORA_RESULT_INVALID_ARG.
+ *
+ * @param key    An array metadata key. @sa ora_metadata_key_t
+ * @param index  Index of the value, from 0
+ * @param out    Set to the value. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if @p key is unknown to this firmware.
+ *         ORA_RESULT_TYPE_MISMATCH if @p key isn't an array.
+ *         ORA_RESULT_INVALID_ARG if @p index is past the end of the array or
+ *         @p out is NULL.
  */
 typedef ora_result_t (*ora_get_metadata_uint_at_fn_t)(
     ora_metadata_key_t key,
@@ -2626,18 +2839,19 @@ typedef enum {
 } ora_gpio_state_t;
 
 /**
- * @brief What One ROM itself is using a GPIO for
+ * @brief What One ROM is using a GPIO for
  * @since firmware 0.7.1
  *
- * Reports only what the firmware has claimed the GPIO for: the serving set of
- * the currently active ROM slot, plus the board's own system pins. It says
- * nothing about what is attached to the pin electrically - whether a jumper is
- * fitted, what the far end of a wire is connected to, or whether something else
- * is driving the net. That remains the user's responsibility.
+ * Reports what the GPIO is currently being used for.
+ *
+ * It doesn't report what is attached to the pin electrically - whether a jumper
+ * is fitted, what the far end of a wire is connected to, or whether something
+ * else is driving the net.
  *
  * An X pin can be wired to two GPIOs, and driving either drives the pin. From
- * firmware 0.8.0 a GPIO One ROM doesn't use reports what serving uses the
- * other GPIO on its X pin for. Earlier firmware reports each GPIO's own use.
+ * firmware 0.8.0 a GPIO One ROM doesn't use reports the same usage as the
+ * other GPIO connected to the same X pin. Earlier firmware reports only the
+ * GPIO's own use.
  *
  * Serving reads its address, chip select and /BYTE pins as SIO inputs with the
  * output driver disabled, so they are indistinguishable from unused pins by
@@ -2698,6 +2912,20 @@ typedef enum {
      * @since firmware 0.8.0
      */
     ORA_GPIO_USE_INPUT_FORCED   = 4,
+
+    /**
+     * @brief Claimed by a plugin
+     *
+     * The GPIO (or the other GPIO on an X pin connected to two GPIOs) has
+     * been claimed with @ref ora_claim_gpio_fn_t.  An input forced GPIO can
+     * be claimed.  @ref ora_gpio_info_t::use is then ORA_GPIO_USE_PLUGIN and
+     * @ref ora_gpio_info_t::uses has both ORA_GPIO_USE_INPUT_FORCED and
+     * ORA_GPIO_USE_PLUGIN set.
+     *
+     * @sa ora_gpio_set_fn_t
+     * @since firmware 0.8.1
+     */
+    ORA_GPIO_USE_PLUGIN         = 5,
 } ora_gpio_use_t;
 
 /**
@@ -2738,8 +2966,19 @@ typedef struct {
 
     /** @brief 1 if the pin's output driver is currently enabled, 0 if not */
     uint8_t is_output;
+
+    /**
+     * @brief Every use that applies to this GPIO
+     *
+     * Bit N is set when @ref ora_gpio_use_t value N applies, so a free GPIO
+     * is reported as 0.  Whether @ref ora_gpio_set_fn_t requires
+     * @ref ORA_GPIO_FLAG_FORCE depends on @ref use.
+     *
+     * @since firmware 0.8.1
+     */
+    uint32_t uses;
 } ora_gpio_info_t;
-_Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
+_Static_assert(sizeof(ora_gpio_info_t) == 8, "ora_gpio_info_t must be 8 bytes");
 
 /**
  * @brief Drive a GPIO high or low, or release it to high impedance
@@ -2750,9 +2989,10 @@ _Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
  * is instantaneous: it starts no timer and schedules nothing. A caller wanting
  * a bounded assertion must time the release itself.
  *
- * For a GPIO in use by One ROM - ORA_GPIO_USE_SERVING_READ,
- * ORA_GPIO_USE_SERVING_DRIVEN or ORA_GPIO_USE_SYSTEM - the call returns
- * ORA_RESULT_GPIO_IN_USE unless @ref ORA_GPIO_FLAG_FORCE is set.
+ * For a GPIO in use by One ROM (ORA_GPIO_USE_SERVING_READ,
+ * ORA_GPIO_USE_SERVING_DRIVEN or ORA_GPIO_USE_SYSTEM) or claimed by a plugin
+ * (ORA_GPIO_USE_PLUGIN), the call returns ORA_RESULT_GPIO_IN_USE unless
+ * @ref ORA_GPIO_FLAG_FORCE is set.
  *
  * How recoverable a forced pin is is exactly what @ref ora_gpio_use_t reports:
  *
@@ -2774,10 +3014,10 @@ _Static_assert(sizeof(ora_gpio_info_t) == 4, "ora_gpio_info_t must be 4 bytes");
  * @param state  The state to place the GPIO in. @sa ora_gpio_state_t
  * @param flags  Behavioural flags. Pass 0 for default behaviour.
  *               @sa ORA_GPIO_FLAG_FORCE
- * @return ORA_RESULT_OK on success; ORA_RESULT_GPIO_IN_USE if the GPIO is in
- *         use by One ROM and ORA_GPIO_FLAG_FORCE was not set;
- *         ORA_RESULT_INVALID_ARG if @p gpio is out of range or @p state is not
- *         a valid @ref ora_gpio_state_t
+ * @return ORA_RESULT_OK on success.  ORA_RESULT_GPIO_IN_USE if the GPIO is in
+ *         use by One ROM or claimed by a plugin and ORA_GPIO_FLAG_FORCE was not
+ *         set.  ORA_RESULT_INVALID_ARG if @p gpio is out of range or @p state
+ *         is not a valid @ref ora_gpio_state_t.
  */
 typedef ora_result_t (*ora_gpio_set_fn_t)(
     uint8_t  gpio,
@@ -2793,6 +3033,10 @@ typedef ora_result_t (*ora_gpio_set_fn_t)(
  * Reports the GPIO's use, its level and whether its output driver is enabled.
  * All three describe the same instant. There is deliberately no bulk form - a
  * caller wanting the whole device loops over this call.
+ *
+ * From firmware 0.8.1 a GPIO a plugin has claimed with @ref ora_claim_gpio_fn_t
+ * is reported as ORA_GPIO_USE_PLUGIN unless serving or a system pin uses it.
+ * @ref ora_gpio_info_t::uses lists every use that applies.
  *
  * The caller must set @p info_out->size to its own sizeof(ora_gpio_info_t)
  * before calling; see @ref ora_gpio_info_t.
@@ -3394,6 +3638,521 @@ typedef ora_result_t (*ora_firmware_state_query_fn_t)(
  */
 typedef ora_result_t (*ora_set_standby_fn_t)(uint8_t standby, uint32_t flags);
 
+/**
+ * @brief Reboot modes
+ * @since firmware 0.8.1
+ */
+typedef enum {
+    /** @brief Normal boot */
+    ORA_REBOOT_MODE_NORMAL     = 0,
+
+    /** @brief RP2350 BOOTSEL mode with USB mass storage disabled */
+    ORA_REBOOT_MODE_BOOTLOADER = 1,
+} ora_reboot_mode_t;
+
+/**
+ * @brief Reboot request
+ * @since firmware 0.8.1
+ */
+typedef struct {
+    /** @brief sizeof this structure, set by the caller.  Minimum 8. */
+    uint8_t  size;
+
+    /** @brief Reboot mode. @sa ora_reboot_mode_t */
+    uint8_t  mode;
+
+    /** @brief Reserved.  Must be 0. */
+    uint8_t  reserved[2];
+
+    /**
+     * @brief Delay before the reboot in ms, up to ORA_REBOOT_MAX_DELAY_MS
+     *
+     * One ROM serves the ROM during the delay.  A delay of 0 is interpreted
+     * as 1ms, which is the minimum delay ora_reboot supports.
+     */
+    uint32_t delay_ms;
+} ora_reboot_request_t;
+_Static_assert(sizeof(ora_reboot_request_t) == 8, "ora_reboot_request_t must be 8 bytes");
+
+/**
+ * @brief Reboot One ROM
+ * @sa ORA_ID_REBOOT
+ * @since firmware 0.8.1
+ *
+ * Returns once the reboot is scheduled.
+ *
+ * @param req  Reboot request
+ * @retval ORA_RESULT_OK            Scheduled
+ * @retval ORA_RESULT_INVALID_ARG   @p req is NULL, a reserved byte isn't 0 or
+ *                                  @p req->delay_ms is over
+ *                                  ORA_REBOOT_MAX_DELAY_MS
+ * @retval ORA_RESULT_INVALID_SIZE  @p req->size is below 8
+ * @retval ORA_RESULT_NOT_SUPPORTED @p req->mode isn't an ora_reboot_mode_t
+ *                                  value this firmware supports
+ * @retval ORA_RESULT_ERROR         The reboot can't be scheduled
+ */
+typedef ora_result_t (*ora_reboot_fn_t)(const ora_reboot_request_t *req);
+
+/**
+ * @brief Accept memory where unaligned access may fault
+ * @sa ora_alloc_request_t
+ * @since firmware 0.8.1
+ *
+ * An access is aligned when its address is a multiple of its size: 2 for a
+ * halfword, 4 for a word.  A byte access is always aligned.  A caller setting
+ * this flag must make only aligned halfword and word accesses to the
+ * allocation, including through library functions such as memcpy.
+ */
+#define ORA_MEM_ACCEPT_ALIGNED_ONLY  (1u << 0)
+
+/**
+ * @brief Accept memory code can't execute from
+ * @sa ora_alloc_request_t
+ * @since firmware 0.8.1
+ */
+#define ORA_MEM_ACCEPT_NO_EXEC       (1u << 1)
+
+/**
+ * @brief Accept memory slower than SRAM
+ * @sa ora_alloc_request_t::max_access_cycles
+ * @since firmware 0.8.1
+ */
+#define ORA_MEM_ACCEPT_SLOWER        (1u << 2)
+
+/**
+ * @brief Memory allocation request
+ * @sa ora_alloc_mem_fn_t
+ * @since firmware 0.8.1
+ */
+typedef struct {
+    /** @brief sizeof this structure, set by the caller.  Minimum 12. */
+    uint8_t  size;
+
+    /** @brief Reserved.  Must be 0. */
+    uint8_t  reserved[1];
+
+    /**
+     * @brief Slowest access time accepted in system clock cycles
+     *
+     * Without @ref ORA_MEM_ACCEPT_SLOWER the firmware allocates only memory
+     * as fast as SRAM, and this field must be zero.  It is valid only if
+     * @ref ORA_MEM_ACCEPT_SLOWER is set.
+     *
+     * Minimum uncontended, uncached access times:
+     * - SRAM: 1
+     * - USB DPRAM: 2
+     *
+     * Access may take longer than these minima due to contention from the
+     * other core and from peripherals.
+     */
+    uint16_t max_access_cycles;
+
+    /**
+     * @brief Limitations the caller accepts as ORA_MEM_ACCEPT_* bits
+     *
+     * The firmware ignores bits not defined by the plugin API version it
+     * supports.
+     */
+    uint32_t accept;
+
+    /** @brief Number of bytes to allocate */
+    uint32_t bytes;
+} ora_alloc_request_t;
+_Static_assert(sizeof(ora_alloc_request_t) == 12, "ora_alloc_request_t must be 12 bytes");
+
+/**
+ * @brief Allocate memory
+ * @sa ORA_ID_ALLOC_MEM
+ * @since firmware 0.8.1
+ *
+ * Allocates memory honouring all accepted limitations in @p req.  The
+ * allocation is 4-byte aligned and lasts until One ROM reboots.  Both plugins
+ * allocate from a shared pool.
+ *
+ * @param req      Allocation request
+ * @param addr_out Set to the allocation's address on success
+ * @retval ORA_RESULT_OK                    Allocated
+ * @retval ORA_RESULT_INVALID_ARG           @p req or @p addr_out is NULL,
+ *                                          the reserved byte isn't 0 or
+ *                                          @p req->bytes is 0
+ * @retval ORA_RESULT_INVALID_SIZE          @p req->size is below 12
+ * @retval ORA_RESULT_INSUFFICIENT_FREE_MEM No memory meeting @p req has
+ *                                          @p req->bytes free
+ */
+typedef ora_result_t (*ora_alloc_mem_fn_t)(const ora_alloc_request_t *req,
+                                           uint32_t *addr_out);
+
+/**
+ * @brief Retrieve one of the other plugin's peer data blocks
+ * @sa ORA_ID_GET_PEER_DATA
+ * @since firmware 0.8.1
+ *
+ * The firmware checks the other plugin's blocks in order and returns the first
+ * valid block with @p format.  A block is valid if:
+ * - it is 4-byte aligned
+ * - its size is a multiple of 4 and at least @ref ORA_PEER_DATA_MIN_SIZE bytes
+ * - it is inside the peer plugin's flash region
+ *
+ * The check stops at a format word with value 0, an invalid block or the end of
+ * the region.
+ *
+ * @param format     The format word of the block to retrieve
+ * @param flags      Pass 0.  All bits are reserved and must be 0.
+ * @param block_out  Out: the block.  Unchanged unless the result is
+ *                   ORA_RESULT_OK.
+ * @retval ORA_RESULT_OK          Retrieved successfully
+ * @retval ORA_RESULT_NOT_FOUND   There is no other plugin or none of its valid
+ *                                blocks has @p format
+ * @retval ORA_RESULT_INVALID_ARG @p block_out is NULL, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_get_peer_data_fn_t)(uint32_t format, uint32_t flags,
+                                               const uint32_t **block_out);
+
+/**
+ * @brief The start of every peer data block
+ * @sa ora_plugin_header_t::peer_data
+ * @since firmware 0.8.1
+ *
+ * A peer data block is data one plugin provides for the other.  The provider
+ * puts its blocks one after another in its flash and ends them with a word of
+ * value 0.
+ *
+ * Its header's peer_data is the address of the first peer data block.  The
+ * reader is the other plugin, which receives a block with
+ * @ref ora_get_peer_data_fn_t.  The firmware checks the block's position and
+ * size and, if valid, returns it to the reader.  The firmware doesn't police
+ * the data beyond the size fitting within the provider's flash area.
+ *
+ * A block is this header followed by the words defined by that block's
+ * format.  Its size must be a multiple of 4 bytes.
+ *
+ * The reader ignores words past the size.  A peer data block using an earlier
+ * version of the block's format may be shorter, so in this case the reader uses
+ * the default for each missing word.
+ *
+ * A format is defined by the plugin that implements it.  Its format word is
+ * defined in that plugin's plugin-meta.json.
+ */
+typedef struct {
+    /**
+     * @brief The block's format
+     *
+     * A 0 format word ends the provider's blocks.
+     */
+    uint32_t format;
+
+    /** @brief The block's size in bytes, including this header */
+    uint32_t size;
+
+    /** @brief The format's version */
+    uint32_t version;
+} ora_peer_data_header_t;
+
+/**
+ * @brief Size in bytes of the smallest valid peer data block
+ * @sa ora_get_peer_data_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PEER_DATA_MIN_SIZE      12u
+_Static_assert(sizeof(ora_peer_data_header_t) == ORA_PEER_DATA_MIN_SIZE,
+               "ora_peer_data_header_t must be 12 bytes");
+
+/**
+ * @brief A type of hardware peripheral claimed with @ref ora_claim_hw_fn_t
+ * @since firmware 0.8.1
+ *
+ * Each value's instances are numbered from 0.
+ */
+typedef enum {
+    /** @brief A DMA channel, 0 to 15 */
+    ORA_HW_DMA_CHANNEL = 0,
+
+    /** @brief A UART, 0 or 1 */
+    ORA_HW_UART        = 1,
+
+    /** @brief An I2C block, 0 or 1 */
+    ORA_HW_I2C         = 2,
+
+    /** @brief An SPI block, 0 or 1 */
+    ORA_HW_SPI         = 3,
+
+    /** @brief The ADC, 0 */
+    ORA_HW_ADC         = 4,
+
+    /** @brief The USB controller, 0 */
+    ORA_HW_USB         = 5,
+
+    /** @brief The SHA-256 accelerator, 0 */
+    ORA_HW_SHA256      = 6,
+
+    /** @brief The TRNG, 0 */
+    ORA_HW_TRNG        = 7,
+
+    /**
+     * @brief A timer alarm, 0 to 7
+     *
+     * Instance N is TIMER0 alarm N and instance (4 + N) is TIMER1 alarm N.
+     */
+    ORA_HW_TIMER_ALARM = 8,
+
+    /**
+     * @brief An SIO spinlock, 0 to 31
+     *
+     * Because of erratum RP2350-E2, only spinlocks 5, 6, 7, 10, 11 and 18 to
+     * 31 are usable.  The firmware claims the others and the ones it uses
+     * before plugins start.
+     */
+    ORA_HW_SPINLOCK    = 9,
+
+    /** @brief A PWM slice, 0 to 11 */
+    ORA_HW_PWM_SLICE   = 10,
+
+    /** @brief An interrupt, as an ORA_IRQ_ number */
+    ORA_HW_IRQ         = 11,
+} ora_hw_t;
+
+/**
+ * @brief Any free instance
+ * @sa ora_claim_hw_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_HW_ANY  0xFFFFFFFFu
+
+/**
+ * @brief Claim hardware or an interrupt
+ * @sa ORA_ID_CLAIM_HW
+ * @since firmware 0.8.1
+ *
+ * A claim lasts until One ROM reboots.  The hardware the firmware uses is
+ * claimed before plugins start.  A later firmware version may claim additional
+ * hardware peripherals, so a plugin must handle ORA_RESULT_IN_USE for any
+ * peripheral it attempts to claim.
+ *
+ * Interrupts associated with hardware must be claimed separately.
+ *
+ * If a plugin's header sets ORA_PROPERTY1_RESERVE_USB and the USB controller
+ * hasn't already been claimed, the USB controller and its interrupt are
+ * reserved for it at launch and the plugin entry point flag
+ * @ref ORA_ENTRY_FLAG_USB_RESERVED is set.  Subsequently claiming
+ * @ref ORA_HW_USB then returns ORA_RESULT_OK to that plugin and
+ * ORA_RESULT_IN_USE to the other plugin.  ORA_IRQ_USBCTRL_IRQ can only be
+ * claimed using ORA_PROPERTY1_RESERVE_USB.
+ *
+ * ORA_IRQ_IO_IRQ_BANK0, ORA_IRQ_SIO_IRQ_BELL and ORA_IRQ_SIO_IRQ_MTIMECMP exist
+ * on both cores, so both plugins are able to claim these interrupts.  Any other
+ * interrupt can be claimed by only one plugin.
+ *
+ * @param hw        The type of hardware peripheral
+ * @param instance  In: the instance to claim, or @ref ORA_HW_ANY for any free
+ *                  instance.  Out: the instance claimed.  Unchanged unless the
+ *                  result is ORA_RESULT_OK.
+ * @param flags     Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK            Claimed successfully
+ * @retval ORA_RESULT_IN_USE        The instance is already claimed.  For
+ *                                  @ref ORA_HW_ANY this means there are no
+ *                                  free instances.
+ * @retval ORA_RESULT_INVALID_ARG   @p instance is NULL, @p *instance is out of
+ *                                  range and isn't @ref ORA_HW_ANY, or
+ *                                  @p flags isn't 0
+ * @retval ORA_RESULT_NOT_SUPPORTED @p hw isn't an ora_hw_t value this firmware
+ *                                  supports
+ */
+typedef ora_result_t (*ora_claim_hw_fn_t)(ora_hw_t hw,
+                                          uint32_t *instance,
+                                          uint32_t flags);
+
+/**
+ * @brief Enable or disable a claimed interrupt
+ * @sa ORA_ID_SET_IRQ_ENABLED
+ * @since firmware 0.8.1
+ *
+ * Enables or disables @p irq on the calling plugin's core.
+ *
+ * @param irq     An ORA_IRQ_ number claimed by the calling plugin with
+ *                @ref ora_claim_hw_fn_t
+ * @param enable  1 to enable, 0 to disable
+ * @param flags   Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK          Enabled or disabled
+ * @retval ORA_RESULT_INVALID_ARG @p irq isn't an ORA_IRQ_ number or the calling
+ *                                plugin hasn't claimed it, @p enable isn't 0
+ *                                or 1, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_set_irq_enabled_fn_t)(ora_irq_t irq,
+                                                 uint8_t enable,
+                                                 uint32_t flags);
+
+/**
+ * @brief Claim a GPIO
+ * @sa ORA_ID_CLAIM_GPIO
+ * @since firmware 0.8.1
+ *
+ * A GPIO claim lasts until One ROM reboots. A claimed GPIO is reported as
+ * ORA_GPIO_USE_PLUGIN by @ref ora_gpio_query_fn_t, and @ref ora_gpio_set_fn_t
+ * will only allow it to be driven with @ref ORA_GPIO_FLAG_FORCE.  This includes
+ * the plugin that claimed it.
+ *
+ * An X pin can be wired to two GPIOs and claiming either GPIO also claims the
+ * other.
+ *
+ * @param gpio   The GPIO to claim, less than the running variant's GPIO count
+ * @param flags  Pass 0.  All bits are reserved and must be 0.
+ * @retval ORA_RESULT_OK          Claimed successfully
+ * @retval ORA_RESULT_IN_USE      The GPIO, or the other GPIO on its X pin, is
+ *                                already claimed, or serving or a system pin
+ *                                uses it
+ * @retval ORA_RESULT_INVALID_ARG @p gpio is out of range, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_claim_gpio_fn_t)(uint32_t gpio, uint32_t flags);
+
+/**
+ * @brief Any PIO block
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PIO_BLOCK_ANY  0xFFFFFFFFu
+
+/**
+ * @brief Any free state machine in the PIO block
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PIO_SM_ANY     0xFFFFFFFFu
+
+/**
+ * @brief Any free run of instructions in the PIO block
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+#define ORA_PIO_INSTR_ANY  0xFFFFFFFFu
+
+/**
+ * @brief A PIO block's GPIOBASE
+ * @sa ora_claim_pio_fn_t
+ * @since firmware 0.8.1
+ */
+typedef enum {
+    /** @brief The block accesses GPIOs 0 to 31 */
+    ORA_PIO_GPIOBASE_0  = 0,
+
+    /** @brief The block accesses GPIOs 16 to 47 */
+    ORA_PIO_GPIOBASE_16 = 16,
+} ora_pio_gpiobase_t;
+
+/**
+ * @brief Claim a PIO state machine and instruction range
+ * @sa ORA_ID_CLAIM_PIO
+ * @since firmware 0.8.1
+ *
+ * Claims a state machine and @p num_instrs consecutive instructions in one PIO
+ * block.  Either both are claimed or neither is.  A PIO claim lasts until One
+ * ROM reboots.  The state machines and instructions required by the core
+ * firmware are claimed before the plugins start and a plugin must dynamically
+ * handle new versions of firmware that allocate different PIO blocks/SMs using
+ * this call.
+ *
+ * GPIOBASE applies to a whole block.  The first claim in a block sets the
+ * block's GPIOBASE to @p gpio_base, and every later claim in that block must
+ * pass the same value.
+ *
+ * The plugin writes the instructions and configures the state machine itself
+ * directly.
+ *
+ * @param block        In: the block to claim in, or @ref ORA_PIO_BLOCK_ANY for
+ *                     any block.  Out: the block claimed in.
+ * @param sm           In: the state machine to claim, or @ref ORA_PIO_SM_ANY
+ *                     for any free one.  Out: the state machine claimed.
+ * @param first_instr  In: the first instruction to claim, or
+ *                     @ref ORA_PIO_INSTR_ANY for any free run.  Out: the first
+ *                     instruction claimed.
+ * @param num_instrs   The number of instructions to claim, 1 to 32
+ * @param gpio_base    The block's required GPIOBASE
+ * @param flags        Pass 0.  All bits are reserved and must be 0.
+ *
+ * @p block, @p sm and @p first_instr are unchanged unless the result is
+ * ORA_RESULT_OK.
+ *
+ * @retval ORA_RESULT_OK          Claimed successfully
+ * @retval ORA_RESULT_IN_USE      The state machine or instructions requested
+ *                                aren't free.  With @ref ORA_PIO_BLOCK_ANY, no
+ *                                block with a usable GPIOBASE has a free state
+ *                                machine and enough free consecutive
+ *                                instructions.
+ * @retval ORA_RESULT_CONFLICT    @p block already has claims with a different
+ *                                GPIOBASE
+ * @retval ORA_RESULT_INVALID_ARG A pointer is NULL, @p *block, @p *sm,
+ *                                @p *first_instr, @p num_instrs or
+ *                                @p gpio_base is out of range, @p *sm or
+ *                                @p *first_instr is set while @p *block is
+ *                                @ref ORA_PIO_BLOCK_ANY, or @p flags isn't 0
+ */
+typedef ora_result_t (*ora_claim_pio_fn_t)(uint32_t *block,
+                                           uint32_t *sm,
+                                           uint32_t *first_instr,
+                                           uint32_t num_instrs,
+                                           ora_pio_gpiobase_t gpio_base,
+                                           uint32_t flags);
+
+/**
+ * @brief Get a commissioning value
+ * @sa ORA_ID_GET_COMMISSIONING_VALUE
+ * @since firmware 0.8.1
+ *
+ * Commissioning values are written to OTP when a One ROM is commissioned. The
+ * value comes from the last complete commissioning instance.
+ *
+ * When called with key ORA_COMMISSIONING_VERSION_KEY the call returns the
+ * instance's format version. A One ROM is commissioned if this returns
+ * ORA_RESULT_OK. If the commissioning area contains an instance with a version
+ * this firmware can't read, the call returns that version for
+ * ORA_COMMISSIONING_VERSION_KEY and ORA_RESULT_NOT_SUPPORTED for every other
+ * key.
+ *
+ * - The value is read in place from OTP.
+ * - A string isn't null-terminated.
+ * - A number is little-endian.
+ * - The firmware doesn't check the signature.
+ *
+ * @param key        An ORA_OTP_KEY_* value or ORA_COMMISSIONING_VERSION_KEY
+ * @param value_out  Set to the value, which stays valid until the One ROM
+ *                   reboots. Must not be NULL.
+ * @param len_out    Set to the value's length in bytes. Must not be NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if the One ROM doesn't have the value.
+ *         ORA_RESULT_INVALID_ARG if @p key is ORA_OTP_KEY_NONE or an output
+ *         pointer is NULL.
+ */
+typedef ora_result_t (*ora_get_commissioning_value_fn_t)(
+    uint16_t key,
+    const uint8_t **value_out,
+    uint16_t *len_out
+);
+
+/**
+ * @brief Get the commissioning instance
+ * @sa ORA_ID_GET_COMMISSIONING_INSTANCE
+ * @since firmware 0.8.1
+ *
+ * The instance is the last complete commissioning instance, including its
+ * magic row to the end of its signature entry, as described in docs/OTP.md.
+ *
+ * - The instance is read in place from OTP, two bytes per row, low byte first.
+ * - The firmware doesn't check the signature.
+ *
+ * @param instance_out  Set to the instance, which stays valid until the One
+ *                      ROM reboots. Must not be NULL.
+ * @param len_out       Set to the instance's length in bytes. Must not be
+ *                      NULL.
+ * @return ORA_RESULT_OK on success.
+ *         ORA_RESULT_NOT_SUPPORTED if the commissioning area doesn't contain
+ *         a complete instance, contains an instance with a version this
+ *         firmware can't read or isn't laid out as docs/OTP.md specifies.
+ *         ORA_RESULT_INVALID_ARG if an output pointer is NULL.
+ */
+typedef ora_result_t (*ora_get_commissioning_instance_fn_t)(
+    const uint8_t **instance_out,
+    uint16_t *len_out
+);
+
 /** @} */ // plugin_api_functions
 
 /**
@@ -3508,34 +4267,31 @@ typedef struct {
     uint8_t sam_usage;
 
     /**
-     * @brief Firmware overrides this plugin wants to apply
-     * 
-     * Only supported by system plugins, used to indicate to the firmware that
-     * defaults built into the firmware, or overriden by config, should
-     * be overridden.
+     * @brief Firmware overrides set by this plugin
+     *
+     * Overrides apply only if this plugin starts.
      *
      * For future compatibility, any unused bits must be set to 0.
      *
      * This is a bit field, with 1 indicating override.  Bit 0 = LSB
      * Bit 0 - Disable VBUS detect @sa ORA_OVERRIDE1_DISABLE_VBUS_DETECT
+     * Bit 1 - Set the ROM slot to boot @sa ORA_OVERRIDE1_BOOT_SLOT
+     * Bit 2 - Ignore the image select jumpers @sa ORA_OVERRIDE1_IGNORE_IMAGE_SELECT
      */
     // offset 22
     uint8_t overrides1;
 
     /**
      * @brief Plugin properties
-     * 
-     * 
-     * This is used to indicate properties of the plugin to the firmware, to
-     * allow the core firmware and firmware parses to make informed decisions
-     * about how to use the plugin.
-     * 
+     *
      * For future compatibility, any unused bits must be set to 0.
      * 
      * This is a bit field, with 1 indicating the presence of the property.
      * Bit 0 = LSB
-     * Bit 0 = supports running while USB is connected @sa ORA_PROPERTY1_SUPPORTS_USB_RUNNING
+     * Bit 0 = deprecated, has no effect @sa ORA_PROPERTY1_SUPPORTS_USB_RUNNING
      * Bit 1 = supports yielding to allow exclusive mode @sa ORA_PROPERTY1_SUPPORTS_YIELD
+     * Bit 2 = requests exclusive serial IN mode @sa ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN
+     * Bit 3 = requests the USB controller and its interrupt at launch @sa ORA_PROPERTY1_RESERVE_USB
      */
     // offset 23
     uint8_t properties1;
@@ -3563,15 +4319,110 @@ typedef struct {
     uint16_t min_fw_patch_version;
 
     /**
+     * @brief Number of bytes of USB DPRAM to reserve for a USB controller
+     *
+     * The firmware reserves this from offset 0 of USB DPRAM before either
+     * plugin starts.  Set to 0 if the plugin doesn't include a USB stack.
+     *
+     * If both plugins set this field, the firmware reserves USB DPRAM for the
+     * system plugin and doesn't start the user plugin.  The firmware doesn't
+     * start a plugin that sets a value above
+     * @ref ORA_USB_CONTROLLER_DPRAM_MAX.
+     *
+     * Firmware before 0.8.1 doesn't read this field, so a plugin setting it
+     * must set its minimum firmware version to 0.8.1 or later.
+     *
+     * @sa ora_setup_usb_fn_t
+     * @since firmware 0.8.1
+     */
+    // offset 30
+    uint16_t usb_controller_dpram_size;
+
+    /**
+     * @brief Flash address of the byte containing the number of the ROM slot to boot
+     *
+     * Set to zero unless ORA_OVERRIDE1_BOOT_SLOT is set.
+     *
+     * @since firmware 0.8.1
+     */
+    // offset 32
+    uint32_t boot_slot_addr;
+
+    /**
+     * @brief Size in bytes of log channel 2, or 0 for no channel 2
+     *
+     * Channel 2 is created before either plugin starts.  If both plugins set
+     * the size the larger size is used.
+     *
+     * A plugin isn't started if it requests more than
+     * @ref ORA_LOG_CHANNEL_2_MAX_SIZE, or if channel 2 can't be allocated.
+     *
+     * @sa ORA_LOG_CHANNEL_2
+     * @since firmware 0.8.1
+     */
+    // offset 36
+    uint16_t channel_2_size;
+
+    /**
+     * @brief Size in bytes of log channel 3, or 0 for no channel 3
+     *
+     * Channel 3 is created before either plugin starts.  If both plugins set
+     * the size the larger size is used.
+     *
+     * A plugin isn't started if it requests more than
+     * @ref ORA_LOG_CHANNEL_3_MAX_SIZE, or if channel 3 can't be allocated.
+     *
+     * @sa ORA_LOG_CHANNEL_3
+     * @since firmware 0.8.1
+     */
+    // offset 38
+    uint16_t channel_3_size;
+
+    /**
+     * @brief Address of this plugin's first peer data block, or 0 for none
+     * @see ora_peer_data_header_t
+     * @since firmware 0.8.1
+     */
+    // offset 40
+    uint32_t peer_data;
+
+    /**
+     * @brief This plugin's interrupt handler, or NULL for none
+     * @see ora_plugin_irq_handler_t
+     * @since firmware 0.8.1
+     */
+    // offset 44
+    ora_plugin_irq_handler_t irq_handler;
+
+    /**
      * @brief Reserved for future use
      *
      * This field is reserved for future use and must be set to 0.
      */
-    uint8_t reserved[226];
+    // offset 48
+    uint8_t reserved[208];
 } ora_plugin_header_t;
 #define ORA_PLUGIN_HEADER_SIZE 256  // Must not change without version bump
 #if UINTPTR_MAX == 0xFFFFFFFFu
 _Static_assert(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugin_header_t must be 256 bytes");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, plugin_type) == ORA_PLUGIN_HEADER_PLUGIN_TYPE_OFFSET,
+               "plugin_type offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, overrides1) == ORA_PLUGIN_HEADER_OVERRIDES1_OFFSET,
+               "overrides1 offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, properties1) == ORA_PLUGIN_HEADER_PROPERTIES1_OFFSET,
+               "properties1 offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, boot_slot_addr) == ORA_PLUGIN_HEADER_BOOT_SLOT_ADDR_OFFSET,
+               "boot_slot_addr offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, usb_controller_dpram_size) == ORA_PLUGIN_HEADER_USB_CONTROLLER_DPRAM_SIZE_OFFSET,
+               "usb_controller_dpram_size offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, channel_2_size) == ORA_PLUGIN_HEADER_CHANNEL_2_SIZE_OFFSET,
+               "channel_2_size offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, channel_3_size) == ORA_PLUGIN_HEADER_CHANNEL_3_SIZE_OFFSET,
+               "channel_3_size offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, peer_data) == ORA_PLUGIN_HEADER_PEER_DATA_OFFSET,
+               "peer_data offset");
+_Static_assert(__builtin_offsetof(ora_plugin_header_t, irq_handler) == ORA_PLUGIN_HEADER_IRQ_HANDLER_OFFSET,
+               "irq_handler offset");
 #endif
 
 /**
@@ -3581,6 +4432,9 @@ _Static_assert(sizeof(ora_plugin_header_t) == ORA_PLUGIN_HEADER_SIZE, "ora_plugi
 
 /** 
  * @brief Plugin property flag for USB support
+ * @deprecated This flag has no effect.  To stop One ROM entering the
+ *             bootloader when USB is connected, set
+ *             @ref ORA_OVERRIDE1_DISABLE_VBUS_DETECT.
  */
 #define ORA_PROPERTY1_SUPPORTS_USB_RUNNING (1 << 0)
 

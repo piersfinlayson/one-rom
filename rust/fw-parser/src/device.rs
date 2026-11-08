@@ -58,6 +58,8 @@ use alloc::borrow::Cow;
 #[cfg(not(feature = "std"))]
 use alloc::string::{String, ToString};
 #[cfg(not(feature = "std"))]
+use alloc::vec;
+#[cfg(not(feature = "std"))]
 use alloc::vec::Vec;
 use core::fmt;
 use core::ops::Range;
@@ -68,17 +70,18 @@ use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::{Board, BoardSize};
 use onerom_config::mcu::Variant;
 use onerom_config::pin::ReservedPins;
-use onerom_gen::{FlashChips, MIN_RESERVED_PINS_VERSION};
+use onerom_gen::{FlashChips, MIN_RESERVED_PINS_VERSION, SlotName};
 use onerom_metadata::{
     FLASH_CS1_BASE_ADDR, MaybeKnown, OneromBoardSize, OneromRomInfo, OneromRomSlot, Pointer,
-    RomSlotType, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, metadata_generation_for,
+    RomSlotType, TOTAL_FLASH_SIZE_L, TOTAL_FLASH_SIZE_M, addr_mon_min_cs_act_to_ns,
+    metadata_generation_for,
 };
 
 use crate::info::{Sdrr, SdrrRomInfo, SdrrRomSet};
 use crate::onerom::OneRom;
 use crate::readers::{MemoryReader, RegionKind};
 use crate::types::SdrrRomType;
-use crate::{ParseError, Parser};
+use crate::{ParseError, Parser, Reader};
 
 /// A One ROM's parsed state, from either firmware generation, or which other
 /// member of the One ROM family a device runs.
@@ -331,6 +334,12 @@ impl ParsedDevice {
             .then(|| ReservedPins::from_bits(header.reserved_sel_pins, header.reserved_x_pins))
     }
 
+    /// The global address monitor minimum CS-active time in nanoseconds.
+    /// `None` where it isn't set or the metadata wasn't read.
+    pub fn addr_mon_min_cs_act_ns(&self) -> Option<u16> {
+        addr_mon_min_cs_act_to_ns(self.as_schema()?.metadata()?.addr_mon_min_cs_act)
+    }
+
     /// Iterates the device's ROM slots in flash order, classified and numbered.
     ///
     /// The slot list always comes from flash (the configured set), never from
@@ -407,6 +416,65 @@ impl ParsedDevice {
         })
     }
 
+    /// Reads each slot's stored data through `reader`, in slot order, from
+    /// either flash chip. `None` for a slot without an image.
+    ///
+    /// Only a slot's own range is read. Firmware before
+    /// [`MIN_SCHEMA_VERSION`](onerom_metadata::MIN_SCHEMA_VERSION) and a Lab
+    /// don't have slots, so the list is empty.
+    pub async fn read_slots<R: Reader>(
+        &self,
+        reader: &mut R,
+    ) -> Result<Vec<Option<Vec<u8>>>, SlotReadError<R::Error>> {
+        let count = self
+            .as_schema()
+            .and_then(OneRom::metadata)
+            .map_or(0, |metadata| metadata.rom_slots.len());
+        let mut slots = Vec::with_capacity(count);
+        for slot in 0..count {
+            slots.push(self.read_slot(reader, slot).await?);
+        }
+        Ok(slots)
+    }
+
+    /// Reads one slot's stored data through `reader`, from either flash chip.
+    /// `None` for a slot without an image or a slot this device doesn't have.
+    ///
+    /// `slot` is the absolute index, counting plugins.
+    pub async fn read_slot<R: Reader>(
+        &self,
+        reader: &mut R,
+        slot: usize,
+    ) -> Result<Option<Vec<u8>>, SlotReadError<R::Error>> {
+        let Some(slots) = self
+            .as_schema()
+            .and_then(OneRom::metadata)
+            .map(|metadata| &metadata.rom_slots)
+        else {
+            return Ok(None);
+        };
+        let Some(addr) = slots.get(slot).and_then(|rom_slot| rom_slot.data.addr()) else {
+            return Ok(None);
+        };
+        let size = slots[slot].size;
+        if size as usize > TOTAL_FLASH_SIZE_L {
+            return Err(SlotReadError::TooLarge {
+                slot: SlotName::of(slots, slot),
+                size,
+            });
+        }
+        let mut data = vec![0; size as usize];
+        reader
+            .read(addr, &mut data)
+            .await
+            .map_err(|error| SlotReadError::Read {
+                slot: SlotName::of(slots, slot),
+                addr,
+                error,
+            })?;
+        Ok(Some(data))
+    }
+
     /// The flash this device's slots use, laid out as an image file whose
     /// first chip has the addresses `first`. `None` for a Lab.
     fn flash_used(&self, first: Range<u32>) -> Result<Option<FlashUsed>, ImageFileError> {
@@ -476,6 +544,15 @@ struct FlashUsed {
 /// contents from [`FLASH_CS1_BASE_ADDR`]. [`ParsedDevice::check_image_file`]
 /// checks the file against the same layout.
 pub async fn parse_image_file(data: &[u8], first: Range<u32>) -> ParsedDevice {
+    let mut reader = image_file_reader(data, first);
+    Parser::new(&mut reader).parse_device().await
+}
+
+/// A reader over an image file, laid out as [`parse_image_file`] reads it.
+///
+/// Parse with it before reading slots, as the parse sets where its flash
+/// starts.
+pub fn image_file_reader(data: &[u8], first: Range<u32>) -> MemoryReader {
     let (first_data, second_data) = data.split_at(data.len().min(first.len()));
     // The hardcoded base address looks odd here, as the STM32's base flash
     // address, but when using a memory reader, the parser will just figure it
@@ -484,7 +561,40 @@ pub async fn parse_image_file(data: &[u8], first: Range<u32>) -> ParsedDevice {
     if !second_data.is_empty() {
         reader.add_region(RegionKind::Flash, second_data.to_vec(), FLASH_CS1_BASE_ADDR);
     }
-    Parser::new(&mut reader).parse_device().await
+    reader
+}
+
+/// A slot whose data [`ParsedDevice::read_slots`] couldn't read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SlotReadError<E> {
+    /// The reader failed.
+    Read {
+        /// The slot.
+        slot: SlotName,
+        /// The slot's data address.
+        addr: u32,
+        /// The reader's error.
+        error: E,
+    },
+    /// The slot's size is larger than any One ROM's flash.
+    TooLarge {
+        /// The slot.
+        slot: SlotName,
+        /// The slot's size in bytes.
+        size: u32,
+    },
+}
+
+impl<E: fmt::Display> fmt::Display for SlotReadError<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { slot, addr, error } => {
+                write!(f, "{slot}'s data at {addr:#010x} couldn't be read: {error}")
+            }
+            Self::TooLarge { slot, size } => write!(f, "{slot} is too large: {size} bytes"),
+        }
+    }
 }
 
 /// Why an image file isn't laid out as One ROM's tools write one.

@@ -1,0 +1,69 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "24-min-cs-act-multi",
+    "description": "Address monitor minimum CS-active time test for multi-ROM sets",
+    "categories": [
+    ],
+    "addr_mon_min_cs_act_ns": 140,
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2364 with the global minimum",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "Two 2364s with the global minimum",
+            "chips": [
+                {
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low"
+                },
+                {
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2364",
+                    "cs1": "active_low",
+                    "size_handling": "truncate"
+                }
+            ]
+        },
+        {
+            "type": "multi",
+            "description": "Three 2364s with their own minimum at 200MHz",
+            "chips": [
+                {
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2364",
+                    "cs1": "active_high"
+                },
+                {
+                    "file": "images/test/rand_16KB.rom",
+                    "type": "2364",
+                    "cs1": "active_high",
+                    "size_handling": "truncate"
+                },
+                {
+                    "file": "images/test/rand_32KB.rom",
+                    "type": "2364",
+                    "cs1": "active_high",
+                    "size_handling": "truncate"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "200MHz",
+                    "overclock": true,
+                    "addr_mon_min_cs_act_ns": 400
+                }
+            }
+        }
+    ]
+}

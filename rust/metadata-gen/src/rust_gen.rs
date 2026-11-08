@@ -27,7 +27,9 @@ pub fn generate(schema: &Schema) -> String {
     let mut out = String::with_capacity(128 * 1024);
     push_file_header(&mut out, schema);
     push_generations(&mut out, schema);
+    push_firmware_release(&mut out, schema);
     push_constants(&mut out, schema);
+    push_metadata_keys(&mut out, schema);
     push_metadata_generation_table(&mut out, schema);
     push_type_aliases(&mut out, schema);
     push_enums(&mut out, schema);
@@ -174,6 +176,17 @@ fn release_struct(schema: &Schema) -> Option<&str> {
         return None;
     }
     schema.struct_in_slot(SLOT_INFO).map(|s| s.name.as_str())
+}
+
+/// Emit `[schema] firmware_release` as `FIRMWARE_RELEASE`.
+fn push_firmware_release(out: &mut String, schema: &Schema) {
+    let (major, minor, patch) = release_parts(&schema.schema.firmware_release)
+        .expect("validate_release_strings has already refused a malformed release");
+    out.push_str(&format!(
+        "/// The schema's firmware release.\n\
+         pub const FIRMWARE_RELEASE: FirmwareVersion = \
+         FirmwareVersion::new({major}, {minor}, {patch}, 0);\n\n"
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -392,10 +405,22 @@ fn emit_field_parse_offset(out: &mut String, field: &Field, indent: &str, schema
 
         "inline_array" => {
             let n = field.count.unwrap_or(0);
-            let total = n as usize * prim_size(field.element.as_deref().unwrap_or("u8"));
-            out.push_str(&format!(
-                "{indent}let {name} = view.read_bytes::<{n}>(offset)?; offset += {total};\n"
-            ));
+            let element = field.element.as_deref().unwrap_or("u8");
+            let size = prim_size(element);
+            let total = n as usize * size;
+            if size == 1 {
+                out.push_str(&format!(
+                    "{indent}let {name} = view.read_bytes::<{n}>(offset)?; offset += {total};\n"
+                ));
+            } else {
+                out.push_str(&format!(
+                    "{indent}let mut {name} = [0{element}; {n}];\n\
+                     {indent}for (i, e) in {name}.iter_mut().enumerate() {{\n\
+                     {indent}    *e = view.read_{element}_le(offset + (i * {size}) as u32)?;\n\
+                     {indent}}}\n\
+                     {indent}offset += {total};\n"
+                ));
+            }
             // Optional magic validation: compare the leading bytes against
             // the generated constants named. More than one name means the
             // value changed between firmware generations, and every value
@@ -610,7 +635,7 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
 
             if !nullable {
                 out.push_str(&format!(
-                    "{indent}if {name}_outer == 0 {{\n\
+                    "{indent}if {name}_outer == 0 || {name}_outer == 0xFFFF_FFFF {{\n\
                      {indent}    return Err(ParseError::NullPointer {{ field: \"{name}\" }});\n\
                      {indent}}}\n"
                 ));
@@ -618,7 +643,9 @@ fn emit_array_loop_body(out: &mut String, field: &Field, indent: &str, schema: &
             out.push_str(&format!("{indent}let mut {name} = Vec::new();\n"));
 
             let li = if nullable {
-                out.push_str(&format!("{indent}if {name}_outer != 0 {{\n"));
+                out.push_str(&format!(
+                    "{indent}if {name}_outer != 0 && {name}_outer != 0xFFFF_FFFF {{\n"
+                ));
                 format!("{indent}    ")
             } else {
                 indent.to_string()
@@ -770,6 +797,32 @@ fn push_constants(out: &mut String, schema: &Schema) {
     }
 
     push_constant_table(out, schema);
+}
+
+/// Emit `metadata_key`, a constant per plugin key.
+fn push_metadata_keys(out: &mut String, schema: &Schema) {
+    let keys = schema.plugin_keys();
+    if keys.is_empty() {
+        return;
+    }
+    out.push_str(
+        "// ---------------------------------------------------------------------------\n\
+         // Plugin metadata keys\n\
+         // ---------------------------------------------------------------------------\n\n\
+         /// The `ora_metadata_key_t` values.\n\
+         pub mod metadata_key {\n",
+    );
+    for entry in &keys {
+        if let Some(comment) = entry.comment {
+            push_doc_comment(out, "    ", comment);
+            out.push_str("    ///\n");
+        }
+        out.push_str(&format!(
+            "    /// Since firmware {}.\n    pub const {}: u32 = {:#X};\n\n",
+            entry.key.first_release, entry.key.name, entry.key.id
+        ));
+    }
+    out.push_str("}\n\n");
 }
 
 /// Emit the `[[versions]]` entries for the metadata header, as the release
@@ -971,6 +1024,9 @@ fn push_enum(out: &mut String, e: &Enum) {
         "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]\n",
     );
     out.push_str(&format!("#[repr({repr})]\n"));
+    if e.non_exhaustive {
+        out.push_str("#[non_exhaustive]\n");
+    }
     out.push_str(&format!("pub enum {tn} {{\n"));
     for v in e.variants.iter().filter(|v| !v.is_sentinel()) {
         if let Some(doc) = v.documentation() {
@@ -1655,11 +1711,12 @@ pub fn rust_default_expr(field: &Field, schema: &Schema, release: &str) -> Strin
         "struct_array_ptr" | "struct_ptr_array_ptr" => return "Vec::new()".to_string(),
         "opaque_ptr" | "fn_ptr" => return "Pointer::Null".to_string(),
         "inline_array" => {
+            let element = field.element.as_deref().unwrap_or("u8");
             return format!(
                 "[{}]",
                 array_default_elements(field)
                     .iter()
-                    .map(|b| format!("{b}u8"))
+                    .map(|b| format!("{b}{element}"))
                     .collect::<Vec<_>>()
                     .join(", ")
             );
@@ -1953,6 +2010,9 @@ fn push_tagged_fam(out: &mut String, tf: &TaggedFam, schema: &Schema) {
     };
     out.push_str(derives);
     out.push('\n');
+    if tf.non_exhaustive {
+        out.push_str("#[non_exhaustive]\n");
+    }
     out.push_str(&format!("pub enum {tn} {{\n"));
 
     for v in &tf.variants {

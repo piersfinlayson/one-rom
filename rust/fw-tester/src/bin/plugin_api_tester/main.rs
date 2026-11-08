@@ -195,6 +195,21 @@ fn add_gpio_set_x_pin(report: &mut ApiReport, emulator: &Emulator, board: Board)
     }
 }
 
+/// Run `test_gpio_claims_x_pin` where the board has a dual-wired X pin.
+fn add_gpio_claims_x_pin(report: &mut ApiReport, emulator: &Emulator, board: Board) {
+    if tests::claim::dual_wired_x_pins(board).is_empty() {
+        report.skip(
+            "gpio_claims_x_pin",
+            "the board has no X pin wired to two GPIOs",
+        );
+    } else {
+        report.add(
+            "gpio_claims_x_pin",
+            tests::claim::test_gpio_claims_x_pin(emulator, board),
+        );
+    }
+}
+
 /// Boot the firmware with chip set `set_idx` selected and run only the GPIO
 /// classification test against it.
 ///
@@ -220,6 +235,7 @@ fn run_slot_gpio_only(
         tests::gpio::test_gpio_use(&emulator, config, board, fw_version, base_dir, set_idx),
     );
     add_gpio_set_x_pin(report, &emulator, board);
+    add_gpio_claims_x_pin(report, &emulator, board);
     report.skip(
         "serving and slot tests",
         "serving of a Multi/Banked slot is covered by the pio-tester",
@@ -286,6 +302,22 @@ fn run_slot(
         tests::info::test_metadata_flash_sizes(&emulator, board),
     );
     report.add(
+        "metadata_chip_id",
+        tests::info::test_metadata_chip_id(&emulator),
+    );
+    report.add(
+        "metadata_clk_peri_hz",
+        tests::info::test_metadata_clk_peri_hz(&emulator),
+    );
+    report.add(
+        "commissioning_value",
+        tests::commissioning::test_commissioning_value(&emulator),
+    );
+    report.add(
+        "commissioning_instance",
+        tests::commissioning::test_commissioning_instance(&emulator),
+    );
+    report.add(
         "metadata_uint_at",
         tests::info::test_metadata_uint_at(&emulator, config, board, fw_version, base_dir),
     );
@@ -301,12 +333,47 @@ fn run_slot(
         "plugin_uptime_raw_read",
         tests::time::test_plugin_uptime_raw_read(&emulator),
     );
+    report.add("reboot_modes", tests::reboot::test_reboot_modes(&emulator));
+    report.add("reboot_delay", tests::reboot::test_reboot_delay(&emulator));
+    report.add(
+        "reboot_rejects",
+        tests::reboot::test_reboot_rejects(&emulator),
+    );
+    report.add(
+        "reboot_bootrom_fails",
+        tests::reboot::test_reboot_bootrom_fails(&emulator),
+    );
+    report.add(
+        "reboot_bootsel",
+        tests::reboot::test_reboot_bootsel(&emulator),
+    );
 
     // Platform: memory, clocks, peripherals and the cooperative yield.
     report.add(
         "no_allocator",
         tests::platform::test_no_allocator(&emulator),
     );
+    report.add("alloc_mem", tests::platform::test_alloc_mem(&emulator));
+    report.add("peer_data", tests::peer::test_peer_data(&emulator));
+    report.add("hw_claims", tests::claim_hw::test_hw_claims(&emulator));
+    report.add("irq_claims", tests::claim_hw::test_irq_claims(&emulator));
+    report.add(
+        "set_irq_enabled",
+        tests::claim_hw::test_set_irq_enabled(&emulator),
+    );
+    report.add(
+        "usb_reservation",
+        tests::claim_hw::test_usb_reservation(&emulator),
+    );
+    report.add(
+        "pio_claims",
+        tests::claim::test_pio_claims(&emulator, tests::led::has_rgb(&emulator)),
+    );
+    if tests::led::has_rgb(&emulator) {
+        report.add("pio_led_claim", tests::claim::test_pio_led_claim(&emulator));
+    } else {
+        report.skip("pio_led_claim", "board has no RGB LED");
+    }
     report.add(
         "peripheral_and_irq_calls",
         tests::platform::test_peripheral_and_irq_calls(&emulator, tests::gpio::max_gpios(board)),
@@ -337,6 +404,10 @@ fn run_slot(
     report.add(
         "lookup_coverage",
         tests::lookup::test_lookup_coverage(&emulator, base_dir),
+    );
+    report.add(
+        "gpio_uses_fit_usb_entry",
+        tests::gpio::test_gpio_uses_fit_usb_entry(base_dir),
     );
 
     // Plugin context
@@ -369,6 +440,14 @@ fn run_slot(
     report.add(
         "log_absent_channel",
         tests::log::test_absent_channel_is_rejected(&emulator),
+    );
+    report.add(
+        "log_claims_in_runtime_info",
+        tests::log::test_claims_are_in_runtime_info(&emulator),
+    );
+    report.add(
+        "log_ring_set_buffer_refusals",
+        tests::log::test_ring_set_buffer_refusals(&emulator),
     );
     report.add(
         "log_channel_1_independent",
@@ -413,6 +492,11 @@ fn run_slot(
         "is_pin_output",
         tests::gpio::test_is_pin_output(&emulator, board),
     );
+    report.add(
+        "gpio_claims",
+        tests::claim::test_gpio_claims(&emulator, board),
+    );
+    add_gpio_claims_x_pin(report, &emulator, board);
 
     // Mapping
     report.add(
@@ -444,6 +528,18 @@ fn run_slot(
     report.add(
         "flash_slot_ext_info",
         tests::slots::test_flash_slot_ext_info(&emulator, config),
+    );
+    report.add(
+        "flash_slot_addr",
+        tests::slots::test_flash_slot_addr(&emulator, config, board, fw_version, base_dir),
+    );
+    report.add(
+        "flash_slot_addr_on_cs1",
+        tests::slots::test_flash_slot_addr_on_cs1(&emulator, board),
+    );
+    report.add(
+        "flash_slot_addr_no_image",
+        tests::slots::test_flash_slot_addr_no_image(&emulator),
     );
     report.add(
         "ram_slot_count",
@@ -486,6 +582,7 @@ fn run_slot(
             }
         })
         .unwrap_or(8);
+    emulator.poison_unclaimed_pio();
     emulator.setup_epio(word_size);
     emulator.step_cycles(timing::CYCLES_BEFORE_START);
 
@@ -674,6 +771,17 @@ fn run_slot(
     } else {
         report.skip("led_rgb_defaults", "board has no RGB LED");
     }
+
+    // Last, so it covers everything above.
+    report.add(
+        "unclaimed_pio",
+        match emulator.unclaimed_pio_used() {
+            Some(block) => Err(format!(
+                "the firmware wrote or ran an unclaimed instruction in PIO block {block}"
+            )),
+            None => Ok(()),
+        },
+    );
 
     // `emulator` dropped here; Drop impl frees the epio handle before the next
     // slot boots.

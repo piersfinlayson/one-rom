@@ -1,5 +1,4 @@
-// One ROM OTP reads at boot - the board OTP commissions the chip as, the flash
-// chip sizes and the board size.  docs/OTP.md describes the rows.
+// One ROM OTP handling.
 
 // Copyright (C) 2026 Piers Finlayson <piers@piers.rocks>
 //
@@ -7,26 +6,34 @@
 
 #include "include.h"
 
-// The row after the commissioning area's last.
+// First row after the commissioning area.
 #define AREA_END ((uint16_t)(OTP_COMMISSIONING_AREA_LAST_ROW + 1))
+
+// The chip ID is in OTP rows 0 to 3, least significant row first.
+#define OTP_CHIP_ID_ROWS 4u
 
 // The first page boundary after `row`.
 static uint16_t page_after(uint16_t row) {
     return (uint16_t)((row / OTP_PAGE_ROWS + 1) * OTP_PAGE_ROWS);
 }
 
-// Finds COMMISSIONING_BOARD in the last complete commissioning instance.
-// Returns 1, with the value's first row and its length in bytes, where there
-// is one.
+// Finds the last complete commissioning instance.  `first_out` is set to its
+// magic row and `end_out` to the row after its signature entry.
+// `unsupported_out` is set to the version row of an instance with an
+// unsupported version, and otherwise to 0.
 //
-// Walks the commissioning area as docs/OTP.md lays it out, and checks
-// nothing beyond what finding the board needs - the host tools check
-// commissioning data.  Anything the layout doesn't expect returns 0, so the
-// firmware boots.
-uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out) {
+// Returns 0 if:
+// - the commissioning area doesn't contain a complete instance
+// - the commissioning area contains an instance with an unsupported version
+// - the commissioning area isn't laid out as expected.  Returning 0 allows
+//   the firmware to boot.
+static uint8_t current_instance(
+    uint16_t *first_out,
+    uint16_t *end_out,
+    uint16_t *unsupported_out
+) {
     uint8_t found = 0;
-    uint16_t board_row = 0;
-    uint16_t board_len = 0;
+    *unsupported_out = 0;
 
     uint16_t boundary = OTP_COMMISSIONING_AREA_FIRST_ROW;
     while (boundary < AREA_END) {
@@ -43,10 +50,6 @@ uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out) {
         uint16_t version = otp_read_ecc(boundary + 1);
         uint16_t last_row = boundary + 1;
         if (version == OTP_STORE_VERSION) {
-            uint8_t complete = 0;
-            uint8_t has_board = 0;
-            uint16_t this_row = 0;
-            uint16_t this_len = 0;
             uint16_t row = boundary + 2;
             while (1) {
                 // An instance interrupted in the area's last page can fill it.
@@ -57,9 +60,9 @@ uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out) {
                 if (row + 1 >= AREA_END) {
                     return 0;
                 }
-                uint16_t key = otp_read_ecc(row);
+                uint16_t entry_key = otp_read_ecc(row);
                 uint16_t len = otp_read_ecc(row + 1);
-                if ((key == OTP_KEY_NONE) && (len == 0)) {
+                if ((entry_key == OTP_KEY_NONE) && (len == 0)) {
                     last_row = row + 1;
                     break;
                 }
@@ -67,34 +70,104 @@ uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out) {
                 if (next > AREA_END) {
                     return 0;
                 }
-                if (key == OTP_KEY_COMMISSIONING_BOARD) {
-                    has_board = 1;
-                    this_row = row + 2;
-                    this_len = len;
-                } else if (key == OTP_KEY_COMMISSIONING_SIG) {
-                    complete = 1;
+                if (entry_key == OTP_KEY_COMMISSIONING_SIG) {
+                    found = 1;
+                    *first_out = boundary;
+                    *end_out = (uint16_t)next;
                     last_row = (uint16_t)(next - 1);
                     break;
                 }
                 row = (uint16_t)next;
             }
-            if (complete) {
-                found = has_board;
-                board_row = this_row;
-                board_len = this_len;
-            }
         } else if (version != 0) {
+            *unsupported_out = boundary + 1;
             return 0;
         }
 
         boundary = page_after(last_row);
     }
 
-    if (found) {
-        *row_out = board_row;
-        *len_out = board_len;
+    return found;
+}
+
+// Retrieves `key`'s value from the last complete commissioning instance.
+// `row_out` is set to the value's first row and `len_out` to its length in
+// bytes.  Returns 0 if the instance doesn't contain `key`.
+//
+// For COMMISSIONING_VERSION_KEY it retrieves the instance's version.  If the
+// commissioning area contains an instance with an unsupported version it
+// retrieves that version for COMMISSIONING_VERSION_KEY and returns 0 for any
+// other key.
+//
+// Returns 0 if the commissioning area isn't laid out as expected so the
+// firmware boots.
+uint8_t otp_commissioning_value(uint16_t key, uint16_t *row_out, uint16_t *len_out) {
+    if (key == OTP_KEY_NONE) {
+        return 0;
+    }
+
+    uint16_t first;
+    uint16_t end;
+    uint16_t unsupported;
+    if (!current_instance(&first, &end, &unsupported)) {
+        if ((unsupported != 0) && (key == COMMISSIONING_VERSION_KEY)) {
+            *row_out = unsupported;
+            *len_out = sizeof(uint16_t);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (key == COMMISSIONING_VERSION_KEY) {
+        *row_out = first + 1;
+        *len_out = sizeof(uint16_t);
+        return 1;
+    }
+
+    // current_instance() checked that every entry fits.  The last entry with
+    // `key` is used.
+    uint8_t found = 0;
+    for (uint16_t row = first + 2; row < end;) {
+        uint16_t entry_key = otp_read_ecc(row);
+        uint16_t len = otp_read_ecc(row + 1);
+        if (entry_key == key) {
+            found = 1;
+            *row_out = row + 2;
+            *len_out = len;
+        }
+        row = (uint16_t)(row + 2 + (len + 1) / 2);
     }
     return found;
+}
+
+// Retrieves the last complete commissioning instance.  `row_out` is set to its
+// magic row and `len_out` to its length in bytes, up to the end of its
+// signature entry.  Returns 0 in the same cases as current_instance().
+uint8_t otp_commissioning_instance(uint16_t *row_out, uint16_t *len_out) {
+    uint16_t first;
+    uint16_t end;
+    uint16_t unsupported;
+    if (!current_instance(&first, &end, &unsupported)) {
+        return 0;
+    }
+    *row_out = first;
+    *len_out = (uint16_t)(2 * (end - first));
+    return 1;
+}
+
+uint8_t otp_commissioned_board(uint16_t *row_out, uint16_t *len_out) {
+    return otp_commissioning_value(OTP_KEY_COMMISSIONING_BOARD, row_out, len_out);
+}
+
+// Retrieves byte `index` of the chip ID.  Byte 0 is the most significant.
+// Returns 0 if `index` is beyond the last byte.
+uint8_t otp_chip_id_byte(uint32_t index, uint8_t *byte_out) {
+    if (index >= 2 * OTP_CHIP_ID_ROWS) {
+        return 0;
+    }
+    uint16_t value = otp_read_ecc((uint16_t)(OTP_CHIP_ID_ROWS - 1 - index / 2));
+    *byte_out = (uint8_t)((index & 1) ? value : (value >> 8));
+    return 1;
 }
 
 // Whether OTP commissions the chip as a board other than `hw_rev`, which it

@@ -18,6 +18,7 @@ use crate::device::{Address, BoardDetails, Client, Device, DeviceType};
 use crate::hw::HardwareInfo;
 use crate::internal_error;
 use crate::studio::RuntimeInfo;
+use onerom_app::ReadBack;
 
 const REBOOT_DELAY: Duration = Duration::from_millis(1000);
 
@@ -65,6 +66,13 @@ pub enum Message {
         hw_info: HardwareInfo,
     },
     BoardDetailsRead(Client, BoardDetails),
+
+    // Read a One ROM back into the config that builds it
+    ReadBack {
+        client: Client,
+        hw_info: HardwareInfo,
+    },
+    ReadBackResult(Client, Result<ReadBack, String>),
 
     RebootDevice {
         client: Client,
@@ -136,6 +144,13 @@ impl std::fmt::Display for Message {
             Message::ReadBoardDetails { client, hw_info } => {
                 write!(f, "ReadBoardDetails(client={client}, hw_info={hw_info})")
             }
+            Message::ReadBack { client, hw_info } => {
+                write!(f, "ReadBack(client={client}, hw_info={hw_info})")
+            }
+            Message::ReadBackResult(client, result) => match result {
+                Ok(_) => write!(f, "ReadBackResult(client={client}, Ok)"),
+                Err(e) => write!(f, "ReadBackResult(client={client}, Err: {e})"),
+            },
             Message::BoardDetailsRead(client, details) => {
                 write!(f, "BoardDetailsRead(client={client}, {details:?})")
             }
@@ -293,6 +308,21 @@ pub fn handle_message(
             assert_eq!(client, Client::Analyse);
             device.operating = None;
             Task::done(AnalyseMessage::ReadFailed(error).into())
+        }
+        Message::ReadBack { client, hw_info } => {
+            debug!("{client} Reading back device");
+            if client != Client::Analyse {
+                internal_error!("Device load requested by unsupported client: {client}");
+                return Task::none();
+            }
+            device.operating = Some(client.clone());
+            device.selected.read_back(client, hw_info)
+        }
+        Message::ReadBackResult(client, result) => {
+            debug!("{client} Device read back complete");
+            assert_eq!(client, Client::Analyse);
+            device.operating = None;
+            Task::done(AnalyseMessage::ReadBackResult(result).into())
         }
         Message::ReadBoardDetails { client, hw_info } => {
             debug!("{client} Reading board details");

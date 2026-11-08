@@ -78,24 +78,23 @@ static pb_status_t app_range_logical_rom_read_prepare(uint32_t addr, uint32_t le
 static pb_status_t app_range_logical_rom_read(uint32_t addr, uint8_t *buf, uint32_t len, void *ctx);
 static pb_status_t app_range_logical_rom_write_prepare(uint32_t addr, uint32_t len, bool *is_flash, void *ctx);
 static pb_status_t app_range_logical_rom_write(uint32_t addr, const uint8_t *buf, uint32_t len, void *ctx);
+static pb_status_t app_range_usb_dpram_read_prepare(uint32_t addr, uint32_t len, void *ctx);
+static pb_status_t app_range_usb_dpram_read(uint32_t addr, uint8_t *buf, uint32_t len, void *ctx);
 
 // Handlers tried in order.  Each prepare returns PB_STATUS_OK if it owns
 // the range, PB_STATUS_NOT_FOUND to continue, or another error to reject.
 static const app_read_range_entry_t k_custom_read_ranges[] = {
     { app_range_logical_rom_read_prepare, app_range_logical_rom_read },
+    { app_range_usb_dpram_read_prepare, app_range_usb_dpram_read },
 };
 static const app_write_range_entry_t k_custom_write_ranges[] = {
     { app_range_logical_rom_write_prepare, app_range_logical_rom_write },
 };
 
-#define APP_CUSTOM_RANGE_COUNT \
+#define APP_CUSTOM_READ_RANGE_COUNT \
     (sizeof(k_custom_read_ranges) / sizeof(k_custom_read_ranges[0]))
-
-_Static_assert(
-    sizeof(k_custom_read_ranges) / sizeof(k_custom_read_ranges[0]) ==
-    sizeof(k_custom_write_ranges) / sizeof(k_custom_write_ranges[0]),
-    "read and write range tables must be the same size"
-);
+#define APP_CUSTOM_WRITE_RANGE_COUNT \
+    (sizeof(k_custom_write_ranges) / sizeof(k_custom_write_ranges[0]))
 
 #endif // USB_PICOBOOTX_IMPL
 

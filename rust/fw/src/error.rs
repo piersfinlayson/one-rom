@@ -10,6 +10,7 @@ use onerom_config::Error as ConfigError;
 use onerom_gen::Error as GenError;
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Error {
     Config {
         details: String,
@@ -42,15 +43,6 @@ pub enum Error {
         error: SerdeJsonError,
     },
     ReleaseNotFound,
-    TooLarge {
-        portion: String,
-        size: usize,
-        max: usize,
-    },
-    FileWrite {
-        file: String,
-        error: std::io::Error,
-    },
     LicenseNotAccepted,
     Zip {
         file: String,
@@ -69,10 +61,10 @@ impl std::fmt::Display for Error {
             Error::Config { details } => write!(f, "Configuration error.\n  {details}"),
             Error::Read { file, error } => write!(f, "Error reading file {file}.\n  {error}"),
             Error::Parse { error } => {
-                write!(f, "Hit error parsing supplied configuration.\n  {error}")
+                write!(f, "Hit an error parsing supplied configuration.\n  {error}")
             }
-            Error::Build { error } => write!(f, "Hit error building firmware.\n  {error}"),
-            Error::License { error } => write!(f, "Hit error processing a license.\n  {error}"),
+            Error::Build { error } => write!(f, "Hit an error building firmware.\n  {error}"),
+            Error::License { error } => write!(f, "Hit an error processing a license.\n  {error}"),
             Error::FirmwareVersion { error } => match error {
                 ConfigError::InvalidFirmwareVersion => {
                     write!(f, "Invalid firmware version supplied")
@@ -82,27 +74,18 @@ impl std::fmt::Display for Error {
                 }
             },
             Error::Network { url, error } => {
-                write!(f, "Hit network error accessing URL {url}.\n  {error}")
+                write!(f, "Hit a network error accessing URL {url}.\n  {error}")
             }
             Error::Http { url, status } => {
                 write!(
                     f,
-                    "Hit HTTP error accessing URL {url}.\n  Status code {status}"
+                    "Hit an HTTP error accessing URL {url}.\n  Status code {status}"
                 )
             }
             Error::Json { error } => {
                 write!(f, "Hit an error parsing the supplied JSON file.\n  {error}")
             }
             Error::ReleaseNotFound => write!(f, "Requested firmware release not found."),
-            Error::TooLarge { portion, size, max } => {
-                write!(
-                    f,
-                    "Hit an error: {portion} size {size} exceeds maximum of {max}."
-                )
-            }
-            Error::FileWrite { file, error } => {
-                write!(f, "Hit an error writing file {file}.\n  {error}")
-            }
             Error::LicenseNotAccepted => write!(f, "License not accepted by user"),
             Error::Zip { file, error } => {
                 write!(f, "Hit an error extracting zip file {file}.\n  {error}")
@@ -144,12 +127,6 @@ impl Error {
     }
     pub fn release_not_found() -> Self {
         Self::ReleaseNotFound
-    }
-    pub fn too_large(portion: String, size: usize, max: usize) -> Self {
-        Self::TooLarge { portion, size, max }
-    }
-    pub fn write(file: String, error: std::io::Error) -> Self {
-        Self::FileWrite { file, error }
     }
     pub fn license_not_accepted() -> Self {
         Self::LicenseNotAccepted

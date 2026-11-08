@@ -6,18 +6,18 @@
 # A One ROM's owner raises a signing request with onerom hardware
 # request-signature, which prints a link to the signing-request issue form
 # filled in with the One ROM's Chip ID, board type, board size and
-# manufacturer. This script
-# reads the issue and signs it with piers.rocks's Community key through
-# onerom hardware sign, which prompts for the key's PIN unless --pin is used,
-# and for confirmation.
+# manufacturer, and the CLI's version. This script reads the issue and signs
+# it with piers.rocks's Community key through onerom hardware sign, which
+# prompts for the key's PIN unless --pin is used, and for confirmation.
 # Once signed it posts the hardware commission command the owner runs and
 # the hardware validate command that checks the result, then closes the issue
 # as completed.
 #
 # An issue is rejected where a field is missing, the Chip ID isn't 16 hex
-# digits or the manufacturer isn't onerom.org. It is also rejected where
-# onerom hardware sign exits with code 2 for an invalid board type or board
-# size, so board types and sizes are checked only by the CLI. The comment
+# digits, the manufacturer isn't onerom.org or the CLI version isn't
+# MIN_CLI_VERSION or later. It is also rejected where onerom hardware sign
+# exits with code 2 for an invalid board type or board size, so board types
+# and sizes are checked only by the CLI. The comment
 # lists the reasons and how to raise a new request, and the issue is closed as
 # not planned. A closed issue is left alone. When onerom hardware sign fails
 # in any other way or isn't confirmed nothing is posted and the issue stays
@@ -41,12 +41,18 @@ REPO="piersfinlayson/one-rom"
 MANUFACTURER="onerom.org"
 KEY_ID=2
 
+# The oldest CLI that signs, and whose requests are signed. A CLI before v0.6.0
+# leaves the board size out of the signed data, so a signature fails to
+# commission where one CLI is before v0.6.0 and the other isn't.
+MIN_CLI_VERSION="0.6.0"
+
 # The issue form's labels. GitHub writes each field's value beneath its label
 # in an issue's body. A test in onerom-cli checks them against the form.
 CHIP_ID_LABEL="Chip ID"
 BOARD_LABEL="Board type"
 SIZE_LABEL="Board size"
 MANUFACTURER_LABEL="Manufacturer"
+CLI_VERSION_LABEL="CLI version"
 
 usage() {
     echo "usage: $0 [--pin PIN] ISSUE" >&2
@@ -99,6 +105,12 @@ done
     echo "$(command -v "$ONEROM") doesn't support \`hardware sign\`." >&2
     exit 1
 }
+version=$("$ONEROM" --version | awk '{print $2}')
+version=${version#v}
+printf '%s\n' "$MIN_CLI_VERSION" "$version" | sort -V -C || {
+    echo "$(command -v "$ONEROM") is $version. Signing requires $MIN_CLI_VERSION or later." >&2
+    exit 1
+}
 [ -n "${ONEROM_GITHUB_TOKEN:-}" ] || {
     echo "ONEROM_GITHUB_TOKEN isn't set." >&2
     exit 1
@@ -112,14 +124,16 @@ done
 github() {
     local args=(-sS -w '\n%{http_code}' -X "$2"
         -H "Accept: application/vnd.github+json"
-        -H "Authorization: Bearer $ONEROM_GITHUB_TOKEN"
         -H "X-GitHub-Api-Version: 2022-11-28")
     [ $# -lt 4 ] || args+=(--data "$4")
     local response error
     # curl's own error, for example a host it couldn't resolve, goes into the
     # message rather than above it.
     error=$(mktemp)
-    response=$(curl "${args[@]}" "https://api.github.com/repos/$REPO/issues/$ISSUE$3" 2>"$error") || {
+    # The token is read from a pipe so it isn't on curl's command line.
+    response=$(curl "${args[@]}" \
+        -H @<(printf 'Authorization: Bearer %s\n' "$ONEROM_GITHUB_TOKEN") \
+        "https://api.github.com/repos/$REPO/issues/$ISSUE$3" 2>"$error") || {
         echo "Failed to $1: $(sed 's/^curl: //' "$error")" >&2
         rm -f "$error"
         exit 1
@@ -185,6 +199,7 @@ chip_id=$(field "$CHIP_ID_LABEL")
 board=$(field "$BOARD_LABEL")
 size=$(field "$SIZE_LABEL")
 manufacturer=$(field "$MANUFACTURER_LABEL")
+cli_version=$(field "$CLI_VERSION_LABEL")
 
 # Why the request can't be signed, a line each.
 reasons=()
@@ -199,6 +214,12 @@ if [ -z "$manufacturer" ]; then
     reasons+=("$MANUFACTURER_LABEL is missing.")
 elif [ "$manufacturer" != "$MANUFACTURER" ]; then
     reasons+=("$MANUFACTURER_LABEL isn't $MANUFACTURER.")
+fi
+# A CLI from before the CLI version field leaves it empty, so an empty one is
+# too old.
+if ! [[ "$cli_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+    ! printf '%s\n' "$MIN_CLI_VERSION" "$cli_version" | sort -V -C; then
+    reasons+=("$CLI_VERSION_LABEL isn't $MIN_CLI_VERSION or later. Update the One ROM CLI first.")
 fi
 
 # Closes the issue as not planned with a comment giving each of its

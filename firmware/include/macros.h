@@ -85,6 +85,16 @@
 #define REAL_HARDWARE    1
 #endif // TEST_BUILD
 
+// Marks a function to be optimised for size rather than speed.  Use it only on
+// a function that isn't on a timing-critical path, for example a plugin API
+// call a plugin makes during setup.  Test builds may use Clang, which doesn't
+// support the attribute, so it applies to the device build only.
+#if REAL_HARDWARE
+#define SIZE_OPTIMISED __attribute__((optimize("Os")))
+#else // !REAL_HARDWARE
+#define SIZE_OPTIMISED
+#endif // REAL_HARDWARE
+
 #if !defined(STATIC_ASSERT)
 #if !defined(TEST_BUILD) && !defined(__INTELLISENSE__)
 #include <assert.h>

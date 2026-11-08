@@ -96,7 +96,7 @@ pub struct SelfDownloadArgs {
     )]
     pub output: Option<String>,
 
-    /// Output directory. Uses the published filename within the given directory.
+    /// Output directory. Uses the published filename within the provided directory.
     #[arg(long, value_name = "DIR", conflicts_with = "output")]
     pub path: Option<String>,
 

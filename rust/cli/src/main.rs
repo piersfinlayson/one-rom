@@ -23,6 +23,7 @@ mod plugin;
 mod program;
 #[cfg(test)]
 mod review;
+mod save;
 mod scan;
 mod self_cmd;
 mod signing_request;
@@ -51,10 +52,63 @@ use onerom_cli::Error;
 
 #[tokio::main]
 async fn main() {
+    end_quietly_on_closed_pipe();
     if let Err(e) = sub_main().await {
         eprintln!("Failed to execute command.\n{e}");
         std::process::exit(1);
     }
+}
+
+/// Ends the CLI quietly when the program reading its output exits early, for
+/// example `head` in `onerom inspect slots | head`.
+///
+/// Rust starts a program with SIGPIPE ignored, so a write to the closed pipe
+/// fails and `println!` panics. Unix gets the default SIGPIPE action back,
+/// which ends the process on any write to the pipe, including one whose error
+/// is returned rather than panicking. Windows doesn't have SIGPIPE, so a panic
+/// hook ends the process there. The hook is installed on every platform, so
+/// the code Windows runs is tested on Unix. macOS can also deliver SIGPIPE to
+/// another thread after the failed write returns, and the hook then ends the
+/// process first.
+fn end_quietly_on_closed_pipe() {
+    restore_sigpipe();
+    exit_on_closed_pipe_panic();
+}
+
+#[cfg(unix)]
+fn restore_sigpipe() {
+    // SAFETY: SIG_DFL isn't a handler, so code doesn't run on the signal.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_sigpipe() {}
+
+fn exit_on_closed_pipe_panic() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if info.payload_as_str().is_some_and(is_closed_pipe_panic) {
+            std::process::exit(1);
+        }
+        default(info);
+    }));
+}
+
+/// Whether `message` is std's `print!` or `eprint!` panic on a closed pipe.
+/// The panic contains the error's text but not the error, so the OS error code
+/// is parsed from the text.
+fn is_closed_pipe_panic(message: &str) -> bool {
+    message
+        .strip_prefix("failed printing to stdout: ")
+        .or_else(|| message.strip_prefix("failed printing to stderr: "))
+        .and_then(|error| error.strip_suffix(')'))
+        .and_then(|error| error.rsplit_once("(os error "))
+        .and_then(|(_, code)| code.parse().ok())
+        .is_some_and(|code| {
+            std::io::Error::from_raw_os_error(code).kind() == std::io::ErrorKind::BrokenPipe
+        })
 }
 
 async fn sub_main() -> Result<(), Error> {
@@ -81,11 +135,11 @@ async fn sub_main() -> Result<(), Error> {
         },
         Commands::Plugin(args) => plugin::cmd_plugin(&options, args).await,
         Commands::Program(args) => program::cmd_program(&mut options, args).await,
+        Commands::Save(args) => save::cmd_save(&options, args).await,
         Commands::Inspect(args) => match &args.command {
             InspectCommands::Info(args) => inspect::cmd_info(&options, args).await,
             InspectCommands::Telemetry(args) => inspect::cmd_telemetry(&options, args).await,
             InspectCommands::Slots(args) => inspect::cmd_slots(&options, args).await,
-            InspectCommands::Image(args) => inspect::cmd_image(&options, args).await,
             InspectCommands::Gpio(args) => inspect::cmd_gpio(&options, args).await,
             InspectCommands::Led(args) => inspect::cmd_led(&options, args).await,
             InspectCommands::Rgb(args) => inspect::cmd_rgb(&options, args).await,
@@ -133,9 +187,12 @@ async fn sub_main() -> Result<(), Error> {
             ControlCommands::Erase(args) => control::cmd_erase(&mut options, args).await,
         },
         Commands::Update(args) => match &args.command {
-            UpdateCommands::Slot(args) => update::cmd_slot(&options, args).await,
+            UpdateCommands::Firmware(args) => update::cmd_firmware(&mut options, args).await,
+            UpdateCommands::Slot(args) => update::cmd_slot(&mut options, args).await,
+            UpdateCommands::Plugin(args) => update::cmd_plugin(&mut options, args).await,
             UpdateCommands::Commit(args) => update::cmd_commit(&options, args).await,
         },
+        Commands::Clone(args) => update::cmd_clone(&mut options, args).await,
         Commands::Hardware(args) => match &args.command {
             HardwareCommands::Commission(args) => {
                 hardware::cmd_commission(&mut options, args).await
@@ -348,6 +405,7 @@ mod cli_assert {
         let built = [
             onerom_cli::hint::board_view("header"),
             onerom_cli::hint::board_view("socket"),
+            onerom_cli::hint::firmware_releases("fire-32-b"),
             onerom_cli::hint::latch_pin_low(pin),
             onerom_cli::hint::force_pin_low(pin),
         ];
@@ -365,7 +423,7 @@ mod cli_assert {
             );
             checked += 1;
         }
-        assert!(checked >= 11, "only {checked} hints checked");
+        assert!(checked >= 12, "only {checked} hints checked");
 
         // The check discriminates: a command line missing a required option is
         // rejected, so the assertions above are not passing vacuously.
@@ -431,5 +489,106 @@ mod cli_assert {
                 assert!(!about.ends_with('.'), "'{path}': {about}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod closed_pipe {
+    use std::io::{Read, Write};
+    use std::process::{Command, ExitStatus, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// Environment variable holding a child's setup for
+    /// [`print_until_the_pipe_closes`].
+    const CHILD: &str = "ONEROM_CLOSED_PIPE_CHILD";
+
+    /// Prints until its pipe closes, where run as a child by [`close_the_pipe`].
+    ///
+    /// - `main` ignores write errors, so only SIGPIPE ends it early.
+    /// - `stdout` and `stderr` run with SIGPIPE ignored.
+    #[test]
+    fn print_until_the_pipe_closes() {
+        let Ok(setup) = std::env::var(CHILD) else {
+            return;
+        };
+        match setup.as_str() {
+            "main" => {
+                super::end_quietly_on_closed_pipe();
+                let start = Instant::now();
+                while start.elapsed() < Duration::from_secs(10) {
+                    let _ = writeln!(std::io::stdout(), "One ROM");
+                }
+            }
+            "stdout" => {
+                super::exit_on_closed_pipe_panic();
+                loop {
+                    println!("One ROM");
+                }
+            }
+            "stderr" => {
+                super::exit_on_closed_pipe_panic();
+                loop {
+                    eprintln!("One ROM");
+                }
+            }
+            _ => panic!("{CHILD}={setup}"),
+        }
+    }
+
+    /// Runs [`print_until_the_pipe_closes`] as a child with `setup` and closes
+    /// the pipe it prints to. Returns how the child ended and what it wrote to
+    /// the other stream.
+    fn close_the_pipe(setup: &str) -> (ExitStatus, String) {
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "closed_pipe::print_until_the_pipe_closes",
+                "--nocapture",
+            ])
+            .env(CHILD, setup)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdout: Box<dyn Read> = Box::new(child.stdout.take().unwrap());
+        let stderr: Box<dyn Read> = Box::new(child.stderr.take().unwrap());
+        let (mut printed, mut other) = if setup == "stderr" {
+            (stderr, stdout)
+        } else {
+            (stdout, stderr)
+        };
+        printed.read_exact(&mut [0; 64]).unwrap();
+        drop(printed);
+        let mut rest = String::new();
+        other.read_to_string(&mut rest).unwrap();
+        (child.wait().unwrap(), rest)
+    }
+
+    /// A child killed by SIGPIPE ended quietly. Without SIGPIPE it would exit
+    /// with a status.
+    #[cfg(unix)]
+    #[test]
+    fn a_closed_pipe_ends_the_cli_quietly() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let (status, _) = close_the_pipe("main");
+        assert_eq!(status.signal(), Some(libc::SIGPIPE), "{status:?}");
+    }
+
+    /// With SIGPIPE ignored, as on Windows, the panic hook ends the child
+    /// quietly. A panic without the hook would print its message and exit with
+    /// 101.
+    #[test]
+    fn a_closed_stdout_without_sigpipe_ends_the_cli_quietly() {
+        let (status, stderr) = close_the_pipe("stdout");
+        assert_eq!(status.code(), Some(1), "{status:?}");
+        assert!(stderr.is_empty(), "{stderr}");
+    }
+
+    /// As above, for `eprintln!` on a closed stderr.
+    #[test]
+    fn a_closed_stderr_without_sigpipe_ends_the_cli_quietly() {
+        let (status, _) = close_the_pipe("stderr");
+        assert_eq!(status.code(), Some(1), "{status:?}");
     }
 }

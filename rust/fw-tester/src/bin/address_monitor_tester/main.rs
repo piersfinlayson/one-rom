@@ -17,7 +17,8 @@
 //! real (blocking) `wait_for_knock`, fed by the yield hook, with a watchdog
 //! timeout so a broken capture path fails the case rather than hanging.
 //! Layer 3 starts the monitor in standby.  Accesses must be captured with the
-//! data pins undriven, and once standby is off, with them driven.
+//! data pins undriven, and once standby is off, with them driven.  Layer 4
+//! checks the CS monitor's arming and release timing - see [`min_cs_act`].
 //!
 //! Addresses are driven on, and checked in, the *observed* (bus) address space
 //! — the lines the device actually monitors, which on the 40-pin variant
@@ -40,7 +41,12 @@ use onerom_config::hw::Board;
 use onerom_fw_emulator::driver;
 use onerom_fw_emulator::{Emulator, OraResult, ffi};
 use onerom_gen::{ChipConfig, Config};
+use onerom_metadata::onerom_addr_monitor_pio_t as MonitorPio;
+use onerom_metadata::onerom_pio_block_claim_t as PioClaim;
+use onerom_metadata::{MaybeKnown, RomSlotType};
 
+use onerom_fw_tester::geometry;
+use onerom_fw_tester::min_cs_act;
 use onerom_fw_tester::pin_cache::PinCache;
 
 // ORA_WAIT_FOR_KNOCK_FLAG_DEBOUNCE_CS (a #define, not surfaced by bindgen).
@@ -102,6 +108,28 @@ fn main() {
     let config: Config = serde_json::from_str(&config_json)
         .unwrap_or_else(|e| panic!("Failed to parse config '{}': {}", config_path, e));
 
+    // Each ROM slot's CS configuration, from metadata built the same way as
+    // the firmware's.
+    let fw_version = geometry::firmware_version(board, log_enabled)
+        .unwrap_or_else(|e| panic!("Failed to read the firmware version: {e}"));
+    let header = geometry::build_header(&config, board, fw_version, &base_dir)
+        .unwrap_or_else(|e| panic!("Failed to build metadata for '{config_path}': {e}"));
+    let slot_cs: Vec<_> = header
+        .rom_slots
+        .iter()
+        .filter(|slot| {
+            !matches!(
+                slot.slot_type,
+                MaybeKnown::Known(
+                    RomSlotType::RomSlotTypePluginSystem
+                        | RomSlotType::RomSlotTypePluginUser
+                        | RomSlotType::RomSlotTypePluginPio
+                )
+            )
+        })
+        .map(|slot| slot.alg.as_ref().map(|alg| alg.alg_cs.clone()))
+        .collect();
+
     let mut passed = 0u32;
     let mut failed = 0u32;
 
@@ -113,6 +141,8 @@ fn main() {
             None => continue,
         };
         let chip_type = chip.chip_type.resolved();
+        let min_cs_act_ns = min_cs_act::slot_min_cs_act_ns(&config, chip_set);
+        let sysclk_mhz = min_cs_act::slot_sysclk_mhz(chip_set.firmware_overrides.as_ref());
         let label = format!("set {} ({})", idx, chip_type.name());
 
         // Skip chip types the address monitor cannot handle yet.  This list is
@@ -151,16 +181,33 @@ fn main() {
             .map(|f| f.force_16_bit)
             .unwrap_or(false);
 
-        match run_case(
+        let cs = match slot_cs.get(idx) {
+            Some(Some(alg_cs)) => min_cs_act::Cs::from_metadata(alg_cs),
+            _ => Err("the metadata doesn't have this slot's CS configuration".to_string()),
+        };
+        let cs = match cs {
+            Ok(cs) => cs,
+            Err(e) => {
+                println!("FAIL  {label}: {e}");
+                failed += 1;
+                continue;
+            }
+        };
+
+        let case = Case {
             board,
             chip_type,
-            chip.clone(),
-            idx as u8,
+            chip: chip.clone(),
+            sel: idx as u8,
             force_16_bit,
+            cs,
+            min_cs_act_ns,
+            sysclk_mhz,
             log_enabled,
-        ) {
-            Ok(()) => {
-                println!("PASS  {label}");
+        };
+        match run_case(case) {
+            Ok(timing) => {
+                println!("PASS  {label}{timing}");
                 passed += 1;
             }
             Err(e) => {
@@ -190,36 +237,39 @@ fn monitor_skip_reason(chip_type: ChipType) -> Option<&'static str> {
     None
 }
 
+/// One chip set under test.
+struct Case {
+    board: Board,
+    chip_type: ChipType,
+    chip: ChipConfig,
+    sel: u8,
+    force_16_bit: bool,
+    cs: min_cs_act::Cs,
+    /// The minimum CS-active time the slot boots with, in nanoseconds.
+    min_cs_act_ns: Option<u16>,
+    /// The clock the slot runs at in MHz, from the config.
+    sysclk_mhz: u16,
+    log_enabled: bool,
+}
+
 /// Run one case on a detached worker thread, with a watchdog on the main
-/// thread.  The whole case (boot, setup, both layers) runs on the worker
+/// thread.  The whole case (boot, setup, every layer) runs on the worker
 /// because the [`Emulator`] is not `Send` and the only step that can block —
 /// `wait_for_knock` — must be interruptible.  Layer 1 runs first and returns
 /// deterministically, so broken firmware fails fast without reaching the
 /// blocking path; the timeout only bites if capture works for a single access
 /// but knock detection never completes.  On timeout the worker is signalled to
 /// park at its next yield and abandoned (it holds only leaked emulator state).
-fn run_case(
-    board: Board,
-    chip_type: ChipType,
-    chip: ChipConfig,
-    sel: u8,
-    force_16_bit: bool,
-    log_enabled: bool,
-) -> Result<(), String> {
+///
+/// Returns the slot's minimum CS-active time for the PASS line, or an empty
+/// string where it doesn't have one.
+fn run_case(case: Case) -> Result<String, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_worker = Arc::clone(&stop);
     let (tx, rx) = mpsc::channel();
 
     let handle = std::thread::spawn(move || {
-        let r = run_case_inner(
-            board,
-            chip_type,
-            &chip,
-            sel,
-            force_16_bit,
-            log_enabled,
-            &stop_worker,
-        );
+        let r = run_case_inner(&case, &stop_worker);
         let _ = tx.send(r);
     });
 
@@ -236,23 +286,29 @@ fn run_case(
     }
 }
 
-fn run_case_inner(
-    board: Board,
-    chip_type: ChipType,
-    chip: &ChipConfig,
-    sel: u8,
-    force_16_bit: bool,
-    log_enabled: bool,
-    stop: &Arc<AtomicBool>,
-) -> Result<(), String> {
+fn run_case_inner(case: &Case, stop: &Arc<AtomicBool>) -> Result<String, String> {
+    let chip_type = case.chip_type;
     let word_size: u8 = if matches!(chip_type, ChipType::Chip27C400 | ChipType::Chip27C200) {
         16
     } else {
         8
     };
 
-    let emu = boot(board, sel, word_size, log_enabled)?;
-    let cache = PinCache::build(chip_type, chip, board);
+    let emu = boot(case.board, case.sel, word_size, case.log_enabled)?;
+    let cache = PinCache::build(chip_type, &case.chip, case.board);
+
+    // From the config, with the device's clock as a cross-check.
+    let sysclk_mhz = u32::from(case.sysclk_mhz);
+    let device_mhz = emu.sysclk_mhz();
+    if device_mhz != sysclk_mhz {
+        return Err(format!(
+            "the device runs at {device_mhz}MHz, not the config's {sysclk_mhz}MHz"
+        ));
+    }
+    let min_cycles = case
+        .min_cs_act_ns
+        .map(|ns| min_cs_act::min_cycles(ns, sysclk_mhz));
+    let cs_active = min_cs_act::access_cycles(case.cs, min_cycles);
 
     setup_monitor(&emu)?;
 
@@ -279,7 +335,7 @@ fn run_case_inner(
     // line gets a single pass with an empty mask.
     let modes: &[u8] = match cache.byte_n_gpio {
         None => &[0],
-        Some(_) if force_16_bit => &[16],
+        Some(_) if case.force_16_bit => &[16],
         Some(_) => &[16, 8],
     };
 
@@ -291,13 +347,20 @@ fn run_case_inner(
 
         // Layer 1: one CS-active access must produce exactly one ring entry
         // that demangles to the driven observed address.
-        layer1_capture(&emu, &cache, observed_gpios, byte_bg, mode)?;
+        layer1_capture(&emu, &cache, observed_gpios, byte_bg, mode, cs_active)?;
 
         // In byte mode the host drives A-1 on a line the monitor must not
         // observe.  Only valid here: in word mode that same physical pin is
         // D15, a firmware output, and must not be driven.
         if mode == 8 && unobserved > 0 {
-            layer1_a_minus_1_invariance(&emu, &cache, observed_gpios, byte_bg, unobserved)?;
+            layer1_a_minus_1_invariance(
+                &emu,
+                &cache,
+                observed_gpios,
+                byte_bg,
+                unobserved,
+                cs_active,
+            )?;
         }
 
         // A chip whose select folds in address lines (ALG_CS_2) must not be
@@ -311,25 +374,28 @@ fn run_case_inner(
                 qual,
                 unobserved,
                 mode,
+                cs_active,
             )?;
         }
 
         // Layer 2: the real wait_for_knock must detect "!RBCP!" and collect the
         // trailing GROUP/CMD payload, driven through the yield hook.
-        layer2_knock(&emu, &cache, unobserved, byte_bg, stop, mode)?;
+        layer2_knock(&emu, &cache, unobserved, byte_bg, stop, mode, cs_active)?;
     }
+    check_unclaimed_pio(&emu)?;
 
-    // Layer 3 boots again, as it starts the monitor in standby.
+    // Layer 3 boots again, as it starts the monitor in standby.  Layer 4 boots
+    // again for a monitor of its own.
     drop(emu);
-    layer3_standby(
-        board,
-        chip_type,
-        chip,
-        sel,
-        word_size,
-        modes[0],
-        log_enabled,
-    )
+    layer3_standby(case, word_size, modes[0], cs_active)?;
+    layer4_min_cs_act(case, word_size, modes[0], min_cycles)?;
+
+    Ok(match (case.min_cs_act_ns, min_cycles) {
+        (Some(ns), Some(cycles)) => {
+            format!(": minimum CS-active {ns}ns, {cycles} cycles at {sysclk_mhz}MHz")
+        }
+        _ => String::new(),
+    })
 }
 
 fn boot(board: Board, sel: u8, word_size: u8, log_enabled: bool) -> Result<Emulator, String> {
@@ -351,12 +417,189 @@ fn boot(board: Board, sel: u8, word_size: u8, log_enabled: bool) -> Result<Emula
     if emu.limp_mode() {
         return Err("firmware entered limp mode".to_string());
     }
+    emu.poison_unclaimed_pio();
     emu.setup_epio(word_size);
     Ok(emu)
 }
 
+/// Fail if the firmware wrote or ran an unclaimed PIO instruction.
+fn check_unclaimed_pio(emu: &Emulator) -> Result<(), String> {
+    match emu.unclaimed_pio_used() {
+        Some(block) => Err(format!(
+            "the firmware wrote or ran an unclaimed instruction in PIO block {block}"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Setting up the monitor fails if its PIO space can't be claimed, and leaves
+/// the claims unchanged.  Each case marks every instruction in one or both
+/// blocks as claimed.  With only the address block full, the CS state
+/// machine's claim succeeds first and must be released.
+fn setup_monitor_without_space(
+    emu: &Emulator,
+    ring: *mut u32,
+    mode: ffi::ora_monitor_mode_t,
+) -> Result<(), String> {
+    let saved = (emu.pio_instr_claims(), emu.pio_block_claims());
+    for (label, blocks) in [
+        ("address block full", &[1usize][..]),
+        ("both blocks full", &[1, 2]),
+    ] {
+        let mut instrs = saved.0;
+        for &block in blocks {
+            instrs[block] = u32::MAX;
+        }
+        emu.set_pio_instr_claims(instrs);
+        // SAFETY: as for the real setup in setup_monitor.
+        let r = unsafe {
+            emu.setup_address_monitor_with_options(
+                ring,
+                RING_ENTRIES_LOG2,
+                mode,
+                RING_DATA_SIZE,
+                std::ptr::null(),
+            )
+        };
+        let after = (emu.pio_instr_claims(), emu.pio_block_claims());
+        emu.set_pio_instr_claims(saved.0);
+        if r != OraResult::InUse {
+            return Err(format!(
+                "setup_address_monitor with {label} returned {r:?}, expected InUse"
+            ));
+        }
+        if after != (instrs, saved.1) {
+            return Err(format!(
+                "setup_address_monitor with {label} left claims {after:x?}, expected {:x?}",
+                (instrs, saved.1)
+            ));
+        }
+        if emu.addr_monitor_pio() != onerom_metadata::ADDR_MONITOR_PIO_NONE {
+            return Err(format!(
+                "setup_address_monitor with {label} set addr_monitor_pio to {:#04x}",
+                emu.addr_monitor_pio()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The state machines recorded in `addr_monitor_pio` are claimed, with one run
+/// of instructions in each of their blocks.  A second setup changes nothing.
+fn check_monitor_claims(
+    emu: &Emulator,
+    before: ([u32; 3], u16),
+    ring: *mut u32,
+    mode: ffi::ora_monitor_mode_t,
+) -> Result<(), String> {
+    let pio = emu.addr_monitor_pio();
+    let field = |mask: u8, shift: u32| u32::from(pio & mask) >> shift;
+    let sms = [
+        (
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_BLOCK,
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_BLOCK_SHIFT,
+            ),
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_SM,
+                MonitorPio::ADDR_MONITOR_PIO_ADDR_SM_SHIFT,
+            ),
+        ),
+        (
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_CS_BLOCK,
+                MonitorPio::ADDR_MONITOR_PIO_CS_BLOCK_SHIFT,
+            ),
+            field(
+                MonitorPio::ADDR_MONITOR_PIO_CS_SM,
+                MonitorPio::ADDR_MONITOR_PIO_CS_SM_SHIFT,
+            ),
+        ),
+    ];
+    let after = (emu.pio_instr_claims(), emu.pio_block_claims());
+    let mut want_sms = before.1;
+    for &(block, sm) in &sms {
+        if block >= 3 {
+            return Err(format!(
+                "addr_monitor_pio is {pio:#04x}, with no monitor state machines recorded"
+            ));
+        }
+        want_sms |= (1 << sm) << (block * PioClaim::PIO_CLAIM_BLOCK_1_SMS_SHIFT);
+    }
+    if after.1 != want_sms {
+        return Err(format!(
+            "state machine claims {:#06x}, want {want_sms:#06x} for monitor {pio:#04x}",
+            after.1
+        ));
+    }
+    for block in 0..3 {
+        let added = after.0[block] & !before.0[block];
+        if (after.0[block] & before.0[block]) != before.0[block] {
+            return Err(format!(
+                "block {block}: setting up the monitor removed instruction claims"
+            ));
+        }
+        let run = added.checked_shr(added.trailing_zeros()).unwrap_or(0);
+        if run & run.wrapping_add(1) != 0 {
+            return Err(format!(
+                "block {block}: instructions {added:#010x} claimed for the monitor aren't one run"
+            ));
+        }
+        let has_sm = sms.iter().any(|&(b, _)| b as usize == block);
+        if has_sm != (added != 0) {
+            return Err(format!(
+                "block {block}: unexpected instruction claims {added:#010x} for the monitor"
+            ));
+        }
+    }
+
+    // SAFETY: as for the real setup in setup_monitor.
+    let r = unsafe {
+        emu.setup_address_monitor_with_options(
+            ring,
+            RING_ENTRIES_LOG2,
+            mode,
+            RING_DATA_SIZE,
+            std::ptr::null(),
+        )
+    };
+    if r != OraResult::InUse {
+        return Err(format!(
+            "second setup_address_monitor returned {r:?}, expected InUse"
+        ));
+    }
+    if (
+        emu.pio_instr_claims(),
+        emu.pio_block_claims(),
+        emu.addr_monitor_pio(),
+    ) != (after.0, after.1, pio)
+    {
+        return Err("second setup_address_monitor changed the claims".to_string());
+    }
+    Ok(())
+}
+
+/// The state machines the emulated PIO has enabled, per block.
+fn enabled_sms() -> [u8; 3] {
+    // SAFETY: `_apio_emulated_pio` is a plain C global, and the emulator is
+    // single threaded.
+    unsafe { (*core::ptr::addr_of!(ffi::_apio_emulated_pio)).enabled_sms }
+}
+
 /// Arm the seam, configure and start the address monitor, and init the knock.
 fn setup_monitor(emu: &Emulator) -> Result<(), String> {
+    // Before setup the monitor has no state machines, so starting it enables
+    // none.
+    let before = enabled_sms();
+    emu.start_address_monitor();
+    if enabled_sms() != before {
+        return Err(format!(
+            "start_address_monitor before setup enabled state machines: {:?} to {:?}",
+            before,
+            enabled_sms()
+        ));
+    }
+
     emu.arm_monitor();
     let ring = emu.sram_host_ptr(RING_BASE);
 
@@ -398,6 +641,9 @@ fn setup_monitor(emu: &Emulator) -> Result<(), String> {
         }
     }
 
+    setup_monitor_without_space(emu, ring, mode)?;
+    let before = (emu.pio_instr_claims(), emu.pio_block_claims());
+
     // The real setup, asking for high priority so the accepted path is the
     // one a plugin that wants it takes.
     let high = Emulator::address_monitor_options(
@@ -412,6 +658,7 @@ fn setup_monitor(emu: &Emulator) -> Result<(), String> {
     if r != OraResult::Ok {
         return Err(format!("setup_address_monitor returned {r:?}"));
     }
+    check_monitor_claims(emu, before, ring, mode)?;
     emu.update_from_apio();
     emu.start_address_monitor();
     emu.update_from_apio();
@@ -421,9 +668,13 @@ fn setup_monitor(emu: &Emulator) -> Result<(), String> {
 /// Drive one CS-active read of observed address `addr`: settle the address with
 /// CS deasserted, assert CS, then deassert.  Mirrors a real ROM access cycle.
 ///
+/// As on a real host, the address changes on the cycle chip select goes
+/// inactive, so a capture that reads the address after that fails.
+///
 /// `addr` is placed on the *observed* address lines (bit 0 on the
 /// least-significant observed line).  `background` is held across every phase
 /// and carries the /BYTE level plus, in byte mode, any A-1 level being driven.
+/// Chip select is held active for `cs_active` cycles.
 ///
 /// Returns the GPIOs driven at the end of the CS-active phase.
 fn drive_access(
@@ -432,6 +683,7 @@ fn drive_access(
     observed_gpios: &[Vec<u8>],
     background: (u64, u64),
     addr: usize,
+    cs_active: u32,
 ) -> u64 {
     let a = driver::addr_mask(addr, observed_gpios);
     let cs_on = driver::ctrl_mask(&cache.control_lines, true);
@@ -443,10 +695,15 @@ fn drive_access(
 
     let active = driver::merge(driver::merge(a, cs_on), background);
     emu.drive_gpios(active.0, active.1);
-    emu.step_cycles(16);
+    emu.step_cycles(cs_active);
     let driven = emu.read_driven_pins();
 
-    emu.drive_gpios(settle.0, settle.1);
+    let end_addr = !addr & ((1usize << observed_gpios.len()) - 1);
+    let end = driver::merge(
+        driver::merge(driver::addr_mask(end_addr, observed_gpios), cs_off),
+        background,
+    );
+    emu.drive_gpios(end.0, end.1);
     emu.step_cycles(8);
 
     driven
@@ -460,6 +717,7 @@ fn capture_one(
     observed_gpios: &[Vec<u8>],
     background: (u64, u64),
     addr: usize,
+    cs_active: u32,
 ) -> Result<u32, String> {
     let slot = emu.get_address_monitor_ring_write_pos();
     if slot.is_null() {
@@ -467,7 +725,7 @@ fn capture_one(
     }
     let before = unsafe { *slot };
 
-    drive_access(emu, cache, observed_gpios, background, addr);
+    drive_access(emu, cache, observed_gpios, background, addr, cs_active);
 
     let after = unsafe { *slot };
     if after == before {
@@ -494,9 +752,10 @@ fn layer1_capture(
     observed_gpios: &[Vec<u8>],
     background: (u64, u64),
     mode: u8,
+    cs_active: u32,
 ) -> Result<(), String> {
     let addr = KNOCK[0] as usize; // '!'
-    let observed = capture_one(emu, cache, observed_gpios, background, addr)?;
+    let observed = capture_one(emu, cache, observed_gpios, background, addr, cs_active)?;
     if (observed & 0xFF) as usize != addr {
         return Err(format!(
             "{}: captured address 0x{:02X} != driven 0x{:02X}",
@@ -519,6 +778,7 @@ fn layer1_capture(
 /// then one just outside it (a single qualifier line dropped low) and requires
 /// a capture of exactly that address, so a monitor that has simply stopped
 /// capturing cannot pass.
+#[allow(clippy::too_many_arguments)]
 fn layer1_deselected_range(
     emu: &Emulator,
     cache: &PinCache,
@@ -527,6 +787,7 @@ fn layer1_deselected_range(
     qual_indices: &[u8],
     unobserved: u8,
     mode: u8,
+    cs_active: u32,
 ) -> Result<(), String> {
     // Qualifier indices are chip address-line numbers; the driven address is in
     // observed space, which omits `unobserved` low lines.  A qualifier below
@@ -555,7 +816,14 @@ fn layer1_deselected_range(
     }
 
     let before = unsafe { *slot };
-    drive_access(emu, cache, observed_gpios, background, deselected);
+    drive_access(
+        emu,
+        cache,
+        observed_gpios,
+        background,
+        deselected,
+        cs_active,
+    );
     if unsafe { *slot } != before {
         return Err(format!(
             "{}: monitor captured an access at observed address 0x{deselected:X}, which is \
@@ -565,7 +833,7 @@ fn layer1_deselected_range(
         ));
     }
 
-    let observed = capture_one(emu, cache, observed_gpios, background, selected)?;
+    let observed = capture_one(emu, cache, observed_gpios, background, selected, cs_active)?;
     if observed as usize != selected {
         return Err(format!(
             "{}: captured address 0x{observed:X} != driven 0x{selected:X} just below the \
@@ -588,6 +856,7 @@ fn layer1_a_minus_1_invariance(
     observed_gpios: &[Vec<u8>],
     byte_bg: (u64, u64),
     unobserved: u8,
+    cs_active: u32,
 ) -> Result<(), String> {
     let addr = KNOCK[0] as usize;
     // The unobserved low lines, driven as a little-endian value below them.
@@ -597,7 +866,7 @@ fn layer1_a_minus_1_invariance(
     for level in 0..(1usize << unobserved) {
         let a_minus_1 = driver::addr_mask(level, unobserved_gpios);
         let background = driver::merge(byte_bg, a_minus_1);
-        let observed = capture_one(emu, cache, observed_gpios, background, addr)?;
+        let observed = capture_one(emu, cache, observed_gpios, background, addr, cs_active)?;
         if (observed & 0xFF) as usize != addr {
             return Err(format!(
                 "byte mode, A-1={level}: captured address 0x{:02X} != driven 0x{:02X}",
@@ -622,17 +891,9 @@ fn layer1_a_minus_1_invariance(
 /// Starting the monitor leaves the CS state machine stopped, so accesses are
 /// captured with the data pins undriven.  Once standby is off the monitor keeps
 /// capturing and the data pins are driven during an access.
-fn layer3_standby(
-    board: Board,
-    chip_type: ChipType,
-    chip: &ChipConfig,
-    sel: u8,
-    word_size: u8,
-    mode: u8,
-    log_enabled: bool,
-) -> Result<(), String> {
-    let emu = boot(board, sel, word_size, log_enabled)?;
-    let cache = PinCache::build(chip_type, chip, board);
+fn layer3_standby(case: &Case, word_size: u8, mode: u8, cs_active: u32) -> Result<(), String> {
+    let emu = boot(case.board, case.sel, word_size, case.log_enabled)?;
+    let cache = PinCache::build(case.chip_type, &case.chip, case.board);
     let r = emu.set_standby(1, 0);
     if r != OraResult::Ok {
         return Err(format!("set_standby(1, 0) returned {r:?}"));
@@ -665,10 +926,16 @@ fn layer3_standby(
                 return Err(format!("set_standby(0, 0) returned {r:?}"));
             }
         }
-        layer1_capture(&emu, &cache, observed_gpios, background, mode)
+        layer1_capture(&emu, &cache, observed_gpios, background, mode, cs_active)
             .map_err(|e| format!("{when}: {e}"))?;
-        let driven =
-            drive_access(&emu, &cache, observed_gpios, background, KNOCK[1] as usize) & data_mask;
+        let driven = drive_access(
+            &emu,
+            &cache,
+            observed_gpios,
+            background,
+            KNOCK[1] as usize,
+            cs_active,
+        ) & data_mask;
         if standby && driven != 0 {
             return Err(format!(
                 "{when}: data pins {driven:#018x} driven with chip select asserted"
@@ -681,7 +948,39 @@ fn layer3_standby(
             ));
         }
     }
-    Ok(())
+    check_unclaimed_pio(&emu)
+}
+
+/// The CS monitor's arming and release timing.  See [`min_cs_act`].
+fn layer4_min_cs_act(
+    case: &Case,
+    word_size: u8,
+    mode: u8,
+    min_cycles: Option<u32>,
+) -> Result<(), String> {
+    let emu = boot(case.board, case.sel, word_size, case.log_enabled)?;
+    let cache = PinCache::build(case.chip_type, &case.chip, case.board);
+    setup_monitor(&emu)?;
+
+    let (r, unobserved) = emu.get_unobserved_addr_bits();
+    if r != OraResult::Ok {
+        return Err(format!("get_unobserved_addr_bits returned {r:?}"));
+    }
+    let observed_gpios = &cache.addr_gpios[unobserved as usize..];
+    let background = match cache.byte_n_gpio {
+        Some(g) if mode != 0 => driver::byte_n_mask(g, mode),
+        _ => (0, 0),
+    };
+    min_cs_act::check(
+        &emu,
+        &cache,
+        observed_gpios,
+        background,
+        1 << RING_ENTRIES_LOG2,
+        case.cs,
+        min_cycles,
+    )?;
+    check_unclaimed_pio(&emu)
 }
 
 /// Label for a /BYTE mode, for error messages.
@@ -702,6 +1001,7 @@ fn layer2_knock(
     background: (u64, u64),
     stop: &Arc<AtomicBool>,
     mode: u8,
+    cs_active: u32,
 ) -> Result<(), String> {
     // Sequence the hook plays: the six knock bytes, then a GROUP/CMD payload
     // (NOP = 0x00/0x00) which wait_for_knock collects after detection.
@@ -726,7 +1026,14 @@ fn layer2_knock(
         let cache = unsafe { &*(cache_ptr as *const PinCache) };
         if cursor < schedule.len() {
             let observed_gpios = &cache.addr_gpios[unobserved as usize..];
-            drive_access(emu, cache, observed_gpios, background, schedule[cursor]);
+            drive_access(
+                emu,
+                cache,
+                observed_gpios,
+                background,
+                schedule[cursor],
+                cs_active,
+            );
             cursor += 1;
         } else {
             emu.step_cycles(8);

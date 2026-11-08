@@ -6,6 +6,7 @@
 //!
 //! Types and parsing support for schema-format (v0.7.0+) OneROM firmware.
 
+use onerom_config::fw::FirmwareVersion;
 use onerom_metadata::{
     CURRENT_METADATA_VERSION, DeviceMemoryView, Generations, ONEROM_INFO_VERSION, OneromInfo,
     RUNTIME_INFO_VERSION,
@@ -55,6 +56,8 @@ pub struct OneRom {
     info: Option<OneromInfo>,
     parse_errors: Vec<ParseError>,
     runtime_absence: Option<RuntimeAbsence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    newer_version: Option<FirmwareVersion>,
 }
 
 impl OneRom {
@@ -71,6 +74,16 @@ impl OneRom {
             info,
             parse_errors,
             runtime_absence,
+            newer_version: None,
+        }
+    }
+
+    /// A `OneRom` for firmware `version`, which is newer than
+    /// [`MAX_VERSION`](crate::MAX_VERSION) and so isn't parsed.
+    pub(crate) fn newer(version: FirmwareVersion, parse_errors: Vec<ParseError>) -> Self {
+        Self {
+            newer_version: Some(version),
+            ..Self::new(None, parse_errors, None)
         }
     }
 
@@ -117,6 +130,13 @@ impl OneRom {
     /// fault worth refusing over.
     pub fn runtime_absence(&self) -> Option<RuntimeAbsence> {
         self.runtime_absence
+    }
+
+    /// The firmware's version where it's newer than
+    /// [`MAX_VERSION`](crate::MAX_VERSION). [`info`](Self::info) is then
+    /// `None`. `None` otherwise.
+    pub fn newer_version(&self) -> Option<FirmwareVersion> {
+        self.newer_version
     }
 
     /// Returns the structures the device carries a newer generation of than

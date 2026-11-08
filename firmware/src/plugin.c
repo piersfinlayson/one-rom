@@ -7,31 +7,58 @@
 #include "include.h"
 
 #include "plugin.h"
+#include "piodma/piodma.h"
 #include <stdio.h>
 
-uint8_t check_plugin_valid(
+STATIC_ASSERT(ORA_PLUGIN_MAGIC == PLUGIN_MAGIC, "plugin magic");
+
+#define PLUGIN_ERR(...) do { if (log) { ERR(__VA_ARGS__); } } while (0)
+
+// A firmware version as one number, so versions compare in order.
+static inline uint64_t fw_version(uint16_t major, uint16_t minor, uint16_t patch) {
+    return ((uint64_t)major << 32) | ((uint64_t)minor << 16) | patch;
+}
+
+// Whether `header` requires firmware before major.minor.patch.
+static uint8_t plugin_predates(
+    const ora_plugin_header_t *header,
+    uint16_t major,
+    uint16_t minor,
+    uint16_t patch
+) {
+    uint64_t required = fw_version(header->min_fw_major_version,
+        header->min_fw_minor_version, header->min_fw_patch_version);
+    return required < fw_version(major, minor, patch);
+}
+
+static uint8_t plugin_sets_log_channels(const ora_plugin_header_t *header) {
+    return (header->channel_2_size != 0u) || (header->channel_3_size != 0u);
+}
+
+static uint8_t plugin_valid(
     const onerom_rom_slot_t *slot,
     const ora_plugin_type_t expected_type,
-    uint8_t index
+    uint8_t index,
+    uint8_t log
 ) {
     // The header is read from the slot, so the slot must lie within the flash
     // first.
     if (!rom_slot_in_flash(slot)) {
-        ERR("ORA slot outside flash");
+        PLUGIN_ERR("ORA slot outside flash");
         return 0;
     }
 
     const ora_plugin_header_t *header = (const ora_plugin_header_t *)(uintptr_t)(slot->data);
     if (header->magic != ORA_PLUGIN_MAGIC) {
-        ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
+        PLUGIN_ERR("ORA badmagic 0x%08lx", (unsigned long)header->magic);
         return 0;
     }
     if (header->api_version != ORA_PLUGIN_VERSION_1) {
-        ERR("ORA version 0x%08lx", (unsigned long)header->api_version);
+        PLUGIN_ERR("ORA version 0x%08lx", (unsigned long)header->api_version);
         return 0;
     }
     if (header->plugin_type != expected_type) {
-        ERR("ORA type %d, expected %d", header->plugin_type, expected_type);
+        PLUGIN_ERR("ORA type %d, expected %d", header->plugin_type, expected_type);
         return 0;
     }
 
@@ -43,7 +70,7 @@ uint8_t check_plugin_valid(
         + (index * SYSTEM_PLUGIN_SIZE);
     uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry;
     if ((entry_addr & ~expected_launch_region) >= SYSTEM_PLUGIN_SIZE) {
-        ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
+        PLUGIN_ERR("ORA 0x%08lx vs ep 0x%08lx", (unsigned long)entry_addr,
         (unsigned long)expected_launch_region);
         return 0;
     }
@@ -54,13 +81,189 @@ uint8_t check_plugin_valid(
     if (min_fw_major > INFO->major_version ||
         (min_fw_major == INFO->major_version && min_fw_minor > INFO->minor_version) ||
         (min_fw_major == INFO->major_version && min_fw_minor == INFO->minor_version && min_fw_patch > INFO->patch_version)) {
-        ERR("ORA reqd v%d.%d.%d vs v%d.%d.%d",
+        PLUGIN_ERR("ORA reqd v%d.%d.%d vs v%d.%d.%d",
             min_fw_major, min_fw_minor, min_fw_patch,
             INFO->major_version, INFO->minor_version, INFO->patch_version);
         return 0;
     }
 
+    if (header->usb_controller_dpram_size > USB_CONTROLLER_DPRAM_MAX) {
+        PLUGIN_ERR("ORA USB controller DPRAM 0x%x above 0x%x",
+            header->usb_controller_dpram_size, USB_CONTROLLER_DPRAM_MAX);
+        return 0;
+    }
+
+    if (header->channel_2_size > LOG_CHANNEL_2_MAX_SIZE) {
+        PLUGIN_ERR("ORA channel 2 size 0x%x above 0x%x",
+            header->channel_2_size, LOG_CHANNEL_2_MAX_SIZE);
+        return 0;
+    }
+    if (header->channel_3_size > LOG_CHANNEL_3_MAX_SIZE) {
+        PLUGIN_ERR("ORA channel 3 size 0x%x above 0x%x",
+            header->channel_3_size, LOG_CHANNEL_3_MAX_SIZE);
+        return 0;
+    }
+    if (plugin_sets_log_channels(header) && plugin_predates(header, 0, 8, 1)) {
+        PLUGIN_ERR("ORA log channels require firmware 0.8.1");
+        return 0;
+    }
+
     return 1;
+}
+
+uint8_t check_plugin_valid(
+    const onerom_rom_slot_t *slot,
+    const ora_plugin_type_t expected_type,
+    uint8_t index
+) {
+    return plugin_valid(slot, expected_type, index, 1);
+}
+
+// Returns the header of the system plugin (index 0) or user plugin (index 1),
+// or NULL if its ROM slot doesn't contain a valid plugin of that type.
+static const ora_plugin_header_t *plugin_header(uint8_t index) {
+    STATIC_ASSERT((ROM_SLOT_TYPE_PLUGIN_SYSTEM == 0) && (ORA_PLUGIN_TYPE_SYSTEM == 0),
+        "The system plugin's slot type and plugin type must be its index");
+    STATIC_ASSERT((ROM_SLOT_TYPE_PLUGIN_USER == 1) && (ORA_PLUGIN_TYPE_USER == 1),
+        "The user plugin's slot type and plugin type must be its index");
+
+    if (METADATA->rom_slot_count <= index) {
+        return NULL;
+    }
+    const onerom_rom_slot_t *slot = &METADATA->rom_slots[index];
+    if ((slot->slot_type != index) ||
+        !plugin_valid(slot, (ora_plugin_type_t)index, index, 0)) {
+        return NULL;
+    }
+    return (const ora_plugin_header_t *)(uintptr_t)slot->data;
+}
+
+const ora_plugin_header_t *system_plugin_to_start(void) {
+    return plugin_header(0);
+}
+
+// Only one plugin can reserve USB controller DPRAM, and the system plugin's
+// reservation is prioritised.
+static uint8_t usb_controller_dpram_clash(
+    const ora_plugin_header_t *system,
+    const ora_plugin_header_t *user
+) {
+    return (system->usb_controller_dpram_size != 0u)
+        && (user->usb_controller_dpram_size != 0u);
+}
+
+// A system plugin requiring firmware before 0.8.1 leaves the pool empty, so the
+// user plugin's log channels can't be allocated.  See usb_dpram_pool_init().
+static uint8_t log_channels_unavailable(
+    const ora_plugin_header_t *system,
+    const ora_plugin_header_t *user
+) {
+    return plugin_sets_log_channels(user)
+        && plugin_predates(system, 0, 8, 1);
+}
+
+const ora_plugin_header_t *user_plugin_to_start(void) {
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    if (system == NULL) {
+        return NULL;
+    }
+    const ora_plugin_header_t *user = plugin_header(1);
+    if ((user != NULL) && (usb_controller_dpram_clash(system, user)
+                           || log_channels_unavailable(system, user))) {
+        return NULL;
+    }
+    return user;
+}
+
+// Returns the flags to pass to the plugins in ora_entry_args_t.
+uint8_t plugin_entry_flags(void) {
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    const ora_plugin_header_t *user = user_plugin_to_start();
+    uint8_t properties1 = 0;
+    if (system != NULL) {
+        properties1 |= system->properties1;
+    }
+    if (user != NULL) {
+        properties1 |= user->properties1;
+    }
+
+    return (properties1 & ORA_PROPERTY1_EXCLUSIVE_SERIAL_IN)
+        ? ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN : 0;
+}
+
+static uint8_t in_plugin_region(uint8_t index, uint32_t addr) {
+    onerom_flash_size_t cs0;
+    onerom_flash_size_t cs1;
+    otp_flash_sizes(&cs0, &cs1);
+
+    uint32_t region = FLASH_CS0_BASE_ADDR + SYSTEM_PLUGIN_OFFSET
+        + (index * SYSTEM_PLUGIN_SIZE);
+    return ((addr - region) < SYSTEM_PLUGIN_SIZE)
+        && ((addr - FLASH_CS0_BASE_ADDR) < flash_size_bytes(cs0));
+}
+
+#if REAL_HARDWARE
+static uint8_t flash_read_byte(uint32_t addr) {
+    return *(volatile const uint8_t *)(uintptr_t)addr;
+}
+#else // !REAL_HARDWARE
+static uint8_t flash_read_byte(uint32_t addr) {
+    return stub_flash_read8(addr);
+}
+#endif // REAL_HARDWARE
+
+// Returns 1 and sets slot_out if `header`'s boot slot byte holds a ROM slot.
+static uint8_t header_boot_slot(
+    const ora_plugin_header_t *header,
+    uint8_t index,
+    uint8_t num_plugins,
+    uint8_t *slot_out
+) {
+    if ((header == NULL) || !(header->overrides1 & ORA_OVERRIDE1_BOOT_SLOT)) {
+        return 0;
+    }
+
+    uint32_t addr = header->boot_slot_addr;
+    if (!in_plugin_region(index, addr)) {
+        ERR("%s plugin boot slot address 0x%08lx outside its region",
+            plugin_names[index], (unsigned long)addr);
+        return 0;
+    }
+
+    uint8_t slot = flash_read_byte(addr);
+    if (slot >= (METADATA->rom_slot_count - num_plugins)) {
+        LOG("%s plugin boot slot %d not a ROM slot", plugin_names[index], slot);
+        return 0;
+    }
+
+    LOG("%s plugin boot slot %d", plugin_names[index], slot);
+    *slot_out = slot;
+    return 1;
+}
+
+// Returns 1 and sets slot_out if a plugin header selects a ROM slot.
+uint8_t plugin_boot_slot(uint8_t num_plugins, uint8_t *slot_out) {
+    const ora_plugin_header_t *headers[] = {
+        system_plugin_to_start(),
+        user_plugin_to_start(),
+    };
+
+    for (uint8_t ii = 0; ii < 2; ii++) {
+        if (header_boot_slot(headers[ii], ii, num_plugins, slot_out)) {
+            return 1;
+        }
+    }
+
+    for (uint8_t ii = 0; ii < 2; ii++) {
+        if ((headers[ii] != NULL) &&
+            (headers[ii]->overrides1 & ORA_OVERRIDE1_IGNORE_IMAGE_SELECT)) {
+            LOG("%s plugin overrides image select", plugin_names[ii]);
+            *slot_out = 0;
+            return 1;
+        }
+    }
+
+    return 0;
 }
 
 uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
@@ -75,8 +278,11 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
         const onerom_rom_slot_t *set = &METADATA->rom_slots[0];
         if (set->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
             if (check_plugin_valid(set, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
-                const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(set->data);
-                *disable_vbus_det = header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT ? 1 : 0;
+                const ora_plugin_header_t *header = system_plugin_to_start();
+                if ((header != NULL) &&
+                    (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT)) {
+                    *disable_vbus_det = 1;
+                }
                 LOG("Valid system plugin, disable_vbus_det=%d", *disable_vbus_det);
             }
 
@@ -93,8 +299,9 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
             if (plugins & 0x01) {
                 // Have user plugin (2) so check it
                 if (check_plugin_valid(other_set, ORA_PLUGIN_TYPE_USER, 1)) {
-                    const ora_plugin_header_t *header = (ora_plugin_header_t *)(uintptr_t)(other_set->data);
-                    if (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT) {
+                    const ora_plugin_header_t *header = user_plugin_to_start();
+                    if ((header != NULL) &&
+                        (header->overrides1 & ORA_OVERRIDE1_DISABLE_VBUS_DETECT)) {
                         *disable_vbus_det = 1;
                     }
                     LOG("Valid user plugin, disable_vbus_det=%d", *disable_vbus_det);
@@ -118,18 +325,215 @@ uint8_t initial_plugin_parse(uint8_t *disable_vbus_det, uint8_t *num_plugins) {
     return plugins;
 }
 
-void ora_reboot_bootsel(void) {
-#if !defined(TEST_BUILD)
-    enter_bootloader();
-#endif // !TEST_BUILD
+// ---------------------------------------------------------------------------
+// Reboot
+// ---------------------------------------------------------------------------
 
+ora_result_t ora_reboot(const ora_reboot_request_t *req) {
+    if (req == NULL) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    if (req->size < REBOOT_REQUEST_MIN_SIZE) {
+        return ORA_RESULT_INVALID_SIZE;
+    }
+
+    if ((req->reserved[0] != 0u) || (req->reserved[1] != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    if (req->mode > ORA_REBOOT_MODE_BOOTLOADER) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+
+    if (req->delay_ms > REBOOT_MAX_DELAY_MS) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t delay_ms = req->delay_ms;
+    if (delay_ms == 0) {
+        delay_ms = REBOOT_MIN_DELAY_MS;
+    }
+    if (!rom_reboot(req->mode == ORA_REBOOT_MODE_BOOTLOADER, delay_ms)) {
+        return ORA_RESULT_ERROR;
+    }
+    return ORA_RESULT_OK;
+}
+
+void ora_reboot_bootsel(void) {
+    const ora_reboot_request_t req = {
+        .size = sizeof(req),
+        .mode = ORA_REBOOT_MODE_BOOTLOADER,
+        .delay_ms = 10,
+    };
+    (void)ora_reboot(&req);
+
+#if !defined(TEST_BUILD)
     // Do not return
     while (1);
+#endif // !TEST_BUILD
 }
 
 void *ora_alloc(size_t size) {
     (void)size;
     return NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Memory pool
+// ---------------------------------------------------------------------------
+
+// The pool is the USB DPRAM above the USB controller's reservation and below
+// One ROM's log when the log is in USB DPRAM.  RUNTIME->usb_dpram_pool_offset is
+// the offset of its next free byte.
+
+// Both plugins allocate from the pool, so a spinlock guards it across cores.
+// See ora_log_lock() for why interrupts are masked while it is held.
+#if defined(TEST_BUILD)
+static uint32_t mem_pool_lock(void) { return 0u; }
+static void mem_pool_unlock(uint32_t primask) { (void)primask; }
+#else
+static uint32_t mem_pool_lock(void) {
+    uint32_t primask;
+
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+
+    while (SIO_SPINLOCK(SPINLOCK_MEM_POOL) == 0u)
+        ;
+    __asm volatile ("dmb" ::: "memory");
+
+    return primask;
+}
+
+static void mem_pool_unlock(uint32_t primask) {
+    __asm volatile ("dmb" ::: "memory");
+    SIO_SPINLOCK(SPINLOCK_MEM_POOL) = 0u;
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+}
+#endif // TEST_BUILD
+
+// A plugin requiring firmware before 0.8.1 can't reserve USB controller DPRAM
+// but may use it.  The 0.8.0 USB plugin zeroes all of USB DPRAM at start.
+static uint8_t plugin_predates_usb_controller_dpram(const ora_plugin_header_t *header) {
+    return plugin_predates(header, 0, 8, 1);
+}
+
+static void usb_dpram_pool_init(void) {
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    const ora_plugin_header_t *user = user_plugin_to_start();
+
+    if ((system != NULL) && plugin_predates_usb_controller_dpram(system)) {
+        RUNTIME->usb_dpram_pool_offset = USB_DPRAM_SIZE;
+        return;
+    }
+
+    // usb_controller_dpram_clash() leaves at most one reservation.
+    uint32_t reserved = 0u;
+    if (system != NULL) {
+        reserved = system->usb_controller_dpram_size;
+    }
+    if ((user != NULL) && (user->usb_controller_dpram_size != 0u)) {
+        reserved = user->usb_controller_dpram_size;
+    }
+    RUNTIME->usb_dpram_pool_offset = (uint16_t)((reserved + 3u) & ~3u);
+}
+
+static uint32_t usb_dpram_pool_end(void) {
+    if (RUNTIME->firmware_flags & FIRMWARE_FLAG_LOG_IN_UP1) {
+        return USB_DPRAM_LOG_ADDR - USB_DPRAM_BASE_ADDR;
+    }
+    return USB_DPRAM_SIZE;
+}
+
+// Returns 1 and sets addr_out to the allocation's address, or 0 if the pool
+// doesn't have `bytes` free.
+static uint8_t usb_dpram_pool_alloc(uint32_t bytes, uint32_t *addr_out) {
+    uint32_t primask = mem_pool_lock();
+    uint32_t start = RUNTIME->usb_dpram_pool_offset;
+    uint32_t end = usb_dpram_pool_end();
+    if ((start > end) || (bytes > (end - start))) {
+        mem_pool_unlock(primask);
+        return 0;
+    }
+    RUNTIME->usb_dpram_pool_offset = (uint16_t)((start + bytes + 3u) & ~3u);
+    mem_pool_unlock(primask);
+
+    *addr_out = USB_DPRAM_BASE_ADDR + start;
+    return 1;
+}
+
+// Log channels 2 and 3 are allocated from the pool before either plugin
+// starts, so both always fit unless a system plugin requiring firmware before
+// 0.8.1 leaves the pool empty.
+STATIC_ASSERT(LOG_CHANNEL_2_MAX_SIZE + LOG_CHANNEL_3_MAX_SIZE
+    <= USB_DPRAM_SIZE - USB_CONTROLLER_DPRAM_MAX - USB_DPRAM_LOG_SIZE,
+    "Log channels 2 and 3 must fit the smallest pool");
+
+#if REAL_HARDWARE
+static char *usb_dpram_ptr(uint32_t addr) {
+    return (char *)(uintptr_t)addr;
+}
+#else // !REAL_HARDWARE
+static char *usb_dpram_ptr(uint32_t addr) {
+    return stub_usb_dpram() + (addr - USB_DPRAM_BASE_ADDR);
+}
+#endif // REAL_HARDWARE
+
+// The larger of the two plugins' sizes for log channel 2 or 3.
+static uint16_t log_channel_size(uint8_t channel) {
+    const ora_plugin_header_t *headers[] = {
+        system_plugin_to_start(), user_plugin_to_start(),
+    };
+    uint16_t size = 0u;
+    for (unsigned ii = 0; ii < (sizeof(headers) / sizeof(headers[0])); ii++) {
+        if (headers[ii] == NULL) {
+            continue;
+        }
+        uint16_t wanted = (channel == ORA_LOG_CHANNEL_2)
+            ? headers[ii]->channel_2_size : headers[ii]->channel_3_size;
+        if (wanted > size) {
+            size = wanted;
+        }
+    }
+    return size;
+}
+
+static void launch_log_channels(void) {
+    for (uint8_t channel = ORA_LOG_CHANNEL_2; channel <= ORA_LOG_CHANNEL_3; channel++) {
+        uint16_t size = log_channel_size(channel);
+        uint32_t addr;
+        char *buffer = NULL;
+        if ((size != 0u) && usb_dpram_pool_alloc(size, &addr)) {
+            buffer = usb_dpram_ptr(addr);
+        }
+        onerom_rtt_set_buffer(channel, buffer, size);
+    }
+}
+
+ora_result_t ora_alloc_mem(const ora_alloc_request_t *req, uint32_t *addr_out) {
+    if ((req == NULL) || (addr_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (req->size < ALLOC_REQUEST_MIN_SIZE) {
+        return ORA_RESULT_INVALID_SIZE;
+    }
+    if ((req->reserved[0] != 0u) || (req->bytes == 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    const uint32_t limitations = ORA_MEM_ACCEPT_ALIGNED_ONLY
+        | ORA_MEM_ACCEPT_NO_EXEC | ORA_MEM_ACCEPT_SLOWER;
+    if (((req->accept & limitations) != limitations)
+        || (req->max_access_cycles < USB_DPRAM_ACCESS_CYCLES)) {
+        return ORA_RESULT_INSUFFICIENT_FREE_MEM;
+    }
+
+    if (!usb_dpram_pool_alloc(req->bytes, addr_out)) {
+        return ORA_RESULT_INSUFFICIENT_FREE_MEM;
+    }
+    return ORA_RESULT_OK;
 }
 
 void ora_log(const char* msg, ...) {
@@ -414,6 +818,7 @@ uint8_t ora_is_pin_output(uint8_t pin) {
 #endif // !TEST_BUILD
 }
 
+SIZE_OPTIMISED
 uint8_t ora_get_data_pin_nums(uint8_t *data_pins_out, uint8_t num_pins) {
     uint8_t got_pins = 0;
 
@@ -569,6 +974,7 @@ uint8_t ora_get_ram_slot_count(void) {
     return (uint8_t)count;
 }
 
+SIZE_OPTIMISED
 ora_result_t ora_get_ram_slot_info(
     uint8_t   ram_slot,
     uint32_t *addr_out,
@@ -594,6 +1000,7 @@ ora_result_t ora_get_ram_slot_info(
     return ORA_RESULT_OK;
 }
 
+SIZE_OPTIMISED
 ora_result_t ora_get_active_ram_slot(uint8_t *ram_slot_out) {
     if (ram_slot_out == NULL) {
         return ORA_RESULT_INVALID_ARG;
@@ -673,6 +1080,7 @@ static const onerom_rom_slot_t *get_flash_slot_slot(uint8_t flash_slot, uint32_t
     return NULL;
 }
 
+SIZE_OPTIMISED
 uint8_t ora_get_flash_slot_count(uint32_t flags) {
     uint8_t count = 0;
     uint8_t rom_slot_count = METADATA->rom_slot_count;
@@ -740,6 +1148,29 @@ ora_result_t ora_get_flash_slot_ext_info(
     }
     if (rbcp_rom_type_out != NULL) {
         *rbcp_rom_type_out = (uint32_t)rom->rbcp_rom_type;
+    }
+
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_get_flash_slot_addr(
+    uint8_t flash_slot,
+    uint32_t flags,
+    uint32_t *addr_out,
+    uint32_t *size_out
+) {
+    const onerom_rom_slot_t *slot = get_flash_slot_slot(flash_slot, flags);
+    if ((slot == NULL) ||
+        ((uintptr_t)slot->data == ROM_SLOT_NO_IMAGE) ||
+        !rom_slot_in_flash(slot)) {
+        return ORA_RESULT_INVALID_SLOT;
+    }
+
+    if (addr_out != NULL) {
+        *addr_out = rom_slot_flash_addr(slot);
+    }
+    if (size_out != NULL) {
+        *size_out = slot->size;
     }
 
     return ORA_RESULT_OK;
@@ -819,6 +1250,10 @@ ora_result_t ora_get_metadata_str(ora_metadata_key_t key, const char **out) {
     }
 }
 
+// clk_peri's frequency set up by setup_clk_peri() in rp235x.c.
+#define CLK_PERI_HZ  48000000u
+
+SIZE_OPTIMISED
 ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
     if (out == NULL) {
         return ORA_RESULT_INVALID_ARG;
@@ -843,6 +1278,9 @@ ora_result_t ora_get_metadata_uint(ora_metadata_key_t key, uint32_t *out) {
             *out = (key == ORA_METADATA_KEY_FLASH_CS0_SIZE) ? cs0 : cs1;
             return ORA_RESULT_OK;
         }
+        case ORA_METADATA_KEY_CLK_PERI_HZ:
+            *out = CLK_PERI_HZ;
+            return ORA_RESULT_OK;
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
@@ -866,9 +1304,45 @@ ora_result_t ora_get_metadata_uint_at(
     // the default below.
     switch (key) {
         ONEROM_METADATA_UINT_AT_CASES(index, out)
+        case ORA_METADATA_KEY_CHIP_ID: {
+            uint8_t byte;
+            if (!otp_chip_id_byte(index, &byte)) {
+                return ORA_RESULT_INVALID_ARG;
+            }
+            *out = byte;
+            return ORA_RESULT_OK;
+        }
         default:
             return ORA_RESULT_NOT_SUPPORTED;
     }
+}
+
+ora_result_t ora_get_commissioning_value(
+    uint16_t key,
+    const uint8_t **value_out,
+    uint16_t *len_out
+) {
+    if ((key == OTP_KEY_NONE) || (value_out == NULL) || (len_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint16_t row;
+    if (!otp_commissioning_value(key, &row, len_out)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    *value_out = (const uint8_t *)otp_ecc_bytes(row);
+    return ORA_RESULT_OK;
+}
+
+ora_result_t ora_get_commissioning_instance(const uint8_t **instance_out, uint16_t *len_out) {
+    if ((instance_out == NULL) || (len_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint16_t row;
+    if (!otp_commissioning_instance(&row, len_out)) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    *instance_out = (const uint8_t *)otp_ecc_bytes(row);
+    return ORA_RESULT_OK;
 }
 
 ora_result_t ora_demangle_data(uint8_t physical_data, uint8_t *logical_data_out) {
@@ -928,14 +1402,40 @@ static void yield_wait_for_resume(void) {
         "bx   lr                    \n"
     );
 }
+
+// Acknowledges the other core's exclusive mode request and waits for it to
+// exit exclusive mode.  Flash may be unreadable for this period, so
+// yield_wait_for_resume is copied onto the stack and run from there.
+//
+// Not inlined, so the stub buffer is on the stack only while this runs.
+// ora_launch_plugins() calls ora_yield() when there's no user plugin, and
+// calls the user plugin otherwise.  Inlined there, the buffer would be part of
+// ora_launch_plugins()'s stack frame and take YIELD_BUF_SIZE bytes of the user
+// plugin's stack for as long as the plugin runs.
+__attribute__((noinline))
+static void yield_pause(void) {
+    uintptr_t fn_start = (uintptr_t)__yield_wait_for_resume_start & ~1u;
+    // fn_size fitting in YIELD_BUF_SIZE is asserted by the linker in
+    // flash_rodata.ld
+    size_t fn_size = __yield_wait_for_resume_end - __yield_wait_for_resume_start;
+
+    // volatile stops -O3 unrolling the copy.
+    uint8_t buf[YIELD_BUF_SIZE] __attribute__((aligned(4)));
+    volatile uint8_t *dst = buf;
+    for (size_t i = 0; i < fn_size; i++) {
+        dst[i] = ((const uint8_t *)fn_start)[i];
+    }
+
+    ((void (*)(void))((uintptr_t)buf | 1u))();
+
+    // Uses buf after the call so it can't be a tail call.  A tail call frees
+    // buf before jumping into it, and an interrupt arriving before the stub
+    // disables interrupts would then overwrite the stub.
+    __asm volatile ("" : : "r" (buf));
+}
+
 #endif // !TEST_BUILD
 
-// Not inlined, because of where it is called from.  ora_launch_plugins() calls
-// this in its no-user-plugin loop, and it also calls the user plugin - so its
-// frame is live for as long as the plugin runs.  Inlined, this function's
-// 64-byte stub buffer lands in that frame and is held for the plugin's whole
-// life on a path the plugin never takes, off a stack the plugin shares.
-__attribute__((noinline))
 ora_result_t ora_yield(uint8_t *was_paused_out) {
 #if !defined(TEST_BUILD)
     if (was_paused_out != NULL) {
@@ -952,23 +1452,9 @@ ora_result_t ora_yield(uint8_t *was_paused_out) {
         return ORA_RESULT_OK;
     }
 
-    // The other core has requested to enter exclusive mode, so we need to
-    // wait for it to finish before processing.  We do this by copying
-    // yield_wait_for_resume onto the stack then executing it.
+    // The other core has requested exclusive mode, so wait for it to exit.
     LOG("Core pausing...");
-
-    uintptr_t fn_start = (uintptr_t)__yield_wait_for_resume_start & ~1u;
-    // fn_size fitting in YIELD_BUF_SIZE is asserted by the linker in
-    // flash_rodata.ld
-    size_t fn_size = __yield_wait_for_resume_end - __yield_wait_for_resume_start;
-
-    uint8_t buf[YIELD_BUF_SIZE] __attribute__((aligned(4)));
-    for (size_t i = 0; i < fn_size; i++) {
-        buf[i] = ((const uint8_t *)fn_start)[i];
-    }
-
-    ((void (*)(void))((uintptr_t)buf | 1u))();
-
+    yield_pause();
     LOG("Core resumed");
 
     if (was_paused_out != NULL) {
@@ -1038,17 +1524,29 @@ ora_result_t ora_enter_exclusive_mode(void) {
 
     LOG("Requesting exclusive mode");
 
-    while (!(SIO_FIFO_ST & 2u)) {
-        ;
-    }
-    SIO_FIFO_WR = EXCLUSIVE_MODE_REQUEST;
-
-    uint32_t ack;
+    // Both cores can request at once, and each then reads the other's request
+    // instead of an acknowledgement.  Core 1, the system plugin's core, has
+    // priority and discards core 0's request.  Core 0 acknowledges core 1's
+    // request, waits for it to exit exclusive mode and then requests again.
+    uint32_t ack = EXCLUSIVE_MODE_REQUEST;
     do {
+        if (ack == EXCLUSIVE_MODE_REQUEST) {
+            while (!(SIO_FIFO_ST & 2u)) {
+                ;
+            }
+            SIO_FIFO_WR = EXCLUSIVE_MODE_REQUEST;
+        }
         while (!(SIO_FIFO_ST & 1u)) {
             ;
         }
         ack = SIO_FIFO_RD;
+        if (ack == EXCLUSIVE_MODE_REQUEST) {
+            if (SIO_CPUID == 1u) {
+                ack = 0u;
+            } else {
+                yield_pause();
+            }
+        }
     } while (ack != EXCLUSIVE_MODE_ACK);
 
     LOG("Exclusive mode granted");
@@ -1114,11 +1612,15 @@ static uint8_t ora_gpio_serving_use(uint8_t gpio) {
     return use;
 }
 
-// Returns what serving uses another GPIO wired to gpio's X pin for, as an
-// ora_gpio_use_t.  ORA_GPIO_USE_FREE where gpio isn't wired to an X pin, or
-// serving doesn't use the other GPIO.
-static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
+// The maximum number of GPIOs ora_gpio_x_pin_others() returns.
+#define MAX_X_PIN_OTHERS  (2 * (MAX_X_PIN_GPIOS - 1))
+
+// Fills others with the other GPIOs wired to gpio's X pin and returns how many
+// there are.  0 where gpio isn't wired to an X pin.
+static unsigned ora_gpio_x_pin_others(uint8_t gpio,
+                                      uint8_t others[MAX_X_PIN_OTHERS]) {
     const uint8_t *x_pins[] = { HW->gpio_x1, HW->gpio_x2 };
+    unsigned count = 0;
 
     for (unsigned ii = 0; ii < (sizeof(x_pins) / sizeof(x_pins[0])); ii++) {
         const uint8_t *x_pin = x_pins[ii];
@@ -1137,15 +1639,35 @@ static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
         for (unsigned jj = 0; jj < MAX_X_PIN_GPIOS; jj++) {
             uint8_t other = x_pin[jj];
             if ((other != gpio) && (other < MAX_GPIOS)) {
-                uint8_t use = ora_gpio_serving_use(other);
-                if (ora_gpio_use_is_busy(use)) {
-                    return use;
-                }
+                others[count++] = other;
             }
         }
     }
 
-    return ORA_GPIO_USE_FREE;
+    return count;
+}
+
+static uint8_t ora_gpio_claimed(uint8_t gpio) {
+    return (RUNTIME->gpio_claims[gpio / 8] >> (gpio % 8)) & 1u;
+}
+
+// Whether gpio, or another GPIO wired to its X pin, is claimed.
+static uint8_t ora_gpio_pin_claimed(uint8_t gpio,
+                                    const uint8_t *others,
+                                    unsigned num_others) {
+    uint8_t claimed = ora_gpio_claimed(gpio);
+    for (unsigned ii = 0; ii < num_others; ii++) {
+        claimed |= ora_gpio_claimed(others[ii]);
+    }
+    return claimed;
+}
+
+// A pin the board doesn't have is set to GPIO_NONE, which is never a valid GPIO.
+static uint8_t ora_gpio_is_system_pin(uint8_t gpio) {
+    return (gpio == HW->gpio_status) ||
+           (gpio == HW->gpio_neopixel) ||
+           (gpio == HW->gpio_vbus) ||
+           (gpio == HW->gpio_ext_flash_cs);
 }
 
 // Returns what One ROM is using gpio for, as an ora_gpio_use_t.  gpio must
@@ -1162,28 +1684,62 @@ static uint8_t ora_gpio_x_pin_use(uint8_t gpio) {
 // An X pin can be wired to two GPIOs, and serving reads it through one of
 // them.  Driving the other GPIO drives the same pin, so a GPIO One ROM doesn't
 // use is reported as what serving uses the other GPIO for.
+//
+// A GPIO One ROM doesn't otherwise use is reported as claimed if it, or the
+// other GPIO on its X pin, is claimed.  A GPIO whose input is forced is counted
+// as unused.
 static uint8_t ora_gpio_get_use(uint8_t gpio) {
     uint8_t use = ora_gpio_serving_use(gpio);
     if (ora_gpio_use_is_busy(use)) {
         return use;
     }
 
-    // System pins.  Each is GPIO_NONE when the board does not have it, and gpio
-    // is known to be less than MAX_GPIOS, so a direct comparison cannot match a
-    // missing pin.
-    if (gpio == HW->gpio_status ||
-        gpio == HW->gpio_neopixel ||
-        gpio == HW->gpio_vbus ||
-        gpio == HW->gpio_ext_flash_cs) {
+    if (ora_gpio_is_system_pin(gpio)) {
         return ORA_GPIO_USE_SYSTEM;
     }
 
-    uint8_t x_pin_use = ora_gpio_x_pin_use(gpio);
-    if (ora_gpio_use_is_busy(x_pin_use)) {
-        return x_pin_use;
+    uint8_t others[MAX_X_PIN_OTHERS];
+    unsigned num_others = ora_gpio_x_pin_others(gpio, others);
+    for (unsigned ii = 0; ii < num_others; ii++) {
+        uint8_t other_use = ora_gpio_serving_use(others[ii]);
+        if (ora_gpio_use_is_busy(other_use)) {
+            return other_use;
+        }
+    }
+
+    if (ora_gpio_pin_claimed(gpio, others, num_others)) {
+        return ORA_GPIO_USE_PLUGIN;
     }
 
     return use;
+}
+
+// Returns every ora_gpio_use_t that applies to gpio using bit N for use N.
+// gpio must already have been range checked before calling this function.
+static uint32_t ora_gpio_get_uses(uint8_t gpio) {
+    uint32_t uses = 0;
+
+    uint8_t use = ora_gpio_serving_use(gpio);
+    if (use != ORA_GPIO_USE_FREE) {
+        uses |= 1u << use;
+    }
+    if (ora_gpio_is_system_pin(gpio)) {
+        uses |= 1u << ORA_GPIO_USE_SYSTEM;
+    }
+
+    uint8_t others[MAX_X_PIN_OTHERS];
+    unsigned num_others = ora_gpio_x_pin_others(gpio, others);
+    for (unsigned ii = 0; ii < num_others; ii++) {
+        uint8_t other_use = ora_gpio_serving_use(others[ii]);
+        if (ora_gpio_use_is_busy(other_use)) {
+            uses |= 1u << other_use;
+        }
+    }
+    if (ora_gpio_pin_claimed(gpio, others, num_others)) {
+        uses |= 1u << ORA_GPIO_USE_PLUGIN;
+    }
+
+    return uses;
 }
 
 ora_result_t ora_gpio_set(uint8_t gpio, uint8_t state, uint32_t flags) {
@@ -1258,6 +1814,7 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
     ora_gpio_info_t info;
     info.size = caller_size;
     info.use = ora_gpio_get_use(gpio);
+    info.uses = ora_gpio_get_uses(gpio);
 #if !defined(TEST_BUILD)
     // One read of GPIOx_STATUS rather than one per field.  The other core's
     // plugin can call ora_gpio_set at any point, so two reads can report a
@@ -1288,26 +1845,32 @@ ora_result_t ora_gpio_query(uint8_t gpio, ora_gpio_info_t *info_out) {
 // Logging API
 // ---------------------------------------------------------------------------
 
-// Which plugin holds each channel's write and read claim, indexed by channel.
-//
-// Zero means unclaimed, so .bss zeroing is the initialiser and this stays
-// correct however many channels the ring gains; a held claim stores the
-// claiming plugin's ora_plugin_type_t plus one.
-static uint8_t ora_log_writer[ONEROM_RTT_CHANNELS];
-static uint8_t ora_log_reader[ONEROM_RTT_CHANNELS];
+// Which plugin holds each channel's write and read claim, as
+// onerom_log_channel_claim_t bits in RUNTIME->log_channel_claims.
+#define ORA_LOG_WRITE   0u
+#define ORA_LOG_READ    1u
+
+STATIC_ASSERT(ONEROM_RTT_CHANNELS == 4, "One claim bit per plugin, direction and channel");
+STATIC_ASSERT(LOG_CLAIM_SYSTEM_WRITE_0 == (1u << 0), "claim bit layout");
+STATIC_ASSERT(LOG_CLAIM_SYSTEM_READ_0 == (1u << 4), "claim bit layout");
+STATIC_ASSERT(LOG_CLAIM_USER_WRITE_0 == (1u << 8), "claim bit layout");
+STATIC_ASSERT(LOG_CLAIM_USER_READ_3 == (1u << 15), "claim bit layout");
+
+static uint16_t ora_log_claim_bit(
+    ora_plugin_type_t plugin,
+    unsigned direction,
+    ora_log_channel_t channel
+) {
+    return (uint16_t)(1u << (((unsigned)plugin * 8u) + (direction * 4u)
+                             + (unsigned)channel));
+}
 
 #if defined(TEST_BUILD)
 // Give the channels back, as a device does by coming up with its RAM zeroed.
-//
-// A test build runs many boots in one process, where these are ordinary statics
-// and nothing clears them.  A plugin that claimed a channel in one run would
-// then find it held by itself in the next, and behave as it does on a device
-// whose channel another plugin owns.  Called from onerom_test_reset().
+// A harness that clears its plugin's state calls this alongside it.  See
+// onerom_test_reset().
 void ora_log_reset_claims(void) {
-    for (unsigned ii = 0; ii < ONEROM_RTT_CHANNELS; ii++) {
-        ora_log_writer[ii] = 0u;
-        ora_log_reader[ii] = 0u;
-    }
+    RUNTIME->log_channel_claims = 0u;
 }
 #endif // TEST_BUILD
 
@@ -1333,6 +1896,78 @@ static ora_plugin_type_t ora_calling_plugin(void) {
 }
 #endif // REAL_HARDWARE
 
+static uint32_t flash_read_word(uint32_t addr) {
+    return (uint32_t)flash_read_byte(addr)
+        | ((uint32_t)flash_read_byte(addr + 1u) << 8)
+        | ((uint32_t)flash_read_byte(addr + 2u) << 16)
+        | ((uint32_t)flash_read_byte(addr + 3u) << 24);
+}
+
+#if !REAL_HARDWARE
+// A test build's flash is the stub's byte model so the block is copied out of
+// it for the caller to read.
+#define PEER_DATA_TEST_MAX_WORDS 16u
+static uint32_t peer_data_test_copy[PEER_DATA_TEST_MAX_WORDS];
+#endif // !REAL_HARDWARE
+
+SIZE_OPTIMISED
+ora_result_t ora_get_peer_data(
+    uint32_t format,
+    uint32_t flags,
+    const uint32_t **block_out
+) {
+    if ((flags != 0u) || (block_out == NULL)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint8_t other_type = (ora_calling_plugin() == ORA_PLUGIN_TYPE_SYSTEM)
+        ? ORA_PLUGIN_TYPE_USER : ORA_PLUGIN_TYPE_SYSTEM;
+    const ora_plugin_header_t *other = (other_type == ORA_PLUGIN_TYPE_USER)
+        ? user_plugin_to_start() : system_plugin_to_start();
+    if ((other == NULL) || (other->peer_data == 0u)) {
+        return ORA_RESULT_NOT_FOUND;
+    }
+
+    uint32_t start = FLASH_CS0_BASE_ADDR + ((other_type == ORA_PLUGIN_TYPE_USER)
+        ? USER_PLUGIN_OFFSET : SYSTEM_PLUGIN_OFFSET);
+    uint32_t end = start + ((other_type == ORA_PLUGIN_TYPE_USER)
+        ? USER_PLUGIN_SIZE : SYSTEM_PLUGIN_SIZE);
+
+    // Each block's size is a multiple of 4 so every block after a 4-byte
+    // aligned first block is aligned too.
+    uint32_t addr = other->peer_data;
+    if (((addr % 4u) != 0u) || (addr < start)) {
+        return ORA_RESULT_NOT_FOUND;
+    }
+    while ((addr < end) && ((end - addr) >= ORA_PEER_DATA_MIN_SIZE)) {
+        uint32_t block_format = flash_read_word(
+            addr + offsetof(ora_peer_data_header_t, format));
+        if (block_format == 0u) {
+            break;
+        }
+        uint32_t size = flash_read_word(
+            addr + offsetof(ora_peer_data_header_t, size));
+        if ((size < ORA_PEER_DATA_MIN_SIZE) || ((size % 4u) != 0u)
+            || (size > (end - addr))) {
+            break;
+        }
+        if (block_format == format) {
+#if REAL_HARDWARE
+            *block_out = (const uint32_t *)(uintptr_t)addr;
+#else // !REAL_HARDWARE
+            assert(size <= sizeof(peer_data_test_copy));
+            for (uint32_t ii = 0; ii < (size / 4u); ii++) {
+                peer_data_test_copy[ii] = flash_read_word(addr + (ii * 4u));
+            }
+            *block_out = peer_data_test_copy;
+#endif // REAL_HARDWARE
+            return ORA_RESULT_OK;
+        }
+        addr += size;
+    }
+    return ORA_RESULT_NOT_FOUND;
+}
+
 // A channel exists if it is in range and has a buffer.  rtt.c decides the
 // second, so adding or removing a channel needs no change here.
 static uint8_t ora_log_channel_exists(ora_log_channel_t channel) {
@@ -1347,13 +1982,13 @@ static uint8_t ora_log_channel_exists(ora_log_channel_t channel) {
 }
 
 // Does the calling plugin hold this claim on this channel?
-static uint8_t ora_log_holds(const uint8_t *claims, ora_log_channel_t channel) {
+static uint8_t ora_log_holds(unsigned direction, ora_log_channel_t channel) {
     if (!ora_log_channel_exists(channel)) {
         return 0u;
     }
 
-    return (claims[(unsigned)channel] ==
-            (uint8_t)(ora_calling_plugin() + 1u)) ? 1u : 0u;
+    uint16_t bit = ora_log_claim_bit(ora_calling_plugin(), direction, channel);
+    return (RUNTIME->log_channel_claims & bit) ? 1u : 0u;
 }
 
 // Spinlock guarding the log claim tables.
@@ -1397,23 +2032,37 @@ static void ora_log_unlock(uint32_t primask) {
 }
 #endif // TEST_BUILD
 
-static ora_result_t ora_log_claim(uint8_t *claims, ora_log_channel_t channel) {
+static ora_result_t ora_log_claim(unsigned direction, ora_log_channel_t channel) {
     ora_result_t result;
 
     if (!ora_log_channel_exists(channel)) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
 
+    uint16_t held = ora_log_claim_bit(ORA_PLUGIN_TYPE_SYSTEM, direction, channel)
+        | ora_log_claim_bit(ORA_PLUGIN_TYPE_USER, direction, channel);
     uint32_t primask = ora_log_lock();
-    if (claims[(unsigned)channel] != 0u) {
+    if (RUNTIME->log_channel_claims & held) {
         result = ORA_RESULT_LOG_CHANNEL_IN_USE;
     } else {
-        claims[(unsigned)channel] = (uint8_t)(ora_calling_plugin() + 1u);
+        RUNTIME->log_channel_claims |=
+            ora_log_claim_bit(ora_calling_plugin(), direction, channel);
         result = ORA_RESULT_OK;
     }
     ora_log_unlock(primask);
 
     return result;
+}
+
+// Release the calling plugin's claim, or return 0 if it doesn't hold it.
+// Called with the claim lock held.
+static uint8_t ora_log_release(unsigned direction, ora_log_channel_t channel) {
+    uint16_t bit = ora_log_claim_bit(ora_calling_plugin(), direction, channel);
+    if (!(RUNTIME->log_channel_claims & bit)) {
+        return 0u;
+    }
+    RUNTIME->log_channel_claims &= (uint16_t)~bit;
+    return 1u;
 }
 
 ora_result_t ora_log_open_write(ora_log_channel_t channel, const char *name) {
@@ -1423,7 +2072,7 @@ ora_result_t ora_log_open_write(ora_log_channel_t channel, const char *name) {
         return ORA_RESULT_INVALID_ARG;
     }
 
-    result = ora_log_claim(ora_log_writer, channel);
+    result = ora_log_claim(ORA_LOG_WRITE, channel);
     if (result != ORA_RESULT_OK) {
         return result;
     }
@@ -1448,7 +2097,7 @@ ora_result_t ora_log_write(ora_log_channel_t channel, const void *buf,
     if (!ora_log_channel_exists(channel)) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
-    if (!ora_log_holds(ora_log_writer, channel)) {
+    if (!ora_log_holds(ORA_LOG_WRITE, channel)) {
         return ORA_RESULT_INVALID_ARG;
     }
 
@@ -1472,14 +2121,13 @@ ora_result_t ora_log_close_write(ora_log_channel_t channel) {
     }
 
     uint32_t primask = ora_log_lock();
-    if (ora_log_writer[(unsigned)channel] !=
-        (uint8_t)(ora_calling_plugin() + 1u)) {
+    if (!ora_log_holds(ORA_LOG_WRITE, channel)) {
         result = ORA_RESULT_INVALID_ARG;
     } else {
         // The name goes back before the claim is released, so the next owner
         // cannot have its own name reverted under it.
         onerom_rtt_set_name((unsigned)channel, NULL);
-        ora_log_writer[(unsigned)channel] = 0u;
+        ora_log_release(ORA_LOG_WRITE, channel);
         result = ORA_RESULT_OK;
     }
     ora_log_unlock(primask);
@@ -1488,7 +2136,7 @@ ora_result_t ora_log_close_write(ora_log_channel_t channel) {
 }
 
 ora_result_t ora_log_open_read(ora_log_channel_t channel) {
-    return ora_log_claim(ora_log_reader, channel);
+    return ora_log_claim(ORA_LOG_READ, channel);
 }
 
 ora_result_t ora_log_read(ora_log_channel_t channel, void *buf,
@@ -1499,7 +2147,7 @@ ora_result_t ora_log_read(ora_log_channel_t channel, void *buf,
     if (!ora_log_channel_exists(channel)) {
         return ORA_RESULT_NOT_SUPPORTED;
     }
-    if (!ora_log_holds(ora_log_reader, channel)) {
+    if (!ora_log_holds(ORA_LOG_READ, channel)) {
         return ORA_RESULT_INVALID_ARG;
     }
 
@@ -1517,13 +2165,8 @@ ora_result_t ora_log_close_read(ora_log_channel_t channel) {
     }
 
     uint32_t primask = ora_log_lock();
-    if (ora_log_reader[(unsigned)channel] !=
-        (uint8_t)(ora_calling_plugin() + 1u)) {
-        result = ORA_RESULT_INVALID_ARG;
-    } else {
-        ora_log_reader[(unsigned)channel] = 0u;
-        result = ORA_RESULT_OK;
-    }
+    result = ora_log_release(ORA_LOG_READ, channel)
+        ? ORA_RESULT_OK : ORA_RESULT_INVALID_ARG;
     ora_log_unlock(primask);
 
     return result;
@@ -1755,6 +2398,459 @@ ora_result_t ora_set_standby(uint8_t standby, uint32_t flags) {
     return ORA_RESULT_OK;
 }
 
+// ---------------------------------------------------------------------------
+// Hardware claims
+// ---------------------------------------------------------------------------
+
+STATIC_ASSERT(DMA_CHANNEL_COUNT == (sizeof(RUNTIME->dma_channel_claims) * 8),
+              "One claim bit per DMA channel");
+STATIC_ASSERT(HW_CLAIM_UART_1 == (HW_CLAIM_UART_0 << 1), "UART claim bit layout");
+STATIC_ASSERT(UART_COUNT == 2, "One claim bit per UART");
+
+// Both plugins can claim hardware so a spinlock is used to guard the claims
+// between cores.  See ora_log_lock() for why interrupts are masked while it is
+// held.  The lock functions are noinline to save flash.
+#if defined(TEST_BUILD)
+static uint32_t hw_claim_lock(void) { return 0u; }
+static void hw_claim_unlock(uint32_t primask) { (void)primask; }
+#else
+static __attribute__((noinline)) uint32_t hw_claim_lock(void) {
+    uint32_t primask;
+
+    __asm volatile ("mrs %0, primask \n\t"
+                    "cpsid i"
+                    : "=r" (primask) :: "memory");
+
+    while (SIO_SPINLOCK(SPINLOCK_HW_CLAIM) == 0u)
+        ;
+    __asm volatile ("dmb" ::: "memory");
+
+    return primask;
+}
+
+static __attribute__((noinline)) void hw_claim_unlock(uint32_t primask) {
+    __asm volatile ("dmb" ::: "memory");
+    SIO_SPINLOCK(SPINLOCK_HW_CLAIM) = 0u;
+    __asm volatile ("msr primask, %0" :: "r" (primask) : "memory");
+}
+#endif // TEST_BUILD
+
+// hw_claim_field_t identifies the runtime info field that contains the claims
+// for one ora_hw_t type of hardware peripheral.  Instance N's claim is bit
+// (shift + N) of that field.
+typedef struct {
+    uint8_t offset;
+    uint8_t size;
+    uint8_t shift;
+    uint8_t count;
+} hw_claim_field_t;
+
+#define HW_CLAIM_FIELD(field, bit, count) {                       \
+    offsetof(onerom_runtime_info_t, field),                       \
+    sizeof(((onerom_runtime_info_t *)0)->field),                  \
+    __builtin_ctz(bit),                                           \
+    (count),                                                      \
+}
+
+static const hw_claim_field_t hw_claim_fields[] = {
+    [ORA_HW_DMA_CHANNEL] = HW_CLAIM_FIELD(dma_channel_claims, 1u, DMA_CHANNEL_COUNT),
+    [ORA_HW_UART]        = HW_CLAIM_FIELD(hw_claims, HW_CLAIM_UART_0, UART_COUNT),
+    [ORA_HW_I2C]         = HW_CLAIM_FIELD(hw_claims, HW_CLAIM_I2C_0, 2),
+    [ORA_HW_SPI]         = HW_CLAIM_FIELD(hw_claims, HW_CLAIM_SPI_0, 2),
+    [ORA_HW_ADC]         = HW_CLAIM_FIELD(hw_claims, HW_CLAIM_ADC, 1),
+    [ORA_HW_USB]         = HW_CLAIM_FIELD(hw_claims, HW_CLAIM_USB, 1),
+    [ORA_HW_SHA256]      = HW_CLAIM_FIELD(hw_claims2, HW_CLAIM2_SHA256, 1),
+    [ORA_HW_TRNG]        = HW_CLAIM_FIELD(hw_claims2, HW_CLAIM2_TRNG, 1),
+    [ORA_HW_TIMER_ALARM] = HW_CLAIM_FIELD(timer_alarm_claims, 1u, TIMER_ALARM_COUNT),
+    [ORA_HW_SPINLOCK]    = HW_CLAIM_FIELD(spinlock_claims, 1u, SPINLOCK_COUNT),
+    [ORA_HW_PWM_SLICE]   = HW_CLAIM_FIELD(pwm_slice_claims, 1u, PWM_SLICE_COUNT),
+};
+#define HW_CLAIM_FIELD_COUNT (sizeof(hw_claim_fields) / sizeof(hw_claim_fields[0]))
+STATIC_ASSERT(HW_CLAIM_FIELD_COUNT == ORA_HW_IRQ, "hw_claim_fields covers every ora_hw_t before ORA_HW_IRQ");
+STATIC_ASSERT(HW_CLAIM_I2C_1 == (HW_CLAIM_I2C_0 << 1), "HW_CLAIM_I2C_1 is the bit after HW_CLAIM_I2C_0");
+STATIC_ASSERT(HW_CLAIM_SPI_1 == (HW_CLAIM_SPI_0 << 1), "HW_CLAIM_SPI_1 is the bit after HW_CLAIM_SPI_0");
+STATIC_ASSERT(sizeof(RUNTIME->timer_alarm_claims) * 8 == TIMER_ALARM_COUNT,
+              "One claim bit per timer alarm");
+STATIC_ASSERT(sizeof(RUNTIME->spinlock_claims) * 8 == SPINLOCK_COUNT,
+              "One claim bit per spinlock");
+STATIC_ASSERT(sizeof(RUNTIME->pwm_slice_claims) * 8 >= PWM_SLICE_COUNT,
+              "One claim bit per PWM slice");
+
+static uint32_t hw_claim_read(const hw_claim_field_t *f) {
+    const volatile uint8_t *p = (const volatile uint8_t *)RUNTIME + f->offset;
+    switch (f->size) {
+        case 1:
+            return *p;
+        case 2:
+            return *(const volatile uint16_t *)p;
+        default:
+            return *(const volatile uint32_t *)p;
+    }
+}
+
+static void hw_claim_write(const hw_claim_field_t *f, uint32_t claims) {
+    volatile uint8_t *p = (volatile uint8_t *)RUNTIME + f->offset;
+    switch (f->size) {
+        case 1:
+            *p = (uint8_t)claims;
+            break;
+        case 2:
+            *(volatile uint16_t *)p = (uint16_t)claims;
+            break;
+        default:
+            *(volatile uint32_t *)p = claims;
+            break;
+    }
+}
+
+// Interrupts a plugin can't claim.  IRQ_USBCTRL_IRQ is claimed only by the USB
+// reservation.
+#define IRQ_BIT(irq) (1ull << (irq))
+#define FIRMWARE_IRQS (IRQ_BIT(IRQ_TIMER0_IRQ_0) | IRQ_BIT(IRQ_TIMER0_IRQ_1) |  \
+    IRQ_BIT(IRQ_DMA_IRQ_0) | IRQ_BIT(IRQ_USBCTRL_IRQ) |                        \
+    IRQ_BIT(IRQ_IO_IRQ_BANK0_NS) | IRQ_BIT(IRQ_IO_IRQ_QSPI) |                  \
+    IRQ_BIT(IRQ_IO_IRQ_QSPI_NS) | IRQ_BIT(IRQ_SIO_IRQ_FIFO) |                  \
+    IRQ_BIT(IRQ_SIO_IRQ_FIFO_NS) | IRQ_BIT(IRQ_SIO_IRQ_BELL_NS) |              \
+    IRQ_BIT(IRQ_CLOCKS_IRQ) | IRQ_BIT(IRQ_OTP_IRQ) |                           \
+    IRQ_BIT(IRQ_PROC0_IRQ_CTI) | IRQ_BIT(IRQ_PROC1_IRQ_CTI) |                  \
+    IRQ_BIT(IRQ_PLL_SYS_IRQ) | IRQ_BIT(IRQ_PLL_USB_IRQ) |                      \
+    IRQ_BIT(IRQ_POWMAN_IRQ_POW) | IRQ_BIT(IRQ_POWMAN_IRQ_TIMER))
+
+// Interrupts that exist on both cores, so both plugins can claim them.
+#define PER_CORE_IRQS (IRQ_BIT(IRQ_IO_IRQ_BANK0) | IRQ_BIT(IRQ_SIO_IRQ_BELL) |  \
+    IRQ_BIT(IRQ_SIO_IRQ_MTIMECMP))
+
+STATIC_ASSERT(RP2350_IRQ_COUNT == (IRQ_SPARE_IRQ_5 + 1), "RP2350_IRQ_COUNT matches onerom_irq_t");
+STATIC_ASSERT(sizeof(RUNTIME->irq_claims_system) * 8 >= RP2350_IRQ_COUNT,
+              "One claim bit per interrupt");
+STATIC_ASSERT(sizeof(RUNTIME->irq_claims_user) == sizeof(RUNTIME->irq_claims_system),
+              "Both plugins' interrupt claims are the same size");
+
+static volatile uint8_t *irq_claims(ora_plugin_type_t plugin) {
+    return (plugin == ORA_PLUGIN_TYPE_SYSTEM) ? RUNTIME->irq_claims_system
+                                              : RUNTIME->irq_claims_user;
+}
+
+static uint8_t irq_claimed(const volatile uint8_t *claims, uint32_t irq) {
+    return (claims[irq / 8] >> (irq % 8)) & 1u;
+}
+
+static void irq_claim(volatile uint8_t *claims, uint32_t irq) {
+    claims[irq / 8] |= (uint8_t)(1u << (irq % 8));
+}
+
+SIZE_OPTIMISED
+static ora_result_t ora_claim_irq(uint32_t *instance) {
+    uint32_t wanted = *instance;
+    if ((wanted != ORA_HW_ANY) && (wanted >= RP2350_IRQ_COUNT)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint32_t first = (wanted == ORA_HW_ANY) ? 0u : wanted;
+    uint32_t last = (wanted == ORA_HW_ANY) ? (RP2350_IRQ_COUNT - 1u) : wanted;
+
+    ora_plugin_type_t plugin = ora_calling_plugin();
+    volatile uint8_t *own = irq_claims(plugin);
+    volatile uint8_t *other = irq_claims((plugin == ORA_PLUGIN_TYPE_SYSTEM)
+                                         ? ORA_PLUGIN_TYPE_USER
+                                         : ORA_PLUGIN_TYPE_SYSTEM);
+
+    uint32_t irq;
+    uint32_t primask = hw_claim_lock();
+    for (irq = first; irq <= last; irq++) {
+        if (((FIRMWARE_IRQS >> irq) & 1u) || irq_claimed(own, irq)) {
+            continue;
+        }
+        if (!((PER_CORE_IRQS >> irq) & 1u) && irq_claimed(other, irq)) {
+            continue;
+        }
+        irq_claim(own, irq);
+        break;
+    }
+    hw_claim_unlock(primask);
+
+    if (irq > last) {
+        return ORA_RESULT_IN_USE;
+    }
+    *instance = irq;
+    return ORA_RESULT_OK;
+}
+
+// Returns 1 if plugin owns the USB reservation.  Only usb_reserve() claims
+// IRQ_USBCTRL_IRQ, so a plugin with that interrupt claimed owns the
+// reservation.
+uint8_t usb_reserved_by(ora_plugin_type_t plugin) {
+    return irq_claimed(irq_claims(plugin), IRQ_USBCTRL_IRQ);
+}
+
+SIZE_OPTIMISED
+ora_result_t ora_claim_hw(ora_hw_t hw, uint32_t *instance, uint32_t flags) {
+    if (hw > ORA_HW_IRQ) {
+        return ORA_RESULT_NOT_SUPPORTED;
+    }
+    if ((instance == NULL) || (flags != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if (hw == ORA_HW_IRQ) {
+        return ora_claim_irq(instance);
+    }
+
+    const hw_claim_field_t *f = &hw_claim_fields[hw];
+    uint32_t wanted = *instance;
+    if ((wanted != ORA_HW_ANY) && (wanted >= f->count)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((hw == ORA_HW_USB) && usb_reserved_by(ora_calling_plugin())) {
+        *instance = 0u;
+        return ORA_RESULT_OK;
+    }
+
+    uint32_t all = (f->count == 32u) ? 0xFFFFFFFFu : ((1u << f->count) - 1u);
+    uint32_t candidates = ((wanted == ORA_HW_ANY) ? all : (1u << wanted)) << f->shift;
+
+    uint32_t primask = hw_claim_lock();
+    uint32_t claims = hw_claim_read(f);
+    uint32_t free = candidates & ~claims;
+    if (free != 0u) {
+        hw_claim_write(f, claims | (free & -free));
+    }
+    hw_claim_unlock(primask);
+
+    if (free == 0u) {
+        return ORA_RESULT_IN_USE;
+    }
+    *instance = (uint32_t)__builtin_ctz(free) - f->shift;
+    return ORA_RESULT_OK;
+}
+
+SIZE_OPTIMISED
+ora_result_t ora_set_irq_enabled(ora_irq_t irq, uint8_t enable, uint32_t flags) {
+    if ((irq >= RP2350_IRQ_COUNT) || (enable > 1u) || (flags != 0u)
+        || !irq_claimed(irq_claims(ora_calling_plugin()), irq)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    ora_enable_irq(irq, enable);
+    return ORA_RESULT_OK;
+}
+
+// Reserves the USB controller and its interrupt for a plugin whose header has
+// set ORA_PROPERTY1_RESERVE_USB, unless the USB controller is already claimed.
+// Returns ORA_ENTRY_FLAG_USB_RESERVED if this call reserved them.
+SIZE_OPTIMISED
+uint8_t usb_reserve(const ora_plugin_header_t *header, ora_plugin_type_t plugin) {
+    if ((header == NULL) || !(header->properties1 & ORA_PROPERTY1_RESERVE_USB)) {
+        return 0u;
+    }
+
+    uint8_t reserved = 0u;
+    uint32_t primask = hw_claim_lock();
+    if (!(RUNTIME->hw_claims & HW_CLAIM_USB)) {
+        RUNTIME->hw_claims |= HW_CLAIM_USB;
+        irq_claim(irq_claims(plugin), IRQ_USBCTRL_IRQ);
+        reserved = ORA_ENTRY_FLAG_USB_RESERVED;
+    }
+    hw_claim_unlock(primask);
+
+    return reserved;
+}
+
+STATIC_ASSERT(sizeof(RUNTIME->gpio_claims) * 8 == RP2350B_GPIO_COUNT,
+              "One claim bit per GPIO");
+
+ora_result_t ora_claim_gpio(uint32_t gpio, uint32_t flags) {
+    ora_result_t result;
+
+    if ((gpio >= MAX_GPIOS) || (flags != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    // A claimed GPIO is ORA_GPIO_USE_PLUGIN, which counts as busy.
+    uint32_t primask = hw_claim_lock();
+    if (ora_gpio_use_is_busy(ora_gpio_get_use((uint8_t)gpio))) {
+        result = ORA_RESULT_IN_USE;
+    } else {
+        RUNTIME->gpio_claims[gpio / 8] |= (uint8_t)(1u << (gpio % 8));
+        result = ORA_RESULT_OK;
+    }
+    hw_claim_unlock(primask);
+
+    return result;
+}
+
+STATIC_ASSERT(PIO_CLAIM_BLOCK_0_SMS == ((1u << APIO_MAX_SMS_PER_BLOCK) - 1u),
+              "One claim bit per PIO state machine");
+STATIC_ASSERT((PIO_CLAIM_BLOCK_1_SMS == (PIO_CLAIM_BLOCK_0_SMS << PIO_CLAIM_SMS_SHIFT(1))) &&
+              (PIO_CLAIM_BLOCK_2_SMS == (PIO_CLAIM_BLOCK_0_SMS << PIO_CLAIM_SMS_SHIFT(2))),
+              "PIO state machine claim bit layout");
+STATIC_ASSERT((PIO_CLAIM_BLOCK_1_GPIOBASE_16 == PIO_CLAIM_GPIOBASE_16(1)) &&
+              (PIO_CLAIM_BLOCK_2_GPIOBASE_16 == PIO_CLAIM_GPIOBASE_16(2)),
+              "PIO GPIOBASE bit layout");
+STATIC_ASSERT(APIO_MAX_PIO_BLOCKS == (sizeof(RUNTIME->pio_instr_claims) /
+                                      sizeof(RUNTIME->pio_instr_claims[0])),
+              "One instruction claim word per PIO block");
+STATIC_ASSERT(APIO_MAX_PIO_INSTRS == (sizeof(RUNTIME->pio_instr_claims[0]) * 8),
+              "One claim bit per PIO instruction");
+
+// pio_find_free_instrs() found no free instructions.
+#define PIO_NO_FREE_INSTRS  0xFFFFFFFFu
+
+// Finds num_instrs consecutive free instructions in a block, where claimed is
+// the block's already claimed instructions, using bit N for instruction N.
+// Returns the first of those instructions, or PIO_NO_FREE_INSTRS.
+//
+// - If wanted is an instruction number the free instructions must start at
+//   wanted.
+// - If wanted is ORA_PIO_INSTR_ANY the lowest-numbered free instructions are
+//   found.
+static uint32_t pio_find_free_instrs(uint32_t claimed, uint32_t wanted, uint32_t num_instrs) {
+    if (wanted != ORA_PIO_INSTR_ANY) {
+        return (claimed & pio_instr_run(wanted, num_instrs)) ? PIO_NO_FREE_INSTRS : wanted;
+    }
+
+    // Bit N of starts is set if num_instrs free instructions start at
+    // instruction N.  Each shift fills the top bits with zeros, which count as
+    // claimed, so a run can't extend past instruction 31.
+    uint32_t free = ~claimed;
+    uint32_t starts = free;
+    for (uint32_t i = 1; i < num_instrs; i++) {
+        starts &= free >> i;
+    }
+    return (starts != 0u) ? (uint32_t)__builtin_ctz(starts) : PIO_NO_FREE_INSTRS;
+}
+
+// Claim a state machine and a run of instructions in one block.  Returns
+// ORA_RESULT_CONFLICT if the block's claims set the other GPIOBASE, and
+// ORA_RESULT_IN_USE if it has no free state machine or run.  Called with the
+// claim lock held.  Marked noinline because -O3 would otherwise make a copy
+// for each block ora_claim_pio() checks.
+__attribute__((noinline))
+SIZE_OPTIMISED
+static ora_result_t pio_claim_in_block(uint32_t block,
+                                       uint32_t sm_choices,
+                                       uint32_t wanted_instr,
+                                       uint32_t num_instrs,
+                                       ora_pio_gpiobase_t gpio_base,
+                                       uint32_t *sm,
+                                       uint32_t *first_instr) {
+    uint32_t block_claims = RUNTIME->pio_block_claims;
+    uint32_t sms = pio_block_claimed_sms(block);
+    uint32_t instrs = RUNTIME->pio_instr_claims[block];
+    uint8_t in_use = pio_block_in_use(block);
+    uint32_t want_16 = (gpio_base == ORA_PIO_GPIOBASE_16) ? 1u : 0u;
+
+    if (in_use && (pio_block_gpiobase(block) != gpio_base)) {
+        return ORA_RESULT_CONFLICT;
+    }
+    uint32_t free_sms = sm_choices & ~sms;
+    uint32_t first = pio_find_free_instrs(instrs, wanted_instr, num_instrs);
+    if ((free_sms == 0u) || (first == PIO_NO_FREE_INSTRS)) {
+        return ORA_RESULT_IN_USE;
+    }
+
+    *sm = (uint32_t)__builtin_ctz(free_sms);
+    *first_instr = first;
+    block_claims |= (1u << *sm) << PIO_CLAIM_SMS_SHIFT(block);
+    if (!in_use) {
+        if (want_16) {
+            block_claims |= PIO_CLAIM_GPIOBASE_16(block);
+        } else {
+            block_claims &= ~PIO_CLAIM_GPIOBASE_16(block);
+        }
+        pio_set_gpiobase((uint8_t)block, gpio_base);
+    }
+    RUNTIME->pio_block_claims = (uint16_t)block_claims;
+    RUNTIME->pio_instr_claims[block] = instrs | pio_instr_run(first, num_instrs);
+    return ORA_RESULT_OK;
+}
+
+SIZE_OPTIMISED
+ora_result_t ora_claim_pio(uint32_t *block,
+                           uint32_t *sm,
+                           uint32_t *first_instr,
+                           uint32_t num_instrs,
+                           ora_pio_gpiobase_t gpio_base,
+                           uint32_t flags) {
+    if ((block == NULL) || (sm == NULL) || (first_instr == NULL) || (flags != 0u)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((num_instrs == 0u) || (num_instrs > APIO_MAX_PIO_INSTRS)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((gpio_base != ORA_PIO_GPIOBASE_0) && (gpio_base != ORA_PIO_GPIOBASE_16)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    uint32_t wanted_block = *block;
+    uint32_t wanted_sm = *sm;
+    uint32_t wanted_instr = *first_instr;
+    if (wanted_block == ORA_PIO_BLOCK_ANY) {
+        if ((wanted_sm != ORA_PIO_SM_ANY) || (wanted_instr != ORA_PIO_INSTR_ANY)) {
+            return ORA_RESULT_INVALID_ARG;
+        }
+    } else if (wanted_block >= APIO_MAX_PIO_BLOCKS) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((wanted_sm != ORA_PIO_SM_ANY) && (wanted_sm >= APIO_MAX_SMS_PER_BLOCK)) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+    if ((wanted_instr != ORA_PIO_INSTR_ANY) &&
+        (wanted_instr > (APIO_MAX_PIO_INSTRS - num_instrs))) {
+        return ORA_RESULT_INVALID_ARG;
+    }
+
+    uint32_t sm_choices = (wanted_sm == ORA_PIO_SM_ANY)
+        ? PIO_CLAIM_BLOCK_0_SMS : (1u << wanted_sm);
+    uint32_t claimed_sm = 0;
+    uint32_t claimed_instr = 0;
+    ora_result_t result;
+    uint32_t b;
+
+    uint32_t primask = hw_claim_lock();
+    if (wanted_block != ORA_PIO_BLOCK_ANY) {
+        b = wanted_block;
+        result = pio_claim_in_block(b, sm_choices, wanted_instr, num_instrs,
+                                    gpio_base, &claimed_sm, &claimed_instr);
+    } else {
+        // Skip any block the claim can't use, including one with the other
+        // GPIOBASE.
+        result = ORA_RESULT_IN_USE;
+        for (b = 0; (b < APIO_MAX_PIO_BLOCKS) && (result != ORA_RESULT_OK); b++) {
+            result = pio_claim_in_block(b, sm_choices, wanted_instr, num_instrs,
+                                        gpio_base, &claimed_sm, &claimed_instr);
+        }
+        b--;
+        if (result != ORA_RESULT_OK) {
+            result = ORA_RESULT_IN_USE;
+        }
+    }
+    hw_claim_unlock(primask);
+
+    if (result == ORA_RESULT_OK) {
+        *block = b;
+        *sm = claimed_sm;
+        *first_instr = claimed_instr;
+    }
+    return result;
+}
+
+// Plugin claims can't be released.
+void pio_release(uint8_t block, uint8_t sm, uint8_t first_instr, uint8_t num_instrs) {
+    uint32_t primask = hw_claim_lock();
+    RUNTIME->pio_block_claims &= (uint16_t)~((1u << sm) << PIO_CLAIM_SMS_SHIFT(block));
+    RUNTIME->pio_instr_claims[block] &= ~pio_instr_run(first_instr, num_instrs);
+    hw_claim_unlock(primask);
+}
+
+// Both plugins can set up the address monitor at once.  Only the first call
+// records its state machines.
+uint8_t addr_monitor_pio_record(uint8_t addr_monitor_pio) {
+    uint32_t primask = hw_claim_lock();
+    uint8_t recorded = (RUNTIME->addr_monitor_pio == ADDR_MONITOR_PIO_NONE);
+    if (recorded) {
+        RUNTIME->addr_monitor_pio = addr_monitor_pio;
+    }
+    hw_claim_unlock(primask);
+    return recorded;
+}
+
 void *ora_fn_lookup(api_id_t id) {
     switch (id) {
         case ORA_ID_REBOOT_BOOTSEL:
@@ -1888,6 +2984,27 @@ void *ora_fn_lookup(api_id_t id) {
             return ora_firmware_state_query;
         case ORA_ID_SET_STANDBY:
             return ora_set_standby;
+        case ORA_ID_GET_COMMISSIONING_VALUE:
+            return ora_get_commissioning_value;
+
+        case ORA_ID_REBOOT:
+            return ora_reboot;
+        case ORA_ID_GET_FLASH_SLOT_ADDR:
+            return ora_get_flash_slot_addr;
+        case ORA_ID_GET_COMMISSIONING_INSTANCE:
+            return ora_get_commissioning_instance;
+        case ORA_ID_ALLOC_MEM:
+            return ora_alloc_mem;
+        case ORA_ID_GET_PEER_DATA:
+            return ora_get_peer_data;
+        case ORA_ID_CLAIM_HW:
+            return ora_claim_hw;
+        case ORA_ID_SET_IRQ_ENABLED:
+            return ora_set_irq_enabled;
+        case ORA_ID_CLAIM_GPIO:
+            return ora_claim_gpio;
+        case ORA_ID_CLAIM_PIO:
+            return ora_claim_pio;
 
         // Deprecated functions
         case ORA_ID_GET_FIRMWARE_INFO:
@@ -1895,6 +3012,165 @@ void *ora_fn_lookup(api_id_t id) {
         default:
             return NULL;
     }
+}
+
+#if REAL_HARDWARE
+static char *usb_dpram_log(void) {
+    return (char *)(uintptr_t)USB_DPRAM_LOG_ADDR;
+}
+#else // !REAL_HARDWARE
+static char *usb_dpram_log(void) {
+    return stub_usb_dpram_log();
+}
+#endif // REAL_HARDWARE
+
+static uint8_t launch_log_move(uint8_t entry_flags) {
+    if (!(entry_flags & ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN)) {
+        return 0;
+    }
+
+    if (!onerom_rtt_move_log(usb_dpram_log(), USB_DPRAM_LOG_SIZE)) {
+        return 0;
+    }
+    RUNTIME->firmware_flags |= FIRMWARE_FLAG_LOG_IN_UP1;
+    return 1;
+}
+
+uint8_t launch_usb_dpram(uint8_t entry_flags) {
+    // After a warm reboot the USB controller can hold old state.  It is reset
+    // before the log and the pool use USB DPRAM because a reset interrupts
+    // access to USB DPRAM.
+    usb_controller_reset_and_release();
+
+    uint8_t moved = launch_log_move(entry_flags);
+    usb_dpram_pool_init();
+    launch_log_channels();
+    return moved;
+}
+
+// MUST be kept in sync with the values in plugin.ld and changing them forces
+// a change to the plugin version.
+#define SYSTEM_PLUGIN_ARGS(entry_flags) {   \
+    .core = ORA_CORE_1,                     \
+    .flags = (entry_flags),                 \
+    .static_ram_base = 0x20081000,          \
+    .static_ram_size = 0x800,               \
+    .stack_top = 0x20081C00,                \
+    .stack_size = 0x400,                    \
+}
+// Note this arbitrarily splits the available 0x400 bytes in half, with one
+// half for static RAM and the other half for stack - it's up to the plugin to
+// manage.
+#define USER_PLUGIN_ARGS(entry_flags) {     \
+    .core = ORA_CORE_0,                     \
+    .flags = (entry_flags),                 \
+    .static_ram_base = 0x20081C00,          \
+    .static_ram_size = 0x200,               \
+    .stack_top = 0x20082000,                \
+    .stack_size = 0x200,                    \
+}
+#define ENTRY_FLAGS_ALL (ORA_ENTRY_FLAG_EXCLUSIVE_SERIAL_IN | ORA_ENTRY_FLAG_USB_RESERVED)
+static const ora_entry_args_t system_plugin_args[] = {
+    SYSTEM_PLUGIN_ARGS(0), SYSTEM_PLUGIN_ARGS(1),
+    SYSTEM_PLUGIN_ARGS(2), SYSTEM_PLUGIN_ARGS(3),
+};
+static const ora_entry_args_t user_plugin_args[] = {
+    USER_PLUGIN_ARGS(0), USER_PLUGIN_ARGS(1),
+    USER_PLUGIN_ARGS(2), USER_PLUGIN_ARGS(3),
+};
+STATIC_ASSERT((sizeof(system_plugin_args) / sizeof(system_plugin_args[0])) == (ENTRY_FLAGS_ALL + 1),
+    "system_plugin_args must cover every combination of entry flags");
+STATIC_ASSERT((sizeof(user_plugin_args) / sizeof(user_plugin_args[0])) == (ENTRY_FLAGS_ALL + 1),
+    "user_plugin_args must cover every combination of entry flags");
+
+const ora_entry_args_t *plugin_entry_args(
+    ora_plugin_type_t plugin_type,
+    uint8_t entry_flags
+) {
+    entry_flags &= ENTRY_FLAGS_ALL;
+    return (plugin_type == ORA_PLUGIN_TYPE_SYSTEM) ? &system_plugin_args[entry_flags]
+                                                  : &user_plugin_args[entry_flags];
+}
+
+SIZE_OPTIMISED
+const ora_plugin_header_t *system_plugin_to_launch(void) {
+    if ((METADATA->rom_slot_count < 1) ||
+        (METADATA->rom_slots[0].slot_type != ROM_SLOT_TYPE_PLUGIN_SYSTEM)) {
+        return NULL;
+    }
+
+    const onerom_rom_slot_t *set0 = &METADATA->rom_slots[0];
+    if (!check_plugin_valid(set0, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
+        ERR("Invalid system plugin");
+        return NULL;
+    }
+
+    const char *filename = set0->roms[0]->filename;
+    if (filename != NULL) {
+        LOG("Launching system plugin: %s", filename);
+    } else {
+        LOG("Launching system plugin");
+    }
+    return (const ora_plugin_header_t *)(uintptr_t)set0->data;
+}
+
+SIZE_OPTIMISED
+const ora_plugin_header_t *user_plugin_to_launch(uint8_t system_launched) {
+    if ((METADATA->rom_slot_count < 2) ||
+        (METADATA->rom_slots[1].slot_type != ROM_SLOT_TYPE_PLUGIN_USER)) {
+        return NULL;
+    }
+
+    const onerom_rom_slot_t *set1 = &METADATA->rom_slots[1];
+    if (!check_plugin_valid(set1, ORA_PLUGIN_TYPE_USER, 1)) {
+        ERR("Invalid user plugin");
+        return NULL;
+    }
+    if (!system_launched) {
+        ERR("No valid system plugin - user plugin not started");
+        return NULL;
+    }
+
+    const ora_plugin_header_t *user = (const ora_plugin_header_t *)(uintptr_t)set1->data;
+    const ora_plugin_header_t *system = system_plugin_to_start();
+    if ((system != NULL) && usb_controller_dpram_clash(system, user)) {
+        ERR("Both plugins reserve USB controller DPRAM - user plugin not started");
+        return NULL;
+    }
+    if ((system != NULL) && log_channels_unavailable(system, user)) {
+        ERR("No USB DPRAM for log channels - user plugin not started");
+        return NULL;
+    }
+
+    const char *filename = set1->roms[0]->filename;
+    if (filename != NULL) {
+        LOG("Launching user plugin: %s", filename);
+    } else {
+        LOG("Launching user plugin");
+    }
+    return user;
+}
+
+// The part of plugin launch before the plugins run, while core 0 is in
+// firmware code and core 1 isn't running.  Separate from ora_launch_plugins()
+// for a test build to run.  Returns the plugins' entry flags.
+//
+// - OTP is made read-only before any plugin runs.
+// - The timer is started, and ora_get_plugin_uptime_ms() measures from here.
+// - clk_peri is started here, not before serving, to avoid delaying serving.
+// - The RGB LED's PIO state machine is claimed before any plugin can claim PIO.
+SIZE_OPTIMISED
+uint8_t launch_prepare(void) {
+    otp_lock();
+    onerom_rtt_plugins_init();
+    DEBUG("Init timer");
+    setup_timer0();
+    setup_clk_peri();
+    pio_led_launch();
+
+    uint8_t entry_flags = plugin_entry_flags();
+    launch_usb_dpram(entry_flags);
+    return entry_flags;
 }
 
 #if !defined(TEST_BUILD)
@@ -1936,26 +3212,6 @@ static void reset_core1(void) {
     }
 }
 
-// MUST be kept in sync with the values in plugin.ld and changing them forces
-// a change to the plugin version.
-static const ora_entry_args_t system_plugin_args = {
-    .core = ORA_CORE_1,
-    .static_ram_base = 0x20081000,
-    .static_ram_size = 0x800,
-    .stack_top = 0x20081C00,
-    .stack_size = 0x400,
-};
-static const ora_entry_args_t user_plugin_args = {
-    .core = ORA_CORE_0,
-    .static_ram_base = 0x20081C00,
-    .static_ram_size = 0x200,
-    .stack_top = 0x20082000,
-    .stack_size = 0x200,
-    // Note this arbitrarily splits the available 0x400 bytes in half, with
-    // one half for static RAM and the other half for stack - it's up to the
-    // plugin to manage.
-};
-
 ora_result_t ora_yield(uint8_t *was_paused_out);
 
 static void core1_main(void) {
@@ -1964,13 +3220,14 @@ static void core1_main(void) {
     __asm volatile ("dsb");
     __asm volatile ("isb");
 
-    // Read a single uint32_t from the FIFO
     DEBUG("Core 1 started");
     uint32_t core1_plugin_entry = fifo_pop_blocking();
+    uint8_t entry_flags = (uint8_t)fifo_pop_blocking();
     core1_plugin_entry |= 1;
     ora_plugin_entry_t entry = (ora_plugin_entry_t)(uintptr_t)core1_plugin_entry;
     DEBUG("Core 1 launching plugin at 0x%08lx", (unsigned long)core1_plugin_entry);
-    entry(ora_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM, &system_plugin_args);
+    entry(ora_fn_lookup, ORA_PLUGIN_TYPE_SYSTEM,
+          plugin_entry_args(ORA_PLUGIN_TYPE_SYSTEM, entry_flags));
 
     ERR("System plugin returned unexpectedly");
     while (1) {
@@ -2017,7 +3274,7 @@ void __attribute__((naked)) paint_stack_core0(void) {
     );
 }
 
-void launch_core1(ora_plugin_entry_t plugin_entry) {
+void launch_core1(ora_plugin_entry_t plugin_entry, uint8_t entry_flags) {
     uint32_t core1_stack_top = (uint32_t)&_estack - 1024;
 
     // Paint core 1's stack
@@ -2052,75 +3309,43 @@ void launch_core1(ora_plugin_entry_t plugin_entry) {
 
     uint32_t entry = (uint32_t)(uintptr_t)plugin_entry | 1; // Set thumb bit
     fifo_push_blocking(entry);
+    fifo_push_blocking(entry_flags);
 }
 
-__attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(uint8_t *launched_plugins) {
+SIZE_OPTIMISED
+__attribute__((noinline)) ora_plugin_entry_t launch_plugins_inner(
+    uint8_t *launched_plugins,
+    uint8_t entry_flags
+) {
     *launched_plugins = 0;
 
     // Launch any available system plugin on core 1
-    uint8_t system_plugin = 0;
-    if (METADATA->rom_slot_count >= 1) {
-        const onerom_rom_slot_t *set0 = &METADATA->rom_slots[0];
-        if (set0->slot_type == ROM_SLOT_TYPE_PLUGIN_SYSTEM) {
-            ora_plugin_header_t *header = (ora_plugin_header_t *)set0->data;
-            if (!check_plugin_valid(set0, ORA_PLUGIN_TYPE_SYSTEM, 0)) {
-                ERR("Invalid system plugin");
-            } else {
-                const char *filename = set0->roms[0]->filename;
-                if (filename != NULL) {
-                    LOG("Launching system plugin: %s", filename);
-                } else {
-                    LOG("Launching system plugin");
-                }
-                launch_core1(header->entry);
-                system_plugin = 1;
-                *launched_plugins |= 1u;
-            }
-        }
+    const ora_plugin_header_t *system = system_plugin_to_launch();
+    if (system != NULL) {
+        launch_core1(system->entry,
+                     entry_flags | usb_reserve(system, ORA_PLUGIN_TYPE_SYSTEM));
+        *launched_plugins |= 1u;
     }
 
     // Launch any available user plugin on core 0 (this core)
-    if (METADATA->rom_slot_count >= 2) {
-        const onerom_rom_slot_t *set1 = &METADATA->rom_slots[1];
-        if (set1->slot_type == ROM_SLOT_TYPE_PLUGIN_USER) {
-            ora_plugin_header_t *header = (ora_plugin_header_t *)set1->data;
-            if (!check_plugin_valid(set1, ORA_PLUGIN_TYPE_USER, 1)) {
-                ERR("Invalid user plugin");
-            } else if (!system_plugin) {
-                ERR("User plugin present but no valid system plugin - not launching");
-            } else {
-                const char *filename = set1->roms[0]->filename;
-                if (filename != NULL) {
-                    LOG("Launching user plugin: %s", filename);
-                } else {
-                    LOG("Launching user plugin");
-                }
-
-                paint_stack_core0();
-
-                // Set thumb bit
-                uint32_t entry_addr = (uint32_t)(uintptr_t)header->entry | 1;
-                ora_plugin_entry_t entry = (ora_plugin_entry_t)(uintptr_t)entry_addr;
-                return entry;
-            }
-        }
+    const ora_plugin_header_t *user = user_plugin_to_launch(system != NULL);
+    if (user == NULL) {
+        return NULL;
     }
+    usb_reserve(user, ORA_PLUGIN_TYPE_USER);
 
-    return NULL; // No user plugin to launch
+    paint_stack_core0();
+
+    // Set thumb bit
+    uint32_t entry_addr = (uint32_t)(uintptr_t)user->entry | 1;
+    return (ora_plugin_entry_t)(uintptr_t)entry_addr;
 }
 
+SIZE_OPTIMISED
 void ora_launch_plugins(void) {
-    // Plugin-facing setup, in the window where core 0 is in firmware code and
-    // core 1 is not yet running.  OTP becomes read-only, so no plugin can write
-    // it.  The timer starts here so a plugin reading ora_get_plugin_uptime_ms()
-    // sees time measured from just before launch.
-    otp_lock();
-    onerom_rtt_plugins_init();
-    DEBUG("Init timer");
-    setup_timer0();
-
+    uint8_t entry_flags = launch_prepare();
     uint8_t launched_plugins = 0;
-    ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins);
+    ora_plugin_entry_t core0_entry = launch_plugins_inner(&launched_plugins, entry_flags);
 
     // Set before the user plugin's entry, which doesn't return.
     set_firmware_states(FIRMWARE_STATE_PLUGINS_STARTED);
@@ -2128,7 +3353,11 @@ void ora_launch_plugins(void) {
     // We launch the user plugin from this outer function in order to save as
     // much stack space as possible.
     if (core0_entry != NULL) {
-        core0_entry(ora_fn_lookup, ORA_PLUGIN_TYPE_USER, &user_plugin_args);
+        if (usb_reserved_by(ORA_PLUGIN_TYPE_USER)) {
+            entry_flags |= ORA_ENTRY_FLAG_USB_RESERVED;
+        }
+        core0_entry(ora_fn_lookup, ORA_PLUGIN_TYPE_USER,
+                    plugin_entry_args(ORA_PLUGIN_TYPE_USER, entry_flags));
         ERR("User plugin returned unexpectedly");
     }
 
@@ -2156,10 +3385,83 @@ void irq_handler_timer0_irq_1(void) {
     pio_led_frame();
 }
 
+// The interrupt that triggered the handler from IPSR's exception number.
+static uint32_t irq_active(void) {
+    uint32_t ipsr;
+    __asm volatile ("mrs %0, ipsr" : "=r" (ipsr));
+    return (ipsr & 0x1FFu) - 16u;
+}
+
+// Calls the interrupt handler of the plugin on this core if that plugin claimed
+// this interrupt and has a handler.  Returns 0 if the handler wasn't called.
+static uint8_t irq_to_plugin(uint32_t irq) {
+    ora_plugin_type_t plugin = ora_calling_plugin();
+    if (!irq_claimed(irq_claims(plugin), irq)) {
+        return 0;
+    }
+
+    // Interrupt claims exist only for a plugin that has been launched, so its
+    // slot contains a valid plugin header.
+    const ora_plugin_header_t *header =
+        (const ora_plugin_header_t *)(uintptr_t)METADATA->rom_slots[plugin].data;
+    if (header->irq_handler == NULL) {
+        return 0;
+    }
+    header->irq_handler((ora_irq_t)irq);
+    return 1;
+}
+
+void irq_handler_plugin(void) {
+    uint32_t irq = irq_active();
+    if (!irq_to_plugin(irq)) {
+        ora_enable_irq((ora_irq_t)irq, 0);
+    }
+}
+
 void irq_handler_usbctrl_irq(void) {
     if (RUNTIME->usbctrl_irq_handler) {
         ora_irq_handler_t handler = (ora_irq_handler_t)RUNTIME->usbctrl_irq_handler;
         handler();
+    } else {
+        irq_handler_plugin();
+    }
+}
+
+// IO_IRQ_BANK0 handler, on either core.  On core 0, vbus_connect_handler()
+// enters the bootloader if the VBUS interrupt fired.  If irq_to_plugin()
+// doesn't call a plugin handler, every GPIO interrupt that fired is stopped,
+// with one write for each kind of interrupt:
+// - acknowledging stops an edge interrupt
+// - disabling stops a level interrupt
+// - clearing the force bit stops a forced interrupt
+SIZE_OPTIMISED
+void irq_handler_io_bank0(void) {
+    uint32_t core = SIO_CPUID;
+    if (core == 0u) {
+        vbus_connect_handler();
+    }
+    if (irq_to_plugin(IRQ_IO_IRQ_BANK0)) {
+        return;
+    }
+
+    // When VBUS detection is enabled, the loop below skips the VBUS pin.  If
+    // the VBUS pin's interrupt fired after vbus_connect_handler() checked,
+    // this handler runs again immediately, and vbus_connect_handler() enters
+    // the bootloader.
+    uint32_t vbus_reg = IO_BANK0_INT_REG_COUNT;
+    uint32_t vbus_bit = 0u;
+    if ((core == 0u) && (RUNTIME->firmware_flags & FIRMWARE_FLAG_VBUS_DETECT)) {
+        vbus_reg = HW->gpio_vbus / 8u;
+        vbus_bit = 1u << (((HW->gpio_vbus % 8u) * 4u) + 3u);
+    }
+    for (uint32_t ii = 0; ii < IO_BANK0_INT_REG_COUNT; ii++) {
+        uint32_t fired = IO_BANK0_PROC_INTS(core, ii);
+        if (ii == vbus_reg) {
+            fired &= ~vbus_bit;
+        }
+        IO_BANK0_PROC_INTE(core, ii) &= ~fired;
+        IO_BANK0_PROC_INTF(core, ii) &= ~fired;
+        IO_BANK0_INTR(ii) = fired;
     }
 }
 

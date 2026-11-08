@@ -1,5 +1,21 @@
 # Lab Changelog
 
+## v0.4.1 - unreleased
+
+- Long running operations, like ROM reads, now run on the second core, so USB isn't impacted.
+- Execute performance critical processing from RAM.
+- `R` queries One ROM information using RBCP.
+- `a` is a batch read that reads the ROM and queries One ROM information.
+- `x` reads a chip continuously at MHz rates.
+- `d` drives a chip's data lines as a square wave, with the chip deselected.
+- `H` emulates a host's bus timing, including chip select glitches.
+- `u` sends and receives serial traffic on two header pins, using a UART.
+- 8-bit and 16-bit result lines now line up.
+- `z` no longer mounts the RP2350's mass storage device when it reboots Lab into the bootloader.
+- Fix: Lab no longer hangs reading a chip with fixed chip selects, for example the HM7641, and now drives its fourth chip select.
+- Fix: selecting an unsupported chip type no longer hangs Lab.
+- Lab now reports its max current draw as 100mA.
+
 ## v0.4.0 - 2026-10-06
 
 - Lab is now released as ready-built images:

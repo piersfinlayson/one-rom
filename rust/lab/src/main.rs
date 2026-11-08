@@ -20,17 +20,27 @@ use embedded_alloc::LlffHeap as Heap;
 use panic_rtt_target as _;
 
 use once_cell::sync::OnceCell;
+use onerom_lab_bus::SYS_CLOCK_HZ;
 use static_cell::StaticCell;
 
 mod cdc;
 mod cli;
+mod commissioning;
+mod core1;
+mod delay;
+mod drive;
 mod error;
+mod fast_read;
+mod host;
 mod hw;
+mod loan;
 mod logs;
 mod metadata;
 mod output;
 mod picoboot;
+mod rbcp;
 mod rom;
+mod uart;
 mod usb;
 
 use rom::CsPolarities;
@@ -74,7 +84,8 @@ async fn main(spawner: Spawner) -> ! {
     // Heap
     {
         use core::mem::MaybeUninit;
-        const HEAP_SIZE: usize = 4096;
+        // Sized for the commissioning signature check.
+        const HEAP_SIZE: usize = 16 * 1024;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         unsafe { HEAP.init(&raw mut HEAP_MEM as usize, HEAP_SIZE) }
     }
@@ -89,15 +100,18 @@ async fn main(spawner: Spawner) -> ! {
 
     // Clocks
     let mut config = Config::default();
-    config.clocks = ClockConfig::system_freq(150_000_000).expect("Failed to configure clocks");
+    config.clocks = ClockConfig::system_freq(SYS_CLOCK_HZ).expect("Failed to configure clocks");
     let p = embassy_rp::init(config);
-    debug!("Clocks configured to 150MHz");
+    debug!("Clocks configured to {}MHz", SYS_CLOCK_HZ / 1_000_000);
 
     init_serial_id();
     debug!("Serial ID: {}", serial_id());
 
+    core1::start(p.CORE1);
+
     let usb_device = usb::Usb::new(p.USB);
     usb::run(spawner, usb_device);
+    spawner.spawn(uart::check_task().unwrap());
 
     // Build the physical-pin → MCU GPIO map for this board
     let board = metadata::BAKED_BOARD;

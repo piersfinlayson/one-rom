@@ -1865,6 +1865,7 @@ checksum = "0688c2a7f92e427f44895cd63841bff7b29f8d7a1648b9e7e07a4a365b2e1257"
 name = "doc-gen"
 version = "0.1.0"
 dependencies = [
+ "onerom-gen",
  "onerom-metadata",
  "tempfile",
  "toml",
@@ -4838,11 +4839,12 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onerom-app"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
  "onerom-config",
+ "onerom-fw-parser",
  "onerom-gen",
  "onerom-metadata",
  "serde",
@@ -4856,7 +4858,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "built",
@@ -4869,6 +4871,7 @@ dependencies = [
  "env_logger",
  "git2 0.20.4",
  "hex",
+ "libc",
  "log",
  "nusb",
  "onerom-app",
@@ -4879,6 +4882,7 @@ dependencies = [
  "onerom-lab-metadata",
  "onerom-lab-parser",
  "onerom-metadata",
+ "percent-encoding",
  "picoboot",
  "pkcs8",
  "reqwest",
@@ -4918,7 +4922,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4958,7 +4962,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-fw-parser"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "airfrog-rpc",
  "deku 0.19.1",
@@ -4989,7 +4993,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "onerom-config",
  "onerom-metadata",
@@ -5000,7 +5004,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-lab"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "airfrog-rpc",
  "chrono",
@@ -5020,14 +5024,18 @@ dependencies = [
  "hex-literal",
  "log",
  "once_cell",
+ "onerom-app",
  "onerom-config",
+ "onerom-lab-bus",
  "onerom-lab-metadata",
  "onerom-metadata",
+ "onerom-rbcp-host",
  "panic-probe",
  "panic-rtt-target",
  "picobootx",
  "picobootx-embassy",
  "picobootx-rp2350",
+ "pio",
  "portable-atomic",
  "rp-binary-info",
  "rtt-target",
@@ -5036,8 +5044,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "onerom-lab-metadata"
+name = "onerom-lab-bus"
 version = "0.1.0"
+dependencies = [
+ "onerom-config",
+ "pio",
+]
+
+[[package]]
+name = "onerom-lab-metadata"
+version = "0.2.0"
 dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
@@ -5049,7 +5065,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-lab-parser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "airfrog-rpc",
  "log",
@@ -5071,7 +5087,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-metadata"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hashbrown 0.17.1",
  "onerom-config",
@@ -5086,7 +5102,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-metadata-gen"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "onerom-config",
  "serde",
@@ -5110,6 +5126,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "onerom-rbcp-host"
+version = "0.1.0"
+
+[[package]]
 name = "onerom-rbcp-tester"
 version = "0.1.0"
 dependencies = [
@@ -5119,7 +5139,11 @@ dependencies = [
  "onerom-fw-emulator",
  "onerom-fw-tester",
  "onerom-gen",
+ "onerom-lab-bus",
+ "onerom-metadata",
  "onerom-plugin-tester",
+ "onerom-rbcp-host",
+ "pio",
  "serde_json",
 ]
 
@@ -5147,7 +5171,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-studio"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "airfrog-rpc",
  "arc-swap",
@@ -6620,6 +6644,7 @@ name = "schema-gen"
 version = "0.1.10"
 dependencies = [
  "onerom-gen",
+ "onerom-metadata",
  "schemars",
  "serde",
  "serde_json",

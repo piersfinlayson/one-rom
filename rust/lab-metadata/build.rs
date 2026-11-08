@@ -26,8 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let schema_path = manifest_dir.join(METADATA_SCHEMA_FILE);
 
-    // The schema as the last release shipped it.  Lab has not released with
-    // one yet, so today the file says so rather than describing a layout.
+    // The schema as the last release shipped it.
     let released_path = manifest_dir.join(RELEASED_SCHEMA_FILE);
 
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);

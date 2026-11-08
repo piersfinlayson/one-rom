@@ -81,10 +81,14 @@ int firmware_main(void) {
         sel_pins = check_sel_pins(&sel_mask);
     }
 
-    // Get the chosen ROM slot based on the image select pins.
     if (METADATA->rom_slot_count > num_plugins) {
-        // Figure out what ROM slot to use
-        RUNTIME->rom_slot_index = get_rom_slot_index(sel_pins, sel_mask, plugins);
+        // Get the ROM slot from the plugin headers or the image select jumpers.
+        uint8_t boot_slot;
+        if (plugin_boot_slot(num_plugins, &boot_slot)) {
+            RUNTIME->rom_slot_index = boot_slot + num_plugins;
+        } else {
+            RUNTIME->rom_slot_index = get_rom_slot_index(sel_pins, sel_mask, plugins);
+        }
 
         // Get pointer to the selected ROM slot
         RUNTIME->current_rom_slot = &ROM_SLOTS[RUNTIME->rom_slot_index];

@@ -8,7 +8,6 @@ This directory contains some simple example One ROM plugins.
 | [hello](hello) | Logs a message in a loop |
 | [log-write](log-write) | Claims a log channel and writes raw bytes to it |
 | [c64-char-led](c64-char-led) | Watches C64 character ROM accesses and drives the status LED |
-| [c64-kernal-mod](c64-kernal-mod) | Rewrites the C64 kernal boot banner in response to a knock sequence |
 
 Plugins written to test the plugin API on a device, rather than to show how it
 is used, live in [tests](../tests/README.md).
@@ -45,13 +44,13 @@ To build them as system plugins:
 make PLUGIN_TYPE=SYSTEM
 ```
 
-## Using
+## Programming
 
-Once built, configure the plugins as One ROM slots.  For example:
+Build `hello` as a system plugin and `blink` as a user plugin, then:
 
 ```bash
-onerom program --slot file=examples/hello/build/plugin_system.bin,type=system_plugin \
-               --slot file=examples/blink/build/plugin_user.bin,type=user_plugin \
+onerom program --plugin file=hello/build/plugin_system.bin \
+               --plugin file=blink/build/plugin_user.bin \
                --slot file=some-rom.bin,type=27128
 ```
 

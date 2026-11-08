@@ -1,0 +1,75 @@
+{
+    "$schema": "https://images.onerom.org/configs/schema.json",
+    "version": 1,
+    "name": "28-min-cs-act-hm7641",
+    "description": "Address monitor minimum CS-active time test for the HM7641",
+    "categories": [
+    ],
+    "addr_mon_min_cs_act_ns": 80,
+    "chip_sets": [
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "2764 with the global minimum",
+                    "file": "images/test/rand_8KB.rom",
+                    "type": "2764"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "HM7641 with the global minimum",
+                    "file": "images/test/rand_0.5KB.rom",
+                    "type": "HM7641"
+                }
+            ]
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "HM7641 with its own minimum at 300MHz",
+                    "file": "images/test/rand_0.5KB.rom",
+                    "type": "HM7641"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "cpu_freq": "300MHz",
+                    "overclock": true,
+                    "addr_mon_min_cs_act_ns": 330
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "HM7641 with its own minimum of 0",
+                    "file": "images/test/rand_0.5KB.rom",
+                    "type": "HM7641"
+                }
+            ],
+            "firmware_overrides": {
+                "fire": {
+                    "addr_mon_min_cs_act_ns": 0
+                }
+            }
+        },
+        {
+            "type": "single",
+            "chips": [
+                {
+                    "description": "HM7641 with CS4 ignored and the global minimum",
+                    "file": "images/test/rand_0.5KB.rom",
+                    "type": "HM7641",
+                    "cs4": "ignore",
+                    "allow_cs_ignore": true
+                }
+            ]
+        }
+    ]
+}

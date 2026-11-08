@@ -184,19 +184,30 @@ pub const NULL_DEFAULT: &str = "null";
 /// a list states them one by one.  Both generators write this out rather than
 /// each re-reading the TOML.  `check_array_default` has already refused
 /// anything it cannot expand.
-pub fn array_default_elements(field: &Field) -> Vec<u8> {
+pub fn array_default_elements(field: &Field) -> Vec<u32> {
     let value = field
         .default_if_absent
         .as_ref()
         .expect("a gated field has a default");
     let total = array_element_count(field);
     match value.as_integer() {
-        Some(fill) => vec![fill as u8; total],
+        Some(fill) => vec![fill as u32; total],
         None => flatten_array_default(value)
             .expect("validate_defaults has already refused a default of another shape")
             .into_iter()
-            .map(|n| n as u8)
+            .map(|n| n as u32)
             .collect(),
+    }
+}
+
+/// The largest value a primitive type holds, or `None` for a type without an
+/// integer range.
+fn primitive_max(type_: &str) -> Option<i64> {
+    match type_ {
+        "u8" | "char" => Some(u8::MAX as i64),
+        "u16" => Some(u16::MAX as i64),
+        "u32" => Some(u32::MAX as i64),
+        _ => None,
     }
 }
 
@@ -288,10 +299,17 @@ fn check_array_default(
         }
     };
 
+    let element = field.element.as_deref().unwrap_or("u8");
+    let Some(limit) = primitive_max(element) else {
+        return Err(format!(
+            "{container}.{name}: default_if_absent isn't supported for {element} arrays"
+        )
+        .into());
+    };
     for n in elements {
-        if !(0..=u8::MAX as i64).contains(&n) {
+        if !(0..=limit).contains(&n) {
             return Err(format!(
-                "{container}.{name} has {n} in its default_if_absent, which a u8 cannot hold"
+                "{container}.{name}: default_if_absent {n} is too large for a {element}"
             )
             .into());
         }
@@ -599,6 +617,11 @@ pub struct Enum {
     /// plugin.  Required of every `ora_api` enum and not allowed on any other,
     /// as for a constant.
     pub first_release: Option<String>,
+
+    /// Mark the Rust enum `#[non_exhaustive]` so adding a value isn't a
+    /// breaking change to the crate's API.
+    #[serde(default)]
+    pub non_exhaustive: bool,
 }
 
 impl Enum {
@@ -819,18 +842,21 @@ pub struct PluginKey {
 }
 
 /// A plugin key with no stored field, from the `[[plugin_keys]]` table.  The
-/// firmware resolves it by hand in ora_get_metadata_uint
-/// (firmware/src/plugin.c), so the generated arms for that getter leave it out.
-/// The other getters' generated arms return ORA_RESULT_TYPE_MISMATCH for it.
+/// firmware resolves it by hand, in ora_get_metadata_uint for a number and in
+/// ora_get_metadata_uint_at for an array (firmware/src/plugin.c), so the
+/// generated arms for that getter leave it out.  The other getters' generated
+/// arms return ORA_RESULT_TYPE_MISMATCH for it.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct UnstoredPluginKey {
     pub name: String,
     pub id: u32,
     pub first_release: String,
-    /// The type of the value: u8, u16, u32 or an enum.
+    /// The type of a number: u8, u16, u32 or an enum.
     #[serde(rename = "type")]
-    pub type_: String,
+    pub type_: Option<String>,
+    /// The element type of an array: u8, u16 or u32.
+    pub element: Option<String>,
     pub comment: String,
 }
 
@@ -840,6 +866,8 @@ pub struct PluginKeyEntry<'a> {
     pub comment: Option<&'a str>,
     /// None for a `[[plugin_keys]]` key.
     pub field: Option<KeyField<'a>>,
+    /// Whether a `[[plugin_keys]]` key is an array.  False for a stored key.
+    pub unstored_array: bool,
 }
 
 /// The struct field holding a plugin key's value.
@@ -1178,6 +1206,10 @@ pub struct TaggedFam {
     /// rule of its own - see `layout::compare`.
     #[serde(default)]
     pub standalone: bool,
+    /// Mark the Rust enum `#[non_exhaustive]` so adding a variant isn't a
+    /// breaking change to the crate's API.
+    #[serde(default)]
+    pub non_exhaustive: bool,
     #[serde(default)]
     pub common_fields: Vec<Field>,
     #[serde(default)]
@@ -1806,12 +1838,11 @@ impl Schema {
                 )
                 .into());
             }
-            if ARRAY_KINDS.contains(&f.kind.as_str())
-                && f.element.as_deref().unwrap_or("u8") != "u8"
-            {
+            // The parser reads a two-dimensional array as bytes.
+            if f.kind == "inline_array2d" && f.element.as_deref().unwrap_or("u8") != "u8" {
                 return Err(format!(
-                    "{container}.{} carries a generation marker on an array of {}, and a default \
-                     is written down for a u8 array only",
+                    "{container}.{}: a two-dimensional array with a generation marker must be u8 \
+                     not {}",
                     f.name,
                     f.element.as_deref().unwrap_or(""),
                 )
@@ -1965,17 +1996,12 @@ impl Schema {
             _ => return Ok(()),
         };
 
-        let limit: i64 = match primitive {
-            "u8" => u8::MAX as i64,
-            "u16" => u16::MAX as i64,
-            "u32" => u32::MAX as i64,
-            other => {
-                return Err(format!(
-                    "{container}.{} is a {other}, which carries no default_if_absent",
-                    f.name
-                )
-                .into());
-            }
+        let Some(limit) = primitive_max(primitive) else {
+            return Err(format!(
+                "{container}.{}: default_if_absent isn't supported for a {primitive}",
+                f.name
+            )
+            .into());
         };
         if number < 0 || number > limit {
             return Err(format!(
@@ -2873,6 +2899,7 @@ impl Schema {
                             count: f.count,
                             count_ref: f.count_ref.as_deref(),
                         }),
+                        unstored_array: false,
                     });
                 }
             }
@@ -2886,6 +2913,7 @@ impl Schema {
                 },
                 comment: Some(&k.comment),
                 field: None,
+                unstored_array: k.element.is_some(),
             });
         }
         keys.sort_by_key(|e| e.key.id);
@@ -2936,16 +2964,37 @@ impl Schema {
             }
         }
         // The firmware resolves a `[[plugin_keys]]` key through
-        // ora_get_metadata_uint, which returns an unsigned value.
+        // ora_get_metadata_uint or ora_get_metadata_uint_at, which return an
+        // unsigned value.
         for k in &self.unstored_keys {
-            let unsigned = matches!(k.type_.as_str(), "u8" | "u16" | "u32")
-                || self.enums.iter().any(|e| e.name == k.type_);
-            if !unsigned {
-                return Err(format!(
-                    "plugin key '{}' has type '{}', which is not u8, u16, u32 or an enum",
-                    k.name, k.type_
-                )
-                .into());
+            match (&k.type_, &k.element) {
+                (Some(t), None) => {
+                    let unsigned = matches!(t.as_str(), "u8" | "u16" | "u32")
+                        || self.enums.iter().any(|e| &e.name == t);
+                    if !unsigned {
+                        return Err(format!(
+                            "plugin key '{}' has type '{}', which is not u8, u16, u32 or an enum",
+                            k.name, t
+                        )
+                        .into());
+                    }
+                }
+                (None, Some(e)) => {
+                    if !matches!(e.as_str(), "u8" | "u16" | "u32") {
+                        return Err(format!(
+                            "plugin key '{}' has element '{}', which is not u8, u16 or u32",
+                            k.name, e
+                        )
+                        .into());
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "plugin key '{}' must have exactly one of type and element",
+                        k.name
+                    )
+                    .into());
+                }
             }
         }
         Ok(())

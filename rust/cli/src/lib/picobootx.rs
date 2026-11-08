@@ -98,7 +98,10 @@ pub const ONEROM_FEAT_LED_ARGS: u32 = 1 << 3;
 /// [`ONEROM_CMD_SET_STANDBY`] is available.
 pub const ONEROM_FEAT_STANDBY: u32 = 1 << 4;
 
-/// Drive the GPIO even though One ROM is using it.
+/// [`GpioEntry::uses`] is filled in.
+pub const ONEROM_FEAT_GPIO_USES: u32 = 1 << 5;
+
+/// Drive the GPIO even though One ROM or a plugin is using it.
 ///
 /// Mirrors the firmware's `ORA_GPIO_FLAG_FORCE`.
 pub const ONEROM_GPIO_FLAG_FORCE: u8 = 1 << 0;
@@ -391,6 +394,9 @@ pub enum GpioUse {
     /// The GPIO's input is forced by One ROM. Driving it doesn't affect
     /// serving.
     InputForced = 4,
+
+    /// Claimed by a plugin, or the other GPIO on its X pin is.
+    Plugin = 5,
 }
 
 impl GpioUse {
@@ -403,6 +409,7 @@ impl GpioUse {
             2 => Some(Self::ServingDriven),
             3 => Some(Self::SystemPin),
             4 => Some(Self::InputForced),
+            5 => Some(Self::Plugin),
             _ => None,
         }
     }
@@ -508,11 +515,16 @@ pub struct GpioEntry {
 
     /// 1 if the pin's output driver is enabled, 0 if not.
     pub is_output: u8,
+
+    /// Every use that applies, bit N for use N. `None` from a device without
+    /// [`ONEROM_FEAT_GPIO_USES`]. Interpret it with [`GpioEntry::gpio_uses`].
+    pub uses: Option<u8>,
 }
 
 impl GpioEntry {
-    /// Decode a whole response - a run of 4-byte entries.
-    pub fn decode_all(buf: &[u8]) -> Result<Vec<Self>, DecodeError> {
+    /// Decode a whole response - a run of 4-byte entries. `has_uses` is whether
+    /// the device has [`ONEROM_FEAT_GPIO_USES`].
+    pub fn decode_all(buf: &[u8], has_uses: bool) -> Result<Vec<Self>, DecodeError> {
         if !buf.len().is_multiple_of(ONEROM_GPIO_ENTRY_LEN) {
             return Err(DecodeError::GpioEntriesMisaligned(buf.len()));
         }
@@ -525,7 +537,7 @@ impl GpioEntry {
                 gpio_use_raw: e[0],
                 level: e[1],
                 is_output: e[2],
-                // e[3] is reserved and ignored.
+                uses: has_uses.then_some(e[3]),
             })
             .collect())
     }
@@ -534,6 +546,19 @@ impl GpioEntry {
     /// use this build does not know.
     pub fn gpio_use(&self) -> Option<GpioUse> {
         GpioUse::from_u8(self.gpio_use_raw)
+    }
+
+    /// Every use that applies, lowest value first. A free GPIO, or one from a
+    /// device without [`ONEROM_FEAT_GPIO_USES`], has the single `use`. A value
+    /// this build does not know is returned raw.
+    pub fn gpio_uses(&self) -> Vec<Result<GpioUse, u8>> {
+        match self.uses {
+            Some(uses) if uses != 0 => (0..8u8)
+                .filter(|n| uses & (1 << n) != 0)
+                .map(|n| GpioUse::from_u8(n).ok_or(n))
+                .collect(),
+            _ => vec![self.gpio_use().ok_or(self.gpio_use_raw)],
+        }
     }
 }
 
@@ -646,7 +671,8 @@ mod tests {
         assert_eq!(GpioUse::from_u8(2), Some(GpioUse::ServingDriven));
         assert_eq!(GpioUse::from_u8(3), Some(GpioUse::SystemPin));
         assert_eq!(GpioUse::from_u8(4), Some(GpioUse::InputForced));
-        assert_eq!(GpioUse::from_u8(5), None);
+        assert_eq!(GpioUse::from_u8(5), Some(GpioUse::Plugin));
+        assert_eq!(GpioUse::from_u8(6), None);
         assert_eq!(GpioUse::from_u8(0xFF), None);
 
         assert_eq!(ONEROM_GPIO_FLAG_FORCE, 0x01);
@@ -904,48 +930,73 @@ mod tests {
 
     #[test]
     fn gpio_entries_decode_from_the_header_layout() {
-        // Three entries; byte 3 of each is reserved and must be ignored, so it
-        // is deliberately non-zero here.
         let buf = [
-            0, 1, 0, 0xAA, // free, high, input
-            2, 0, 1, 0xBB, // serving-driven, low, output
-            9, 1, 1, 0xCC, // an unknown use from a newer device
+            0, 1, 0, 0x00, // free, high, input
+            2, 0, 1, 0x04, // serving-driven, low, output
+            5, 1, 0, 0x30, // claimed by a plugin, and input forced
+            9, 1, 1, 0x80, // an unknown use from a newer device
+            3, 0, 1, 0x08, // a system pin
         ];
 
-        let entries = GpioEntry::decode_all(&buf).expect("decodes");
-        assert_eq!(entries.len(), 3);
+        let entries = GpioEntry::decode_all(&buf, true).expect("decodes");
+        assert_eq!(entries.len(), 5);
 
         assert_eq!(
             entries[0],
             GpioEntry {
                 gpio_use_raw: 0,
                 level: 1,
-                is_output: 0
+                is_output: 0,
+                uses: Some(0),
             }
         );
         assert_eq!(entries[0].gpio_use(), Some(GpioUse::Free));
+        assert_eq!(entries[0].gpio_uses(), vec![Ok(GpioUse::Free)]);
 
         assert_eq!(
             entries[1],
             GpioEntry {
                 gpio_use_raw: 2,
                 level: 0,
-                is_output: 1
+                is_output: 1,
+                uses: Some(0x04),
             }
         );
         assert_eq!(entries[1].gpio_use(), Some(GpioUse::ServingDriven));
+        assert_eq!(entries[1].gpio_uses(), vec![Ok(GpioUse::ServingDriven)]);
 
-        assert_eq!(entries[2].gpio_use_raw, 9);
-        assert_eq!(entries[2].gpio_use(), None);
+        assert_eq!(
+            entries[2].gpio_uses(),
+            vec![Ok(GpioUse::InputForced), Ok(GpioUse::Plugin)]
+        );
+
+        assert_eq!(entries[3].gpio_use_raw, 9);
+        assert_eq!(entries[3].gpio_use(), None);
+        assert_eq!(entries[3].gpio_uses(), vec![Err(7)]);
+
+        assert_eq!(entries[4].gpio_uses(), vec![Ok(GpioUse::SystemPin)]);
+    }
+
+    #[test]
+    fn gpio_entries_without_uses_ignore_the_last_byte() {
+        // A device without ONEROM_FEAT_GPIO_USES may send anything there.
+        let entries = GpioEntry::decode_all(&[3, 0, 1, 0xAA], false).expect("decodes");
+        assert_eq!(entries[0].uses, None);
+        assert_eq!(entries[0].gpio_uses(), vec![Ok(GpioUse::SystemPin)]);
     }
 
     #[test]
     fn gpio_entries_reject_a_partial_entry() {
         assert!(matches!(
-            GpioEntry::decode_all(&[0, 0, 0, 0, 1]),
+            GpioEntry::decode_all(&[0, 0, 0, 0, 1], true),
             Err(DecodeError::GpioEntriesMisaligned(5))
         ));
-        assert_eq!(GpioEntry::decode_all(&[]).expect("empty is legal").len(), 0);
+        assert_eq!(
+            GpioEntry::decode_all(&[], true)
+                .expect("empty is legal")
+                .len(),
+            0
+        );
     }
 
     /// A full 32-byte response, laid out by hand against the C struct.

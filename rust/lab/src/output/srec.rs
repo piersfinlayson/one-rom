@@ -32,10 +32,6 @@
 //! ```
 //!
 //! Note the checksum differs from Intel HEX's, which is a *two's* complement.
-//!
-//! Control lines are asserted and deasserted around each 16-byte read so
-//! that the executor can be yielded between records without holding a mutable
-//! borrow across an `.await` point.
 
 use embassy_time::Timer;
 
@@ -79,16 +75,12 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
     let mut addr = start;
     let mut records: usize = 0;
 
+    reader.begin_lines();
     while addr < end {
         let chunk_len = (end - addr).min(16);
         let mut chunk = [0u8; 16];
 
-        // Assert control lines, read one record's worth of bytes, deassert.
-        reader.begin_read(8);
-        for (i, byte) in chunk.iter_mut().enumerate().take(chunk_len) {
-            *byte = reader.read_byte_at(addr + i, 8);
-        }
-        reader.end_read();
+        reader.read_line(addr, &mut chunk[..chunk_len]);
 
         send_record(record_type, width, addr, &chunk[..chunk_len])?;
         records += 1;
@@ -97,6 +89,7 @@ pub async fn dump(reader: &mut RomReader, start: usize, count: usize) -> Result<
         // Yield to the executor so the USB task can send buffered data.
         Timer::after_millis(1).await;
     }
+    reader.end_lines();
 
     // Record count: S5 while it fits a 16-bit field, S6 beyond that.
     if records <= 0xFFFF {

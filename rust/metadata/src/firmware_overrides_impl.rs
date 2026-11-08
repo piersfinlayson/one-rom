@@ -20,7 +20,10 @@
 //!   - bit 2: Status LED enabled
 //!   - bit 3: SWD enabled
 
-use crate::{FireFreq, FireVreg, MaybeKnown, OneromFirmwareOverrides, OverrideState};
+use crate::{
+    FireFreq, FireVreg, MaybeKnown, OneromFirmwareOverrides, OverrideState,
+    addr_mon_min_cs_act_to_ns,
+};
 
 impl OneromFirmwareOverrides {
     // override_present[0] bit positions
@@ -35,10 +38,12 @@ impl OneromFirmwareOverrides {
     const VALUE_LED_ENABLED: u8 = 1 << 2;
     const VALUE_SWD_ENABLED: u8 = 1 << 3;
 
-    /// Returns `true` if any override is set, in `override_present` or
-    /// `override_states`.
+    /// Returns `true` if any override is set, in `override_present`,
+    /// `override_states` or `addr_mon_min_cs_act`.
     pub fn any_present(&self) -> bool {
-        self.override_present.iter().any(|&b| b != 0) || self.override_states.to_raw() != 0
+        self.override_present.iter().any(|&b| b != 0)
+            || self.override_states.to_raw() != 0
+            || self.addr_mon_min_cs_act_ns().is_some()
     }
 
     /// Standby at boot override, or `None` if not overridden.
@@ -46,6 +51,12 @@ impl OneromFirmwareOverrides {
         self.override_states
             .standby
             .filter(|state| *state != MaybeKnown::Known(OverrideState::OverrideStateNotSet))
+    }
+
+    /// Address monitor minimum CS-active time override in nanoseconds, or
+    /// `None` if not overridden.
+    pub fn addr_mon_min_cs_act_ns(&self) -> Option<u16> {
+        addr_mon_min_cs_act_to_ns(self.addr_mon_min_cs_act)
     }
 
     /// CPU frequency override in MHz, or `None` if not overridden.
@@ -83,6 +94,7 @@ impl OneromFirmwareOverrides {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ADDR_MON_MIN_CS_ACT_NOT_SET;
 
     fn overrides_with(present: u8, value: u8) -> OneromFirmwareOverrides {
         OneromFirmwareOverrides {
@@ -205,5 +217,38 @@ mod tests {
     #[test]
     fn any_present_standby_only() {
         assert!(overrides_with_standby(OverrideState::OverrideStateOn).any_present());
+    }
+
+    fn overrides_with_addr_mon_min_cs_act(value: u8) -> OneromFirmwareOverrides {
+        let mut o = overrides_with(0, 0);
+        o.addr_mon_min_cs_act = value;
+        o
+    }
+
+    #[test]
+    fn addr_mon_min_cs_act_absent() {
+        assert_eq!(overrides_with(0, 0).addr_mon_min_cs_act_ns(), None);
+        assert_eq!(
+            overrides_with_addr_mon_min_cs_act(ADDR_MON_MIN_CS_ACT_NOT_SET)
+                .addr_mon_min_cs_act_ns(),
+            None
+        );
+    }
+
+    #[test]
+    fn addr_mon_min_cs_act_present() {
+        assert_eq!(
+            overrides_with_addr_mon_min_cs_act(0).addr_mon_min_cs_act_ns(),
+            Some(0)
+        );
+        assert_eq!(
+            overrides_with_addr_mon_min_cs_act(14).addr_mon_min_cs_act_ns(),
+            Some(140)
+        );
+    }
+
+    #[test]
+    fn any_present_addr_mon_min_cs_act_only() {
+        assert!(overrides_with_addr_mon_min_cs_act(0).any_present());
     }
 }

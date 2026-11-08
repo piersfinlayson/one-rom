@@ -101,11 +101,14 @@ On a board with a second chip:
 
 ## Firmware
 
-Firmware checks a slot lies within the flash OTP configures before reading it.
+Firmware checks a slot lies within the flash region configured by OTP before
+reading it.
+
 On a board without a second chip, a slot on the second chip:
 - puts One ROM into limp mode when it is the ROM image to serve
 - isn't started when it is a plugin
-- makes `ora_copy_flash_slot_to_ram_slot` return `ORA_RESULT_INVALID_SLOT`
+- causes `ora_copy_flash_slot_to_ram_slot` and `ora_get_flash_slot_addr` to
+  return `ORA_RESULT_INVALID_SLOT`
 
 ## Host Tools
 

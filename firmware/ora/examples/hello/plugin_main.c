@@ -2,8 +2,8 @@
 //
 // MIT License
 
-// A minimal One ROM plugin example.  This plugin logs "Hello One ROM" in an
-// infinite loop.
+// A minimal One ROM plugin example.  This plugin logs "Hello One ROM" once a
+// second.
 
 #include "plugin.h"
 
@@ -14,12 +14,14 @@
 #error "PLUGIN_IS_SYSTEM is not defined - build this with ora/plugin.mk"
 #endif
 #if PLUGIN_IS_SYSTEM
-ORA_DEFINE_SYSTEM_PLUGIN(plugin_main, 0, 1, 0, 0, 0, 6, 7);
+ORA_SYSTEM_PLUGIN(plugin_setup, plugin_loop, 0, 1, 0, 0, 0, 7, 2);
 #else // User plugin
-ORA_DEFINE_USER_PLUGIN(plugin_main, 0, 1, 0, 0, 0, 6, 7);
+ORA_USER_PLUGIN(plugin_setup, plugin_loop, 0, 1, 0, 0, 0, 7, 2);
 #endif // Plugin type check
 
-void plugin_main(
+static ora_log_fn_t log_msg;
+
+void plugin_setup(
     ora_lookup_fn_t ora_lookup_fn,
     ora_plugin_type_t plugin_type,
     const ora_entry_args_t *entry_args
@@ -29,11 +31,12 @@ void plugin_main(
     (void)entry_args;
 
     // Look up the logging function from the API.
-    ora_log_fn_t log = ora_lookup_fn(ORA_ID_LOG);
+    log_msg = ora_lookup_fn(ORA_ID_LOG);
+}
 
-    while (1) {
-        // Log a message every so often
-        log("Hello One ROM");
-        for (volatile int i = 0; i < 10000000; i++);
+void plugin_loop(void) {
+    if (log_msg != NULL) {
+        log_msg("Hello One ROM");
     }
+    ora_delay_ms(1000);
 }

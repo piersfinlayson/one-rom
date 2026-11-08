@@ -11,6 +11,7 @@
 
 // DMA
 #define DMA_BASE               (0x50000000U)
+#define DMA_CHANNEL_COUNT      16
 
 // DMA register offsets
 #define DMA_READ_ADDR_OFFSET        (0x00)

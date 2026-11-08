@@ -34,7 +34,7 @@ pub async fn cmd_console(options: &Options, args: &ConsoleArgs) -> Result<(), Er
     let device = options.device.as_ref().unwrap();
     let capture = args.output.as_ref().map(PathBuf::from);
 
-    let port_name = find_port(device)?;
+    let port_name = find_port(device, args.serial_port)?;
     if options.verbose {
         eprintln!("Using serial port {port_name}");
     }
@@ -323,6 +323,19 @@ mod tests {
             key_action(&key(KeyCode::Left, KeyModifiers::NONE), LineEnding::Cr),
             KeyAction::Ignore
         );
+    }
+
+    #[test]
+    fn no_echo_requires_raw() {
+        use clap::Parser;
+        let parse = |words: &[&str]| crate::args::Cli::try_parse_from(words);
+        assert_eq!(
+            parse(&["onerom", "console", "--no-echo"])
+                .unwrap_err()
+                .kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(parse(&["onerom", "console", "--raw", "--no-echo"]).is_ok());
     }
 
     #[test]

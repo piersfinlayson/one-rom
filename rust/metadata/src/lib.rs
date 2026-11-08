@@ -623,6 +623,17 @@ pub fn serialize(
 }
 
 // ---------------------------------------------------------------------------
+// Address monitor
+// ---------------------------------------------------------------------------
+
+/// An `addr_mon_min_cs_act` field in nanoseconds, or `None` where it's
+/// [`ADDR_MON_MIN_CS_ACT_NOT_SET`].
+pub fn addr_mon_min_cs_act_to_ns(value: u8) -> Option<u16> {
+    (value != ADDR_MON_MIN_CS_ACT_NOT_SET)
+        .then(|| u16::from(value) * u16::from(ADDR_MON_MIN_CS_ACT_UNIT_NS))
+}
+
+// ---------------------------------------------------------------------------
 // Utils
 // ---------------------------------------------------------------------------
 

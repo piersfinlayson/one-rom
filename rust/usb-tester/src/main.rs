@@ -166,8 +166,15 @@ fn run_scenario(
         before_start(&emu);
     }
 
+    let result = start_and_run(sc, board, &emu);
+
+    device::restore_rom_slots();
+    result
+}
+
+fn start_and_run(sc: &Scenario, board: Board, emu: &Emulator) -> Result<Outcome, String> {
     // SAFETY: `emu` outlives `plugin`, which is dropped at the end of this fn.
-    let plugin = unsafe { Plugin::start(&emu)? };
+    let plugin = unsafe { Plugin::start(emu)? };
 
     let ctx = Ctx {
         board,
@@ -179,7 +186,7 @@ fn run_scenario(
         },
     };
 
-    let mut device = Device::new(&emu, &plugin);
+    let mut device = Device::new(emu, &plugin);
     (sc.run)(&mut device, &ctx)
 }
 
