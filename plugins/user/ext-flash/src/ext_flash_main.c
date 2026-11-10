@@ -30,7 +30,7 @@
 
 #define VERSION_MAJOR 0u
 #define VERSION_MINOR 1u
-#define VERSION_PATCH 1u
+#define VERSION_PATCH 2u
 
 void ext_flash_main(
     ora_lookup_fn_t ora_lookup_fn,
@@ -796,7 +796,11 @@ void ext_flash_main(
     cdc_log("Type y then Enter to proceed.");
     for (;;) {
         wait_for_y();
-        cdc_log("%s", run_test() ? "PASS" : "FAIL");
+        uint32_t start = s_ctx.uptime();
+        uint8_t  pass  = run_test();
+        uint32_t ms    = s_ctx.uptime() - start;
+        cdc_log("Duration: %u.%us", (unsigned)(ms / 1000u), (unsigned)((ms % 1000u) / 100u));
+        cdc_log("%s", pass ? "PASS" : "FAIL");
         drain_input();
         cdc_log("Type y then Enter to repeat.");
     }

@@ -49,6 +49,7 @@ Type y then Enter to proceed.
 ...
 <Individual test information>
 ...
+Duration: 21.3s
 PASS
 Type y then Enter to repeat.
 ```
