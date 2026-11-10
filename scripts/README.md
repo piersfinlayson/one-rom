@@ -1,6 +1,23 @@
 # Scripts
 
-Helper scripts for testing, debugging and signing.
+Helper scripts for commissioning, testing, debugging and signing.
+
+## commission.sh
+
+Used by piers.rocks to program, test and commission a One ROM. It displays the
+values to be programmed and asks for confirmation before proceeding.
+
+Set the following in `~/.config/onerom/commission.env`:
+- `ONEROM_SIGNING_SERVER`
+- `ONEROM_KEY_ID`
+- `ONEROM_MANUFACTURER`
+- `ONEROM_PIN`
+
+For example:
+
+```bash
+scripts/commission.sh --board fire-24-f --size M --batch 2026111001 --rev A1
+```
 
 ## run-single-test-emu.sh
 
