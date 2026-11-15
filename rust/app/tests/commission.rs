@@ -683,6 +683,42 @@ async fn force_makes_a_second_instance_current() {
     assert_eq!(raw(&otp, lock1_row(4)), 0x15_1515);
 }
 
+/// A forced run lists the instance it replaces as present, followed by each
+/// of its pages that is locked. A run finishing the instance in place doesn't
+/// list it.
+#[tokio::test]
+async fn a_forced_run_lists_the_instance_it_replaces_as_present() {
+    let request = request(Board::Fire24F, BoardSize::M);
+    let rows = instance(&request, DATE, 0x0c0).len();
+    let last_page = (0x0c0 + rows as u16 - 1) / 64;
+    let acme = forced(&Request {
+        manufacturer: "Acme".into(),
+        ..request.clone()
+    });
+    let present = |plan: Plan| -> Vec<(StepKind, usize)> {
+        let writes = plan.present().iter().flat_map(|step| &step.writes);
+        assert!(writes.clone().all(|write| write.holds));
+        plan.present()
+            .iter()
+            .map(|step| (step.kind, step.writes.len()))
+            .collect()
+    };
+
+    // An instance written without its locks.
+    let mut otp = with_instance(&request);
+    let plan_acme = plan(&mut otp, &acme).await.unwrap();
+    assert_eq!(present(plan_acme), [(StepKind::Instance, rows)]);
+    let finishing = plan(&mut otp, &request).await.unwrap();
+    assert!(finishing.present().is_empty());
+
+    let mut otp = board();
+    commission(&mut otp, &request).await.unwrap();
+    otp.reset();
+    let mut expected = vec![(StepKind::Instance, rows)];
+    expected.extend((3..=last_page).map(|page| (StepKind::Lock { page }, 1)));
+    assert_eq!(present(plan(&mut otp, &acme).await.unwrap()), expected);
+}
+
 /// A run interrupted after the magic row leaves an instance ending at its
 /// version row.
 #[tokio::test]

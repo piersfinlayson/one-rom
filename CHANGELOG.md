@@ -7,11 +7,18 @@ All notable changes between versions are documented in this file.
 Headline changes in this release:
 
 In detail:
+- CLI:
+  - `hardware commission` includes existing commissioning instances in "Already present".
 - Plugins:
   - ext-flash 0.1.2
     - Displays how long the test took.
 
 To publish:
+- Rust crates (in dependency order):
+  - onerom-metadata 0.4.1
+  - onerom-app 0.5.1
+  - onerom-cli 0.6.1
+- CLI bin 0.6.1
 
 ## v0.8.1 - 2026-11-08
 

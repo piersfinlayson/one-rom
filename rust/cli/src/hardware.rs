@@ -524,10 +524,10 @@ fn check_signature(signer: &Signer, message: &[u8], signature: &[u8; 64]) -> Res
     }
 }
 
-/// Prints a line for each part of OTP `plan` writes and, with `verbose`, every
-/// row. Returns how many rows need writing.
+/// Prints a line for each part of OTP `plan` writes or found already present
+/// and, with `verbose`, every row. Returns how many rows need writing.
 fn print_plan(plan: &Plan, verbose: bool, out: &mut impl Write) -> Result<usize, Error> {
-    let parts: Vec<Part> = plan.steps().iter().map(Part::new).collect();
+    let parts: Vec<Part> = steps(plan).map(Part::new).collect();
     print_parts(out, "Already present:", &parts, |part| part.present)?;
     print_parts(out, "To write:", &parts, |part| part.to_write)?;
     if verbose {
@@ -605,7 +605,7 @@ const TOTAL: &str = "Total";
 /// entry's key row after its value, so that isn't the order it writes them.
 fn print_rows(plan: &Plan, out: &mut impl Write) -> Result<(), Error> {
     line(out, "Rows:")?;
-    for step in plan.steps() {
+    for step in steps(plan) {
         line(out, format!("  {}", step_name(step.kind)))?;
         let mut writes: Vec<_> = step.writes.iter().collect();
         writes.sort_by_key(|write| write.row);
@@ -623,6 +623,11 @@ fn print_rows(plan: &Plan, out: &mut impl Write) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// `plan`'s steps for what is already present, then its steps to take.
+fn steps(plan: &Plan) -> impl Iterator<Item = &Step> {
+    plan.present().iter().chain(plan.steps())
 }
 
 /// The name of the part of OTP a step of `kind` writes.

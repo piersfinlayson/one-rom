@@ -877,7 +877,10 @@ pub async fn plan_size<O: LocalOtpAccess>(
         .chain(size.boot_flags0)
         .collect();
     check_locks(steps.iter(), &locks)?;
-    Ok(Plan { steps })
+    Ok(Plan {
+        steps,
+        present: Vec::new(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +963,7 @@ impl Prepared {
     pub fn plan(self, signature: &[u8; 64]) -> Result<Plan, CommissionError> {
         let instance = self.place(signature)?;
         let locks = self.lock_steps(&instance)?;
+        let present = self.present_steps(&instance);
         let mut steps = self.before;
         steps.push(Step {
             kind: StepKind::Instance,
@@ -967,7 +971,45 @@ impl Prepared {
         });
         steps.extend(locks);
         steps.extend(self.after);
-        Ok(Plan { steps })
+        Ok(Plan { steps, present })
+    }
+
+    /// A step for each earlier instance the plan leaves in place, with the
+    /// instance's written rows, followed by a step for each of its pages that
+    /// is locked. Every write holds. `instance` is the plan's, which finishes
+    /// the last instance where it starts at that instance's first row.
+    fn present_steps(&self, instance: &[PlannedWrite]) -> Vec<Step> {
+        let planned = instance.iter().map(|write| write.row).min();
+        let mut steps = Vec::new();
+        for earlier in self.area.instances() {
+            let (first, last) = (earlier.first_row(), earlier.last_row());
+            if Some(first) == planned {
+                continue;
+            }
+            let writes = (first..=last)
+                .filter_map(|row| {
+                    let raw = self.area_raw[usize::from(row - OTP_COMMISSIONING_AREA_FIRST_ROW)];
+                    (!is_unwritten(raw)).then(|| PlannedWrite {
+                        row,
+                        value: codeword(raw).map_or(RowValue::Raw(raw), RowValue::Ecc),
+                        holds: true,
+                    })
+                })
+                .collect();
+            steps.push(Step {
+                kind: StepKind::Instance,
+                writes,
+            });
+            for page in first / OTP_PAGE_ROWS..=last / OTP_PAGE_ROWS {
+                if self.locks[usize::from(page - AREA_FIRST_PAGE)].raw == LOCK1_READ_ONLY {
+                    steps.push(Step {
+                        kind: StepKind::Lock { page },
+                        writes: vec![raw_write(lock1_row(page), LOCK1_READ_ONLY, LOCK1_READ_ONLY)],
+                    });
+                }
+            }
+        }
+        steps
     }
 
     /// The instance's writes at the row [`plan`](Self::plan) chooses.
@@ -1081,6 +1123,7 @@ fn is_abandoned(area: &CommissioningArea) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     steps: Vec<Step>,
+    present: Vec<Step>,
 }
 
 /// A step of a [`Plan`].
@@ -1131,6 +1174,15 @@ impl Plan {
     /// The steps in the order [`execute`](Self::execute) takes them.
     pub fn steps(&self) -> &[Step] {
         &self.steps
+    }
+
+    /// What [`Prepared::plan`] found already on the board and leaves in
+    /// place: each earlier commissioning instance, followed by each of its
+    /// pages that is locked. Every write holds, and
+    /// [`execute`](Self::execute) doesn't take them. [`plan_size`] doesn't
+    /// list any.
+    pub fn present(&self) -> &[Step] {
+        &self.present
     }
 
     /// Writes each row that doesn't already hold its value and reads it back.

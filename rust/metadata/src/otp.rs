@@ -646,6 +646,8 @@ impl serde::Serialize for CommissioningArea {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CommissioningInstance {
     first_row: u16,
+    #[serde(skip)]
+    last_row: u16,
     entries: Vec<StoreEntry>,
     /// The rows the signature covers, from the magic row to the row before
     /// the signature's key row. `None` where `COMMISSIONING_SIG` doesn't end
@@ -658,6 +660,15 @@ impl CommissioningInstance {
     /// The instance's magic row.
     pub fn first_row(&self) -> u16 {
         self.first_row
+    }
+
+    /// The instance's last row. That's the last row of `COMMISSIONING_SIG`
+    /// where the signature ends it, otherwise the length row of its key 0 and
+    /// length 0, or its version row where that is unwritten. Where the
+    /// instance runs past the end of the area, it's the last row the parser
+    /// read for it.
+    pub fn last_row(&self) -> u16 {
+        self.last_row
     }
 
     /// The instance's entries in row order.
@@ -907,9 +918,9 @@ fn walk(
         let lost = match area.row(boundary) {
             0 => return Walk::Ended(Some(boundary)),
             OTP_STORE_MAGIC => match parse_instance(area, boundary) {
-                Instance::Ended { instance, last_row } => {
+                Instance::Ended(instance) => {
+                    boundary = page_after(instance.last_row);
                     instances.push(instance);
-                    boundary = page_after(last_row);
                     continue;
                 }
                 Instance::UnknownVersion(version) => {
@@ -937,11 +948,8 @@ fn walk(
 
 /// Where a commissioning instance ended.
 enum Instance {
-    /// At `last_row`, complete or not.
-    Ended {
-        instance: CommissioningInstance,
-        last_row: u16,
-    },
+    /// At its last row, complete or not.
+    Ended(CommissioningInstance),
     /// At its version row, which holds an unknown version.
     UnknownVersion(u16),
     /// At the entry whose key row is `row`, which runs past the end of the
@@ -954,40 +962,38 @@ enum Instance {
 
 /// Parses the commissioning instance whose magic row is `first_row`.
 fn parse_instance(area: &Area, first_row: u16) -> Instance {
-    let instance =
-        |entries: Vec<StoreEntry>, signed_rows: Option<Vec<u16>>| CommissioningInstance {
+    let instance = |last_row: u16, entries: Vec<StoreEntry>, signed_rows: Option<Vec<u16>>| {
+        CommissioningInstance {
             first_row,
+            last_row,
             entries,
             signed_rows,
-        };
+        }
+    };
     let version_row = first_row + 1;
     if version_row == area.end {
         return Instance::Lost {
-            instance: instance(Vec::new(), None),
+            instance: instance(first_row, Vec::new(), None),
             row: first_row,
         };
     }
     match area.row(version_row) {
-        0 => {
-            return Instance::Ended {
-                instance: instance(Vec::new(), None),
-                last_row: version_row,
-            };
-        }
+        0 => return Instance::Ended(instance(version_row, Vec::new(), None)),
         OTP_STORE_VERSION => {}
         version => return Instance::UnknownVersion(version),
     }
     match parse_entries(area, first_row + 2, true) {
-        (entries, ListEnd::Terminated { last_row }) => Instance::Ended {
-            instance: instance(entries, None),
+        (entries, ListEnd::Terminated { last_row }) => {
+            Instance::Ended(instance(last_row, entries, None))
+        }
+        (entries, ListEnd::Signature { key_row, last_row }) => Instance::Ended(instance(
             last_row,
-        },
-        (entries, ListEnd::Signature { key_row, last_row }) => Instance::Ended {
-            instance: instance(entries, Some(area.rows(first_row, key_row).to_vec())),
-            last_row,
-        },
+            entries,
+            Some(area.rows(first_row, key_row).to_vec()),
+        )),
+        // The entry's key row can be the area's last row.
         (entries, ListEnd::Lost { row }) => Instance::Lost {
-            instance: instance(entries, None),
+            instance: instance((row + 1).min(area.end - 1), entries, None),
             row,
         },
     }

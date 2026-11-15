@@ -330,6 +330,8 @@ fn a_written_instance_parses_back() {
 
     let current = parsed.current().expect("a current instance");
     assert_eq!(current.first_row(), 0x0c0);
+    let rows = fire_24_f(0x0c0).writes(&signature()).len() as u16;
+    assert_eq!(current.last_row(), 0x0c0 + rows - 1);
     assert_eq!(current.board(), Some("fire-24-f"));
     assert_eq!(current.manufacturer(), Some("piers.rocks"));
     assert_eq!(current.date(), Some("20260926"));
@@ -436,6 +438,7 @@ fn an_unwritten_version_row_ends_the_instance() {
     let parsed = CommissioningArea::parse(&area);
     assert_eq!(parsed.instances().len(), 2);
     assert!(parsed.instances()[0].entries().is_empty());
+    assert_eq!(parsed.instances()[0].last_row(), 0x0c1);
     assert_eq!(parsed.current().map(|i| i.first_row()), Some(0x100));
 }
 
@@ -495,6 +498,8 @@ fn an_entry_running_past_the_area_loses_the_parser_its_place() {
     let parsed = CommissioningArea::parse(&area);
     assert_eq!(parsed.issues(), [AreaIssue::LostPlace { row: 0x102 }]);
     assert_eq!(parsed.instances().len(), 3);
+    // The entry's length row.
+    assert_eq!(parsed.instances()[1].last_row(), 0x103);
     assert_eq!(parsed.current().map(|i| i.first_row()), Some(0x140));
 }
 
