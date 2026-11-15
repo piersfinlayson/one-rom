@@ -180,9 +180,9 @@ mod tests {
                 "phys pin {phys_pin} (non-signal)"
             );
         }
-        for idx in 24..MAX_PHYS_PINS {
+        for (idx, gpios) in hw.gpio_from_phys_pin.iter().enumerate().skip(24) {
             assert_eq!(
-                hw.gpio_from_phys_pin[idx],
+                *gpios,
                 [GPIO_NONE, GPIO_NONE],
                 "phys pin {}",
                 idx + 1
