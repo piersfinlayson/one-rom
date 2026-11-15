@@ -105,7 +105,9 @@ iced_runtime = "0.13"
 built = { version = "0.8", features = ["git2"] }
 embed-resource = "3"
 git2 = { version = "0.20", default-features = false }
-static_vcruntime = "2.0"
+
+[target.'cfg(all(windows, target_env = "msvc"))'.build-dependencies]
+static_vcruntime = "3.0"
 
 [lints]
 workspace = true

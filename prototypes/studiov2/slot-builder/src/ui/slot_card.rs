@@ -243,14 +243,12 @@ fn chip<'a>(app: &'a Screen, index: usize, slot: &'a Slot) -> Element<'a, Messag
     let lines = slot.chip_selects();
     if lines > 0 {
         let mut selects = row![].spacing(9).align_y(Center);
-        for line in 0..lines {
+        for (line, &polarity) in slot.polarities.iter().enumerate().take(lines) {
             selects = selects.push(
                 row![
-                    pick_list(
-                        &POLARITIES[..],
-                        Some(slot.polarities[line]),
-                        move |choice| Message::PolaritySelected(index, line, choice),
-                    )
+                    pick_list(&POLARITIES[..], Some(polarity), move |choice| {
+                        Message::PolaritySelected(index, line, choice)
+                    })
                     .text_size(style::BODY)
                     .padding([7, 10])
                     .width(PICKER_WIDTH)

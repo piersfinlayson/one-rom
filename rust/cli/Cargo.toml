@@ -67,7 +67,6 @@ time = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 thiserror = "2.0"
 wildmatch = "2.6"
-zip = "8.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -77,6 +76,8 @@ built = { version = "0.8", features = ["git2"] }
 onerom-metadata = { workspace = true }
 embed-resource = "3"
 git2 = { version = "0.20", default-features = false }
+
+[target.'cfg(all(windows, target_env = "msvc"))'.build-dependencies]
 static_vcruntime = "3.0"
 
 [dev-dependencies]
