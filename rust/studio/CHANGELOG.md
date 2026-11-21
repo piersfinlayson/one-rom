@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.6 - 2026-11-21
+
+- Published for 32-bit ARM Linux, including 32-bit Raspberry Pi OS.
+
 ## v0.2.5 - 2026-11-08
 
 - Moves to logic shared with the CLI to combine and verify built firmware.

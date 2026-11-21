@@ -1,5 +1,9 @@
 # CLI Changelog
 
+## v0.6.1 - 2026-11-21
+
+- Published for 32-bit ARM Linux, including 32-bit Raspberry Pi OS.
+
 ## v0.6.0 - 2026-11-08
 
 - **Breaking** `program` and `firmware build` automatically add the USB plugin when a system plugin isn't specified. Use `--no-plugin` to build without plugins.

@@ -550,18 +550,35 @@ jobs:
           rust/studio/dist/*.deb
 
   linux-packages-test:
-    name: Linux packages (${{ matrix.arch }} on Ubuntu 22.04)
+    name: Linux packages (${{ matrix.name }})
     needs: linux-packages
     strategy:
       matrix:
         include:
-          - arch: amd64
+          - platform: amd64
+            name: amd64 on Ubuntu 22.04
             runner: ubuntu-26.04
-          - arch: arm64
+          - platform: arm64
+            name: arm64 on Ubuntu 22.04
             runner: ubuntu-26.04-arm
+          - platform: armhf
+            name: armhf on Ubuntu 22.04
+            runner: ubuntu-26.04-arm
+            emulated: true
+          - platform: armv6
+            name: armhf on Raspberry Pi OS, ARMv6
+            runner: ubuntu-26.04-arm
+            emulated: true
     runs-on: ${{ matrix.runner }}
     steps:
     - uses: actions/checkout@v7
+
+    # The runners can't run 32-bit ARM programs natively
+    - name: Set up QEMU
+      if: matrix.emulated
+      uses: docker/setup-qemu-action@v4
+      with:
+        platforms: arm
 
     - uses: actions/download-artifact@v8
       with:
@@ -569,7 +586,7 @@ jobs:
         path: linux-packages
 
     - name: Test packages
-      run: ci/test-linux-debs.sh ${{ matrix.arch }} linux-packages/cli/dist linux-packages/studio/dist
+      run: ci/test-linux-debs.sh ${{ matrix.platform }} linux-packages/cli/dist linux-packages/studio/dist
 
   lens:
     name: One ROM Lens (wasm)
