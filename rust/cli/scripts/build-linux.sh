@@ -1,10 +1,10 @@
 #!/bin/sh
 set -e
 
-# Builds the One ROM CLI deb packages for Linux (x86_64 and arm64), on either
-# architecture.
+# Builds the One ROM CLI deb packages for Linux (x86_64, arm64 and armhf),
+# on an x86_64 or arm64 machine.
 #
-# zig links both against the glibc version in ci/linux-min-glibc-version, so
+# zig links each against the glibc version in ci/linux-min-glibc-version, so
 # the packages install on that version or later whatever the build machine
 # runs.
 #
@@ -61,12 +61,13 @@ if [ "$DEPS" = true ]; then
     sudo rm -f /etc/apt/sources.list.d/ubuntu-amd64.sources
     sudo rm -f /etc/apt/sources.list.d/ubuntu-archive.list
 
-    sudo apt update && sudo apt install -y curl dpkg-dev python3 xz-utils
+    sudo apt update
+    sudo apt install -y curl dpkg-dev python3 xz-utils
 
     # Detect OS and host architecture
     if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS_ID="$ID"
+        # A subshell, since os-release also sets VERSION and other common names
+        OS_ID=$(. /etc/os-release && echo "$ID")
     else
         echo "ERROR: Cannot detect OS" >&2
         exit 1
@@ -78,8 +79,10 @@ if [ "$DEPS" = true ]; then
     # which reads the libc6 installed for that package's architecture.
     if [ "$OS_ID" = "debian" ]; then
         sudo dpkg --add-architecture arm64
+        sudo dpkg --add-architecture armhf
         sudo dpkg --add-architecture amd64
-        sudo apt update && sudo apt install -y libc6:arm64 libc6:amd64
+        sudo apt update
+        sudo apt install -y libc6:arm64 libc6:armhf libc6:amd64
 
     elif [ "$OS_ID" = "ubuntu" ]; then
         CODENAME=$(lsb_release -sc)
@@ -92,19 +95,27 @@ if [ "$DEPS" = true ]; then
 
         if [ "$HOST_ARCH" = "amd64" ]; then
             sudo dpkg --add-architecture arm64
-            echo "Configuring ports.ubuntu.com for arm64 packages"
-            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
-            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
-            echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
-            sudo apt update && sudo apt install -y libc6:arm64
+            sudo dpkg --add-architecture armhf
+            echo "Configuring ports.ubuntu.com for arm64 and armhf packages"
+            echo "deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
+            echo "deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
+            echo "deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
+            sudo apt update
+            sudo apt install -y libc6:arm64 libc6:armhf
 
         elif [ "$HOST_ARCH" = "arm64" ]; then
+            sudo dpkg --add-architecture armhf
             sudo dpkg --add-architecture amd64
+            echo "Configuring ports.ubuntu.com for armhf packages"
+            echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
+            echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
+            echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-ports.list
             echo "Configuring archive.ubuntu.com for amd64 packages"
             echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME} main universe" | sudo tee /etc/apt/sources.list.d/ubuntu-archive.list
             echo "deb [arch=amd64] http://archive.ubuntu.com/ubuntu ${CODENAME}-updates main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-archive.list
             echo "deb [arch=amd64] http://security.ubuntu.com/ubuntu ${CODENAME}-security main universe" | sudo tee -a /etc/apt/sources.list.d/ubuntu-archive.list
-            sudo apt update && sudo apt install -y libc6:amd64
+            sudo apt update
+            sudo apt install -y libc6:armhf libc6:amd64
         fi
 
     else
@@ -115,6 +126,7 @@ if [ "$DEPS" = true ]; then
     # Install the Rust targets
     rustup target add x86_64-unknown-linux-gnu
     rustup target add aarch64-unknown-linux-gnu
+    rustup target add arm-unknown-linux-gnueabihf
 
     # Install cargo-deb
     # Forced to ensure it builds against glibc version on this system
@@ -140,6 +152,7 @@ if [ "$CLEAN" = true ]; then
     echo "Cleaning previous build artifacts..."
     cargo clean --target x86_64-unknown-linux-gnu
     cargo clean --target aarch64-unknown-linux-gnu
+    cargo clean --target arm-unknown-linux-gnueabihf
     rm -f dist/*.deb
 else
     echo "Skipping cleaning of previous build artifacts."
@@ -151,7 +164,7 @@ mkdir -p dist
 # Build and package
 #
 
-for TARGET in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+for TARGET in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu arm-unknown-linux-gnueabihf; do
     echo "Building One ROM CLI version: $VERSION for $TARGET, glibc $MIN_GLIBC"
     cargo zigbuild --bin onerom --release --target "$TARGET.$MIN_GLIBC"
 

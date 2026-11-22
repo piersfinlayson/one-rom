@@ -167,6 +167,15 @@ if [ $win_status -ne 0 ]; then
     cat /tmp/cli-build-win.log
 fi
 
+failed=0
+for platform in "macOS:$mac_status" "Linux:$linux_status" "Windows:$win_status"; do
+  if [ "${platform#*:}" -ne 0 ]; then
+    echo "Error: ${platform%%:*} build failed" >&2
+    failed=1
+  fi
+done
+[ $failed -eq 0 ] || exit 1
+
 echo ""
 echo "=== Collecting build artifacts ==="
 

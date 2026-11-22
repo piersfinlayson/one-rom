@@ -148,6 +148,7 @@ RUN rustup toolchain install nightly \
 RUN rustup target install \
     x86_64-unknown-linux-gnu \
     aarch64-unknown-linux-gnu \
+    arm-unknown-linux-gnueabihf \
     x86_64-pc-windows-gnu \
     aarch64-pc-windows-gnullvm \
     x86_64-apple-darwin \

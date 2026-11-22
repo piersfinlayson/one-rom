@@ -1,0 +1,14 @@
+# Packages ci/test-linux-debs.sh requires in its container, one per line.  A
+# desktop provides them, so Studio's package doesn't depend on them.
+# ci/docker/build-raspios-test.sh builds them into the Raspberry Pi OS test
+# image.
+xvfb
+libgl1
+libegl1
+libxkbcommon-x11-0
+libxcursor1
+libxrandr2
+libxi6
+libx11-xcb1
+libvulkan1
+mesa-vulkan-drivers

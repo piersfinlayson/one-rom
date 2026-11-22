@@ -1,8 +1,12 @@
 # CLI Changelog
 
-## v0.6.1 - unreleased
+## v0.6.2 - unreleased
 
 - `hardware commission` includes existing commissioning instances in "Already present".
+
+## v0.6.1 - 2026-11-21
+
+- Published for 32-bit ARM Linux, including 32-bit Raspberry Pi OS.
 
 ## v0.6.0 - 2026-11-08
 

@@ -101,14 +101,21 @@ pub enum Status {
 /// The macOS artifact is a universal binary, so both Apple architectures map to
 /// the single `universal-apple-darwin` key; Windows and Linux keys carry the
 /// architecture.  `None` on a platform with no published build: the CLI builds
-/// from source anywhere, but only these five platforms are released.
+/// from source anywhere, but only these platforms are released.
 pub fn current_target() -> Option<&'static str> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
+    manifest_target(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// 32-bit ARM Linux is published as an ARMv6 build, which also runs on ARMv7
+/// and later, so every `arm` maps to its key.
+fn manifest_target(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
         ("macos", _) => Some("universal-apple-darwin"),
         ("windows", "x86_64") => Some("x86_64-pc-windows-msvc"),
         ("windows", "aarch64") => Some("aarch64-pc-windows-msvc"),
         ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu"),
         ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu"),
+        ("linux", "arm") => Some("arm-unknown-linux-gnueabihf"),
         _ => None,
     }
 }
@@ -549,5 +556,13 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert_eq!(target, Some("universal-apple-darwin"));
         }
+    }
+
+    #[test]
+    fn linux_arm_maps_to_the_armhf_key() {
+        assert_eq!(
+            manifest_target("linux", "arm"),
+            Some("arm-unknown-linux-gnueabihf")
+        );
     }
 }

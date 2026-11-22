@@ -4841,7 +4841,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-cli"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64 0.22.1",
  "built",
@@ -5153,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-studio"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "airfrog-rpc",
  "arc-swap",

@@ -1,3 +1,4 @@
 # Requirements for create-dmg.py
-dmgbuild
+# 2.0.0 dropped the UDBZ format create-dmg.py uses
+dmgbuild==1.6.7
 toml

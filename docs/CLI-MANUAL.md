@@ -283,7 +283,7 @@ Download the CLI from **<https://onerom.org/cli>**. Builds are provided for:
 
 - Windows — x86 64-bit and ARM 64-bit
 - macOS - a single universal build for Intel and Apple Silicon
-- Ubuntu/Debian — x86 64-bit, and ARM 64-bit (also for Raspberry Pi)
+- Ubuntu/Debian/Raspberry Pi OS — x86 64-bit, ARM 64-bit and ARM 32-bit
 
 The Windows and macOS builds are digitally signed. A sha256 checksum is published
 alongside every download so you can verify what you fetched.
@@ -294,11 +294,11 @@ executable in a folder on your `PATH`.
 **Linux** — install the `.deb` as usual, which places `onerom` on your `PATH`:
 
 ```
-sudo dpkg -i onerom-cli-x.y.z-1_amd64.deb
+sudo dpkg -i onerom-cli_x.y.z-1_amd64.deb
 ```
 
-(replace `x.y.z` with the version, e.g. `0.1.10`, and `amd64` with `arm64` for
-the ARM/Pi build).
+(replace `x.y.z` with the version, e.g. `0.1.10`, and `amd64` with `arm64` or
+`armhf` for the 64-bit or 32-bit ARM build).
 
 **Windows SmartScreen** — as a relatively new publisher, the first run may raise
 a *"Windows protected your PC"* dialog. Click **More info**, confirm the
@@ -2926,13 +2926,7 @@ omitted).
 
 ## self
 
-Check for, and download, new releases of the CLI itself. This is the CLI's own
-release channel — the binaries published at <https://onerom.org/cli> — and is
-separate from the One ROM firmware releases [`firmware
-releases`](#firmware-releases) lists.
-
-Nothing here runs unless you ask for it: the CLI performs no update check of its
-own accord, and neither command installs anything.
+Check for and download new releases of the CLI from <https://onerom.org/cli>.
 
 ```
 onerom self check
@@ -2948,16 +2942,6 @@ Compare this build against the newest release published for this platform.
 ```
 onerom self check
 ```
-
-This command takes no options.
-
-It prints the running version, then one of three things: that this is the latest
-release; that a newer one is available, with how to get it; or — for a build made
-from source — that this build is newer than anything published.
-
-Finding an update is not an error: the exit code is 0 in all three cases. A
-non-zero exit means the check itself failed, such as an unreachable images
-server, so a script can tell "no update" from "could not tell".
 
 ### self download
 
@@ -2975,34 +2959,22 @@ onerom self download --target all --path ./dist
 | `--version <VERSION>` | Version to download (e.g. `0.3.0`). Defaults to the latest release. |
 | `--target <TARGET>` | Platform to download for, as a target triple. Defaults to this machine's. `all` downloads every platform's artifact for the version, and requires `--path`. |
 | `--output, -o <FILE>` (alias `--out`) | Output file path. Defaults to the published filename. Conflicts with `--path`. |
-| `--path <DIR>` | Output directory, using the published filename. Conflicts with `--output`. |
+| `--path <DIR>` | Output directory to store the downloaded file in. Conflicts with `--output`. |
 | `--force, -f` | Overwrite an existing file. |
 
-The downloaded file is checked against the SHA-256 published alongside it; a
-mismatch is reported and the download discarded. That digest comes from the same
-server as the file, so it catches a corrupted or truncated download rather than
-a compromised server — it is not a signature. The Windows and macOS builds are
-digitally signed, and that signature is what your OS checks when you run them.
+The downloaded file is checked against its SHA-256. The Windows and macOS builds are
+digitally signed.
 
-The published filename already carries the version and architecture, so it is
-the default name in both the current directory and a `--path` directory. Every
-output path is checked before anything is downloaded, so an existing file or a
-missing directory fails immediately rather than part-way through a `--target
-all` run.
+Platform names are target triples:
 
-Platform names are the Rust target triples the manifest publishes:
-`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
-`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`, and
-`universal-apple-darwin`. The last is not a real triple: the macOS build is a
-universal binary covering both Apple architectures. Naming an unknown one lists
-what is published.
+- `x86_64-unknown-linux-gnu`
+- `aarch64-unknown-linux-gnu`
+- `arm-unknown-linux-gnueabihf`
+- `x86_64-pc-windows-msvc`
+- `aarch64-pc-windows-msvc`
+- `universal-apple-darwin`
 
-`--target` is there to fetch a build for a machine other than this one — the
-ARM `.deb` for a Raspberry Pi, say, from a desktop. When the artifact is not for
-this platform, no install step is printed, since the local one would not apply.
-
-Nothing is installed and the running `onerom` is not replaced. Install what was
-downloaded the same way you would install it from the website — see
+The release is not installed.  Do that manually — see
 [Installation](#installation).
 
 ---

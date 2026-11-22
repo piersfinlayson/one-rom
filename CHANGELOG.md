@@ -17,8 +17,22 @@ To publish:
 - Rust crates (in dependency order):
   - onerom-metadata 0.4.1
   - onerom-app 0.5.1
+  - onerom-cli 0.6.2
+- CLI bin 0.6.2
+
+## 2026-11-21
+
+In detail:
+- CLI:
+  - Published for 32-bit ARM Linux, including 32-bit Raspberry Pi OS.
+- Studio:
+  - Published for 32-bit ARM Linux, including 32-bit Raspberry Pi OS.
+
+To publish:
+- Rust crates (in dependency order):
   - onerom-cli 0.6.1
 - CLI bin 0.6.1
+- Studio 0.2.6
 
 ## v0.8.1 - 2026-11-08
 

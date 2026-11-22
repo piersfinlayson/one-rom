@@ -27,6 +27,7 @@ EXPECTED_TARGETS = {
     "universal-apple-darwin",
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
+    "arm-unknown-linux-gnueabihf",
 }
 
 def error(msg):
@@ -59,6 +60,8 @@ def identify_target(filename):
     elif lower.endswith('.deb'):
         if 'aarch64' in lower or 'arm64' in lower:
             return 'aarch64-unknown-linux-gnu'
+        elif 'armhf' in lower:
+            return 'arm-unknown-linux-gnueabihf'
         elif 'amd64' in lower or 'x86_64' in lower:
             return 'x86_64-unknown-linux-gnu'
         else:

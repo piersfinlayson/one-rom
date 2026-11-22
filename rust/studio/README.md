@@ -108,4 +108,4 @@ Uses `cargo-bundle` to create the macOS app bundle - see the following in `Cargo
 
 ### Linux
 
-`scripts/build-linux.sh` builds x86_64 and arm64 `.deb` packages, on either architecture, using `cargo-zigbuild` and `cargo-deb` - see `[package.metadata.deb]` in `Cargo.toml`.  The packages require the glibc version in `ci/linux-min-glibc-version` or later, whatever the build machine runs, and include maintainer scripts to handle udev rules installation.
+`scripts/build-linux.sh` builds x86_64, arm64 and armhf `.deb` packages, on an x86_64 or arm64 machine, using `cargo-zigbuild` and `cargo-deb` - see `[package.metadata.deb]` in `Cargo.toml`.  The packages require the glibc version in `ci/linux-min-glibc-version` or later, whatever the build machine runs, and include maintainer scripts to handle udev rules installation.
