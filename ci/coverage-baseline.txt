@@ -10,12 +10,12 @@ firmware/src/otp.c                                   100.0
 firmware/src/piodma/dma.c                            100.0
 firmware/src/piodma/pio.c                            100.0
 firmware/src/piodma/pioled.c                         100.0
-firmware/src/piodma/pioplugin.c                      79.4
+firmware/src/piodma/pioplugin.c                      79.5
 firmware/src/piodma/piorom2.c                        82.9
 firmware/src/plugin.c                                98.7
 firmware/src/rp235x.c                                73.5
 firmware/src/rtt.c                                   96.8
-firmware/src/utils.c                                 77.8
+firmware/src/utils.c                                 79.4
 plugins/user/host-control/src/flash_erase.c          100.0
 plugins/user/host-control/src/flash_erase.h          100.0
 plugins/user/host-control/src/host_control_main.c    94.2
