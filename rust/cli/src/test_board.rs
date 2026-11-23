@@ -301,11 +301,21 @@ pub async fn image_2364_for(board: Board, sets: usize, reserved: &[&str]) -> Vec
 /// An image for `board` with a set of 2364s for each of `sets`, as
 /// [`config_2364`] takes them.
 pub async fn image_2364_sets(board: Board, sets: &[&str], reserved: &[&str]) -> Vec<u8> {
+    image_2364_version(0, board, sets, reserved).await
+}
+
+/// [`image_2364_sets`] for firmware v0.8.`patch`.
+pub async fn image_2364_version(
+    patch: u16,
+    board: Board,
+    sets: &[&str],
+    reserved: &[&str],
+) -> Vec<u8> {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::mcu::{Family, Variant};
     use onerom_gen::{Builder, FileData};
 
-    let version = FirmwareVersion::new(0, 8, 0, 0);
+    let version = FirmwareVersion::new(0, 8, patch, 0);
     let config = config_2364(sets, Path::new("rom"), reserved);
     let mut builder = Builder::from_json(version, Family::Rp2350, &config).unwrap();
     let files = sets
@@ -367,11 +377,16 @@ pub const HOST_CONTROL_URL: &str =
 /// and a single 2364. Each plugin is recorded as from its source, and the end
 /// of its slot is filled as stored data.
 pub async fn image_with_plugins(sources: &[&str]) -> Vec<u8> {
+    image_with_plugins_version(0, sources).await
+}
+
+/// [`image_with_plugins`] for firmware v0.8.`patch`.
+pub async fn image_with_plugins_version(patch: u16, sources: &[&str]) -> Vec<u8> {
     use onerom_config::fw::{FirmwareProperties, FirmwareVersion, ServeAlg};
     use onerom_config::mcu::{Family, Variant};
     use onerom_gen::{Builder, FileData};
 
-    let firmware = FirmwareVersion::new(0, 8, 0, 0);
+    let firmware = FirmwareVersion::new(0, 8, patch, 0);
     let types = ["system", "user"];
     let mut sets: Vec<String> = sources
         .iter()
@@ -430,13 +445,14 @@ pub async fn slot_range(image: &[u8], slot: usize) -> std::ops::Range<usize> {
     start..start + slot.size as usize
 }
 
-/// The image file `builder` builds for `props` with [`base_firmware`].
+/// The image file `builder` builds for `props` with [`base_firmware_patch`].
 async fn assemble(
     builder: &onerom_gen::Builder,
     props: onerom_config::fw::FirmwareProperties,
 ) -> Vec<u8> {
     let (metadata, roms) = builder.build(props).unwrap();
-    let checked = onerom_app::assemble_image(&props, base_firmware(8), metadata, roms)
+    let firmware = base_firmware_patch(8, props.version().patch());
+    let checked = onerom_app::assemble_image(&props, firmware, metadata, roms)
         .await
         .unwrap();
     assert!(checked.problems.is_empty(), "{:?}", checked.problems);

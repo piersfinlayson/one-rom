@@ -210,7 +210,7 @@ void delay(volatile uint32_t count) {
 extern uint32_t _ram_rom_image_start[];
 extern uint32_t _ram_rom_image_end[];
 
-// Get the index of the selected ROM by from the image select jumper values
+// Get the index of the ROM slot to boot
 //
 // Returns the index
 uint8_t get_rom_slot_index(uint32_t sel_pins, uint32_t sel_mask, uint8_t plugins) {
@@ -239,6 +239,15 @@ uint8_t get_rom_slot_index(uint32_t sel_pins, uint32_t sel_mask, uint8_t plugins
         ERR("No ROM sets");
         limp_mode(LIMP_MODE_INVALID_CONFIG);
         return 0;
+    }
+
+    uint8_t stored = onerom_metadata_header_boot_slot(METADATA);
+    if (stored != BOOT_SLOT_NOT_SET) {
+        if ((stored >= num_plugins) && (stored < rom_slot_count)) {
+            LOG("Stored boot slot %d", stored - num_plugins);
+            return stored;
+        }
+        LOG("Stored boot slot %d not a ROM slot", stored);
     }
 
     // Calculate the ROM image index based on the selection bits and number of

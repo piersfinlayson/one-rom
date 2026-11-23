@@ -62,7 +62,7 @@ pub use error::{Error, PluginError};
 // variant `Fetch` from the base `LocalFetch`.
 pub use fetch::{Fetch, LocalFetch};
 // The flash operations that program an image file.
-pub use flash::{FlashPlan, FlashPlanError, FlashStep};
+pub use flash::{FlashPlan, FlashPlanError, FlashStep, SECTOR_SIZE};
 // Assembling an image file from a build, and checking an image file before it
 // is programmed.
 pub use image::{

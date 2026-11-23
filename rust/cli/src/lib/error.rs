@@ -41,9 +41,9 @@ fn reason_line(reason: &Option<String>) -> String {
 
 fn slot_range(slots: usize) -> String {
     match slots {
-        0 => "There aren't any ROM slots.".to_string(),
-        1 => "There is one ROM slot, slot 0.".to_string(),
-        _ => format!("The ROM slots are 0 to {}.", slots - 1),
+        0 => "No ROM slots found".to_string(),
+        1 => "Valid slot: 0".to_string(),
+        _ => format!("Valid slots: 0-{}", slots - 1),
     }
 }
 
@@ -119,7 +119,7 @@ pub enum Error {
     #[error("Couldn't read {what}.\n  {reason}")]
     ReadBack { what: String, reason: String },
 
-    #[error("There isn't a ROM slot {slot}.\n  {}", slot_range(*slots))]
+    #[error("Invalid slot: {slot}\n  {}", slot_range(*slots))]
     NoSlot { slot: usize, slots: usize },
 
     #[error("Slot {slot} doesn't have a ROM image.")]

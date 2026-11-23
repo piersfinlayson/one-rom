@@ -43,6 +43,7 @@ use onerom_metadata::{
 };
 
 use crate::builder::check_cs_v2;
+use crate::v2::boot_slot;
 use crate::v2::rom_slot::build_rom_slot;
 use crate::{
     Chip, ChipConfig, ChipSetConfig, ChipSetType, ChipTypeSpec, Config, CsConfig, CsLogic,
@@ -268,6 +269,7 @@ pub fn recover_config(
             .pins()
             .map(Pin::Header)
             .collect();
+    config.boot_slot = boot_slot::recover(&config, header.boot_slot);
 
     Ok(RecoveredConfig {
         config,

@@ -237,6 +237,14 @@ void ffi_set_metadata_generation(uint32_t generation) {
     *(uint32_t *)(uintptr_t)&_metadata_start.version = generation;
 }
 
+void ffi_set_boot_slot(uint8_t boot_slot) {
+    *(uint8_t *)(uintptr_t)&_metadata_start.boot_slot_stored = boot_slot;
+}
+
+void ffi_set_turbo_boot(uint8_t turbo_boot) {
+    *(uint8_t *)(uintptr_t)&_metadata_start.turbo_boot = turbo_boot;
+}
+
 // See ffi.h.
 uint32_t ffi_rom_slot_flash_addr(uint8_t index) {
     assert(index < METADATA->rom_slot_count);

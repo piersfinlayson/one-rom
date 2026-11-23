@@ -8,26 +8,35 @@
 //! config and programs it with `program`'s build and flash steps.
 
 use onerom_app::{
-    BoardSize, CheckedImage, PluginType, ReadBack, RecordedPlugin, assemble_image,
-    published_plugins, validate_resolved_plugin_types,
+    BoardSize, CheckedImage, FlashPlan, PluginType, ReadBack, ReadBackError, RecordedPlugin,
+    SECTOR_SIZE, assemble_image, published_plugins, validate_resolved_plugin_types,
 };
-use onerom_cli::device::{matches_serial, select_device};
+use onerom_cli::device::{DeviceState, matches_serial, select_device};
 use onerom_cli::plugin::{LocalFetch, ResolvedPlugin, parse_plugin, resolve_plugin};
-use onerom_cli::read_back::{inline_files, problem_error, read_back, read_back_error};
-use onerom_cli::usb::{RebootArgs, enumerate_devices};
+use onerom_cli::read_back::{
+    device_read_back_error, inline_files, problem_error, read_back, read_back_error,
+};
+use onerom_cli::usb::{RebootArgs, enumerate_devices, flash_program, flash_read};
 use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
 use onerom_config::mcu::{Rp235xChipId, Variant};
 use onerom_fw_parser::ParsedDevice;
-use onerom_gen::{ChipSetConfig, Config};
+use onerom_gen::{ChipSetConfig, Config, MIN_BOOT_SLOT_VERSION};
+use onerom_metadata::{
+    BOOT_SLOT_NOT_SET, METADATA_BASE, ONEROM_METADATA_HEADER_BOOT_SLOT_OFFSET,
+    metadata_generation_for,
+};
 
 use crate::args::update::{
-    CloneArgs, RebuildArgs, UpdateCommitArgs, UpdateFirmwareArgs, UpdatePluginArgs, UpdateSlotArgs,
+    CloneArgs, RebuildArgs, UpdateBootSlotArgs, UpdateCommitArgs, UpdateFirmwareArgs,
+    UpdatePluginArgs, UpdateSlotArgs,
 };
 use crate::firmware::{accept_image, acquire_firmware, build_rom_image, plugin_error};
-use crate::program::{flash_device, image_size, reboot_and_rescan};
+use crate::program::{
+    flash_device, image_size, plan_lines, reboot_and_rescan, reboot_to_stopped, restart,
+};
 use crate::save::chip_index;
 use crate::utils::{check_device, resolve_board};
 
@@ -84,6 +93,88 @@ pub async fn cmd_plugin(options: &mut Options, args: &UpdatePluginArgs) -> Resul
         &args.rebuild,
     )
     .await
+}
+
+pub async fn cmd_boot_slot(options: &mut Options, args: &UpdateBootSlotArgs) -> Result<(), Error> {
+    check_device(options, args, false)?;
+    let device = options.device.as_ref().ok_or(Error::NoDevice)?;
+    let parsed = device
+        .onerom()
+        .ok_or_else(|| device_read_back_error(ReadBackError::<String>::FlashNotOneRom))?;
+    let boot_slot = boot_slot_value(parsed, args.slot)?;
+
+    let stopped = reboot_to_stopped(options, &[DeviceState::Running, DeviceState::Limp]).await?;
+    let device = options.device.as_ref().ok_or(Error::NoDevice)?;
+    let sector = match flash_read(device, METADATA_BASE, SECTOR_SIZE).await {
+        Ok(sector) => with_boot_slot(&sector, boot_slot),
+        Err(e) => return restart(options, stopped, Err(e)).await,
+    };
+    let plan = FlashPlan::sector(METADATA_BASE, &sector);
+    println!("Programming device - DO NOT DISCONNECT");
+    if options.verbose {
+        for line in plan_lines(&plan) {
+            println!("{line}");
+        }
+    }
+    flash_program(device, &plan).await?;
+    reboot_and_rescan(options, &RebootArgs::running(false, false)).await?;
+    println!("{}", boot_slot_line(args.slot));
+    Ok(())
+}
+
+/// The line `update boot-slot` displays once the boot slot is `slot`.
+pub(crate) fn boot_slot_line(slot: Option<u8>) -> String {
+    match slot {
+        Some(slot) => format!("Boot slot set to {slot}"),
+        None => "Boot slot cleared".to_string(),
+    }
+}
+
+/// The metadata value for ROM slot `slot` of `parsed`, numbered from 0 without
+/// plugins. Without `slot`, the value for no boot slot.
+pub(crate) fn boot_slot_value(parsed: &ParsedDevice, slot: Option<u8>) -> Result<u8, Error> {
+    let read_back_error = device_read_back_error::<String>;
+    let version = parsed
+        .version()
+        .ok_or_else(|| read_back_error(ReadBackError::FlashNotOneRom))?;
+    if version < MIN_BOOT_SLOT_VERSION {
+        return Err(Error::FirmwareTooOldFor {
+            feature: "a boot slot".to_string(),
+            version,
+            minimum: MIN_BOOT_SLOT_VERSION,
+        });
+    }
+    let generation = parsed
+        .as_schema()
+        .and_then(|onerom| onerom.metadata())
+        .map(|metadata| metadata.version);
+    if generation < metadata_generation_for(MIN_BOOT_SLOT_VERSION) {
+        return Err(read_back_error(ReadBackError::Unparsed));
+    }
+    let Some(slot) = slot else {
+        return Ok(BOOT_SLOT_NOT_SET);
+    };
+    let rom_slots: Vec<usize> = parsed
+        .slots()
+        .filter(|view| view.user_index.is_some())
+        .map(|view| view.slot_index)
+        .collect();
+    rom_slots
+        .get(usize::from(slot))
+        .and_then(|&index| u8::try_from(index).ok())
+        .ok_or(Error::NoSlot {
+            slot: slot.into(),
+            slots: rom_slots.len(),
+        })
+}
+
+/// `sector`, the metadata's first, with its boot slot set to `boot_slot`.
+pub(crate) fn with_boot_slot(sector: &[u8], boot_slot: u8) -> [u8; SECTOR_SIZE as usize] {
+    let mut sector: [u8; SECTOR_SIZE as usize] = sector
+        .try_into()
+        .expect("flash_read returns the length it's passed");
+    sector[ONEROM_METADATA_HEADER_BOOT_SLOT_OFFSET] = boot_slot;
+    sector
 }
 
 pub async fn cmd_commit(options: &Options, args: &UpdateCommitArgs) -> Result<(), Error> {
@@ -253,9 +344,7 @@ pub(crate) fn place_plugin(config: &mut Config, plugin: &ResolvedPlugin) -> Resu
     {
         config.chip_sets[slot] = chip_set;
     } else {
-        config
-            .chip_sets
-            .insert(slot.min(plugin_count(config)), chip_set);
+        config.insert_chip_set(slot.min(plugin_count(config)), chip_set);
     }
     let types: Vec<_> = config
         .chip_sets
@@ -577,8 +666,8 @@ mod tests {
     use crate::save::save;
     use crate::test_board::{
         Files, HOST_CONTROL_URL, IMAGE_2364, NoFetch, USB_URL, base_firmware, config_2364,
-        holds_in_order, image_2364, image_2364_sets, image_with_plugins, image_with_usb,
-        published_plugin, slot_range,
+        holds_in_order, image_2364, image_2364_sets, image_2364_version, image_with_plugins,
+        image_with_plugins_version, image_with_usb, published_plugin, slot_range,
     };
 
     const VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 0, 0);
@@ -1012,6 +1101,62 @@ mod tests {
             set_plugin_type(&config.chip_sets[1]),
             Some(PluginType::User)
         );
+    }
+
+    /// The config's boot slot is an index that includes plugins.
+    #[test]
+    fn the_boot_slot_stays_on_its_rom_when_a_plugin_is_added() {
+        let mut config = config_of(&["rom", "rom"]);
+        config.boot_slot = Some(1);
+        place_plugin(&mut config, &plugin(PluginType::System, "usb.bin")).unwrap();
+        assert_eq!(config.boot_slot, Some(2));
+        place_plugin(&mut config, &plugin(PluginType::User, "blink.bin")).unwrap();
+        assert_eq!(config.boot_slot, Some(3));
+        place_plugin(&mut config, &plugin(PluginType::System, "usb2.bin")).unwrap();
+        assert_eq!(config.boot_slot, Some(3));
+    }
+
+    /// `update boot-slot` sets the metadata's index, which includes plugins,
+    /// and the image still reads back.
+    #[tokio::test]
+    async fn the_boot_slot_is_set_in_the_metadata_sector() {
+        let sets = ["single"; 3];
+        let image = image_2364_version(2, Board::Fire24F, &sets, &[]).await;
+        let parsed = parse_firmware(&image).await;
+        let at = (METADATA_BASE - onerom_cli::usb::FLASH_BASE) as usize;
+        for (slot, expected) in [(Some(2), Some(2)), (Some(0), Some(0)), (None, None)] {
+            let value = boot_slot_value(&parsed, slot).unwrap();
+            let mut changed = image.clone();
+            let sector = at..at + SECTOR_SIZE as usize;
+            let replaced = with_boot_slot(&image[sector.clone()], value);
+            changed[sector].copy_from_slice(&replaced);
+            let read_back = read_back_file(&changed).await.unwrap();
+            assert_eq!(read_back.config.boot_slot, expected);
+        }
+        let e = boot_slot_value(&parsed, Some(3)).unwrap_err();
+        assert!(matches!(e, Error::NoSlot { slot: 3, slots: 3 }), "{e:?}");
+    }
+
+    /// Plugins come ahead of the ROM slots in the metadata.
+    #[tokio::test]
+    async fn a_boot_slot_is_numbered_without_plugins() {
+        let image = image_with_plugins_version(2, &[USB_URL, HOST_CONTROL_URL]).await;
+        let parsed = parse_firmware(&image).await;
+        assert_eq!(boot_slot_value(&parsed, Some(0)).unwrap(), 2);
+        let e = boot_slot_value(&parsed, Some(1)).unwrap_err();
+        assert!(matches!(e, Error::NoSlot { slot: 1, slots: 1 }), "{e:?}");
+    }
+
+    #[tokio::test]
+    async fn a_boot_slot_needs_firmware_that_supports_it() {
+        for slot in [Some(0), None] {
+            let image = image_2364_version(1, Board::Fire24F, &["single"], &[]).await;
+            let e = boot_slot_value(&parse_firmware(&image).await, slot).unwrap_err();
+            assert!(
+                matches!(&e, Error::FirmwareTooOldFor { minimum, .. } if *minimum == MIN_BOOT_SLOT_VERSION),
+                "{e:?}"
+            );
+        }
     }
 
     #[test]

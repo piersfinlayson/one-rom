@@ -150,6 +150,7 @@ mod tests {
             turbo_boot: false,
             reserved_pins: vec![],
             addr_mon_min_cs_act_ns: None,
+            boot_slot: None,
         };
 
         let fw = build_firmware_config(&config);

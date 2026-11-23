@@ -68,6 +68,11 @@ uint8_t ffi_usb_reserve(ora_plugin_type_t plugin, uint8_t properties1);
 uint32_t ffi_metadata_generation(void);
 void ffi_set_metadata_generation(uint32_t generation);
 
+// Change the metadata header's boot slot and turbo boot.  Both outlive a boot,
+// so the test puts them back.
+void ffi_set_boot_slot(uint8_t boot_slot);
+void ffi_set_turbo_boot(uint8_t turbo_boot);
+
 // A ROM slot's address in a device's flash, a way to move it, its size, and
 // whether it lies within the flash at the chip sizes OTP configures.
 //

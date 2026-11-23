@@ -82,6 +82,17 @@ pub enum UpdateCommands {
     ///   onerom update plugin --plugin host-control
     Plugin(UpdatePluginArgs),
 
+    /// Set a ROM slot to boot from instead of using the image select jumpers.
+    ///
+    /// Requires firmware v0.8.2 or later.
+    ///
+    /// Examples:
+    ///
+    ///   onerom update boot-slot --slot 2
+    ///
+    ///   onerom update boot-slot --clear
+    BootSlot(UpdateBootSlotArgs),
+
     /// Commit the live ROM image to flash (not yet supported).
     ///
     /// The live ROM image is written to its slot in flash so it survives power
@@ -175,6 +186,24 @@ pub struct UpdatePluginArgs {
 }
 
 impl CommandTrait for UpdatePluginArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+#[group(required = true, multiple = false)]
+pub struct UpdateBootSlotArgs {
+    /// Slot to boot. For slot numbering see 'onerom inspect slots'.
+    #[arg(long, value_name = "INDEX", value_parser = parse_u8)]
+    pub slot: Option<u8>,
+
+    /// Clear the boot slot so it is selected by the image select jumpers.
+    #[arg(long)]
+    pub clear: bool,
+}
+
+impl CommandTrait for UpdateBootSlotArgs {
     fn requires_device(&self) -> bool {
         true
     }

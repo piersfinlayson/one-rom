@@ -1,6 +1,6 @@
 [package]
 name = "onerom-studio"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2024"
 default-run = "onerom-studio"
 # Released as installers via studio-* tags, never to crates.io.

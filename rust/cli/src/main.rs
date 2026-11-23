@@ -190,6 +190,7 @@ async fn sub_main() -> Result<(), Error> {
             UpdateCommands::Firmware(args) => update::cmd_firmware(&mut options, args).await,
             UpdateCommands::Slot(args) => update::cmd_slot(&mut options, args).await,
             UpdateCommands::Plugin(args) => update::cmd_plugin(&mut options, args).await,
+            UpdateCommands::BootSlot(args) => update::cmd_boot_slot(&mut options, args).await,
             UpdateCommands::Commit(args) => update::cmd_commit(&options, args).await,
         },
         Commands::Clone(args) => update::cmd_clone(&mut options, args).await,

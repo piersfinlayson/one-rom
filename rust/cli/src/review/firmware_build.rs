@@ -558,6 +558,56 @@ async fn addr_mon_min_cs_act_ns() {
     build(line, &files).await;
 }
 
+/// [`Files::with_2364`] with base firmware v0.8.`patch`.
+fn files_for_patch(patch: u16, sets: &[&str]) -> Files {
+    let files = Files::with_2364(8, sets, &[]);
+    std::fs::write(
+        files.dir.path().join("base.bin"),
+        base_firmware_patch(8, patch),
+    )
+    .unwrap();
+    files
+}
+
+/// The option, with and without turbo boot, and where there is one image.
+#[tokio::test]
+async fn verbose_boot_slot() {
+    for options in ["--boot-slot 1", "--boot-slot 1 --turbo-boot"] {
+        let files = files_for_patch(2, &["single"; 3]);
+        let line = format!(
+            "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin {options} --no-plugin"
+        );
+        build(&line, &files).await;
+        println!();
+    }
+    let files = files_for_patch(2, &["single"]);
+    let line = "onerom --verbose firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --boot-slot 0 --no-plugin";
+    build(line, &files).await;
+}
+
+/// A slot the config doesn't have, with the option then in the config, and
+/// firmware that doesn't support a boot slot.
+#[tokio::test]
+async fn a_boot_slot_that_fails() {
+    let line = "onerom firmware build --board fire-24-f --config sets.json --base-firmware base.bin --output out.bin --no-plugin";
+    build(
+        &format!("{line} --boot-slot 3"),
+        &files_for_patch(2, &["single"; 3]),
+    )
+    .await;
+    println!();
+    let files = files_for_patch(2, &["single"; 3]);
+    edit_config(&files, |config| config["boot_slot"] = serde_json::json!(3));
+    println!(r#"~ sets.json has "boot_slot": 3"#);
+    build(line, &files).await;
+    println!();
+    build(
+        &format!("{line} --boot-slot 1"),
+        &files_for_patch(1, &["single"; 3]),
+    )
+    .await;
+}
+
 /// Each of these fails to parse:
 /// - a value above the maximum
 /// - a value with a unit

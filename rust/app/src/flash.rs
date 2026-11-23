@@ -10,7 +10,10 @@ use alloc::vec::Vec;
 use onerom_gen::FlashChips;
 
 /// A flash sector, the smallest area flash erases.
-const SECTOR_SIZE: u32 = 4096;
+pub const SECTOR_SIZE: u32 = 4096;
+
+/// A flash page, the smallest area flash writes.
+const PAGE_SIZE: usize = 256;
 
 /// The flash operations that program an image file, in the order to run them.
 ///
@@ -72,6 +75,27 @@ impl<'a> FlashPlan<'a> {
                 },
             ],
         })
+    }
+
+    /// Plans replacing the sector at `addr` with `sector`.
+    ///
+    /// The first page is written last, so a run that stops part way leaves it
+    /// erased.
+    pub fn sector(addr: u32, sector: &'a [u8; SECTOR_SIZE as usize]) -> Self {
+        let (first, rest) = sector.split_at(PAGE_SIZE);
+        Self {
+            steps: vec![
+                FlashStep::Erase {
+                    addr,
+                    len: SECTOR_SIZE,
+                },
+                FlashStep::Write {
+                    addr: addr + PAGE_SIZE as u32,
+                    data: rest,
+                },
+                FlashStep::Write { addr, data: first },
+            ],
+        }
     }
 
     /// The operations, in the order to run them.

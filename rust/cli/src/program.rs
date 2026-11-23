@@ -11,7 +11,7 @@ use onerom_config::mcu::Variant;
 use crate::args;
 use crate::firmware::{
     accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, fetch_config_json,
-    resolve_build_plugins, resolve_config_json,
+    resolve_build_plugins, resolve_config_json, set_boot_slot,
 };
 use crate::utils::{check_device, check_fire_board_optional, resolve_board};
 use onerom_app::{
@@ -143,6 +143,7 @@ async fn build_and_assemble(
         Some(&global_config),
         &plugins,
     )?;
+    let config_json = set_boot_slot(config_json, args.boot_slot)?;
 
     if let Some(path) = &args.save_config {
         save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;

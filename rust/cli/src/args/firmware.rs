@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use crate::args::CommandTrait;
 use crate::args::program::{HELP_MIN_CS_ACT, LONG_HELP_MIN_CS_ACT, ProgramArgs};
-use crate::utils::parse_addr_mon_min_cs_act_ns;
+use crate::utils::{parse_addr_mon_min_cs_act_ns, parse_u8};
 use clap::builder::{PossibleValue, TypedValueParser};
 use clap::{Args, Subcommand};
 use enum_dispatch::enum_dispatch;
@@ -325,7 +325,7 @@ pub struct FirmwareBuildArgs {
     /// Mutually exclusive with --config and --slot.
     #[arg(
         long,
-        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin", "addr_mon_min_cs_act_ns"]
+        conflicts_with_all = ["config_file", "slot", "instance_name", "serial_override", "logging", "disable_swd", "turbo_boot", "reserve_pin", "addr_mon_min_cs_act_ns", "boot_slot"]
     )]
     pub no_config: bool,
 
@@ -353,8 +353,9 @@ pub struct FirmwareBuildArgs {
     pub disable_swd: Option<bool>,
 
     /// Enable turbo boot - starts ROM serving faster by not reading the image
-    /// select jumpers, so the first non-plugin slot is always the one served.
-    /// More than one non-plugin slot is refused unless --force is provided.
+    /// select jumpers, so the first non-plugin slot is always the one served
+    /// unless --boot-slot is provided. More than one non-plugin slot is refused
+    /// unless --boot-slot or --force is provided.
     #[arg(long, visible_aliases = ["turbo_boot"], default_missing_value = "true", num_args = 0..=1, conflicts_with_all = ["no_config"])]
     pub turbo_boot: Option<bool>,
 
@@ -378,6 +379,13 @@ pub struct FirmwareBuildArgs {
         long_help = LONG_HELP_MIN_CS_ACT
     )]
     pub addr_mon_min_cs_act_ns: Option<u16>,
+
+    /// Set a ROM slot to boot from instead of using the image select jumpers.
+    /// For slot numbering see 'onerom inspect slots'.
+    ///
+    /// Requires firmware v0.8.2 or later.
+    #[arg(long, value_name = "INDEX", value_parser = parse_u8, conflicts_with_all = ["no_config"])]
+    pub boot_slot: Option<u8>,
 }
 
 impl CommandTrait for FirmwareBuildArgs {

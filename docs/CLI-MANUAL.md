@@ -871,9 +871,10 @@ These are rejected when used with `--no-config` or `--firmware`. When used with 
 | `--serial-override <SERIAL>` | Override the device's reported serial number. |
 | `--logging [BOOL]` (aliases `--boot-logging`) | Enable boot logging. Takes an optional boolean; bare flag means `true`. |
 | `--disable-swd [BOOL]` (aliases `--swd-disable`) | Shut SWD down before ROM serving starts, so debug port accesses to SRAM don't steal cycles from the serving DMAs. SWD is available for the whole of boot — including boot logging — and goes off until the next reset. Nothing is logged past that point, and plugins get no logging. This is not a debug lockout: the boot ROM runs before the One ROM firmware does, and BOOTSEL/PICOBOOT are unaffected. Optional boolean; bare flag means `true`. |
-| `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served. More than one non-plugin slot is refused unless `--force` is provided. Optional boolean; bare flag means `true`. |
+| `--turbo-boot [BOOL]` | Enable turbo boot — starts serving faster by not reading the image select jumpers, so the first non-plugin slot is always the one served unless `--boot-slot` is provided. More than one non-plugin slot is refused unless `--boot-slot` or `--force` is provided. Optional boolean; bare flag means `true`. |
 | `--reserve-pin <PIN>` (aliases `--reserved-pin`, `--reserved_pins`) | Reserve a pin for another use, for example a pin connected to a host's reset line. Repeat for each reserved pin. Requires firmware v0.8.0 or later. See [Reserve a pin for another use](#reserve-a-pin-for-another-use). |
 | `--addr-mon-min-cs-act-ns <NS>` (alias `--addr_mon_min_cs_act_ns`) | Set the minimum time in nanoseconds chip select has to stay active for the address monitor to capture an access. A pulse slightly longer than this may also not be captured. Unset, a pulse of <!--[const:ADDR_MON_UNSET_MIN_CS_ACT_NS]-->40<!--[/]-->ns or less isn't captured, or <!--[const:ADDR_MON_UNSET_MIN_CS_ACT_NS_ALG_CS_2]-->20<!--[/]-->ns or less for a 23QL384, at the default CPU frequency of <!--[const:TARGET_FREQ_MHZ]-->150<!--[/]-->MHz. With a lower value, shorter pulses can be captured. The value may need tuning for a particular host. A per-slot value overrides it. The range is 0 to <!--[gen:MAX_ADDR_MON_MIN_CS_ACT_NS]-->2540<!--[/]-->. Requires firmware v0.8.1 or later. |
+| `--boot-slot <INDEX>` | Set a ROM slot to boot from instead of using the image select jumpers. For slot numbering see [`onerom inspect slots`](#inspect-slots). Requires firmware v0.8.2 or later. |
 
 ### Board, version and output
 
@@ -1943,6 +1944,7 @@ onerom update <COMMAND>
 | [`firmware`](#update-firmware) | Change a One ROM's firmware version, keeping its configuration and ROM images | Yes |
 | [`slot`](#update-slot) | Replace a ROM image in a slot, keeping the configuration and the other ROM images | Yes |
 | [`plugin`](#update-plugin) | Add or replace a plugin keeping the rest of the configuration | Yes |
+| [`boot-slot`](#update-boot-slot) | Set a ROM slot to boot from | Yes |
 | [`commit`](#update-commit) | Commit the live ROM image to flash **(not yet supported)** | Yes |
 
 ### update firmware
@@ -2012,6 +2014,24 @@ onerom update plugin --plugin host-control
 |---|---|
 | `--plugin <SPEC>` | Plugin to add. See [Plugin specification](#plugin-specification). Required. |
 | `--force, -f` | Continue despite non-fatal problems. Each problem is printed as a warning. |
+
+### update boot-slot
+
+Set a ROM slot to boot from instead of using the image select jumpers.
+
+Requires firmware v0.8.2 or later.
+
+```
+onerom update boot-slot --slot 2
+onerom update boot-slot --clear
+```
+
+| Option | Description |
+|---|---|
+| `--slot <INDEX>` | Slot to boot. For slot numbering see [`onerom inspect slots`](#inspect-slots). |
+| `--clear` | Clear the boot slot so it is selected by the image select jumpers. |
+
+One of `--slot` and `--clear` is required.
 
 ### update commit
 
@@ -2539,8 +2559,8 @@ The configuration options mirror [`program`](#program): `--config` (`-j`),
 `--slot`, `--plugin`, `--no-plugin`, `--config-name`, `--config-description`, `--save-config`,
 `--no-config`, and the per-device overrides `--instance-name`,
 `--serial-override`, `--logging`, `--disable-swd`, `--turbo-boot`,
-`--reserve-pin` and `--addr-mon-min-cs-act-ns`. `--no-config` can't be used
-with `--config`, `--slot` or a per-device override. Build-specific options:
+`--reserve-pin`, `--addr-mon-min-cs-act-ns` and `--boot-slot`. `--no-config`
+can't be used with `--config`, `--slot` or a per-device override. Build-specific options:
 
 | Option | Description |
 |---|---|

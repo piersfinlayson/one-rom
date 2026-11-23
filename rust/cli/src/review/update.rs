@@ -2,9 +2,10 @@
 //
 // MIT License
 
-//! `update firmware`, `update slot`, `update plugin` and `clone`.
+//! `update firmware`, `update slot`, `update plugin`, `update boot-slot` and
+//! `clone`.
 //!
-//! Each reads a One ROM back and programs it. The cases print the help, the
+//! Each reads a One ROM and programs it. The cases print the help, the
 //! command lines that fail to parse before a One ROM is looked for, and the
 //! lines and errors these commands add to `program`'s, written from the code.
 
@@ -30,12 +31,12 @@ use super::{command_of, failed, refused_lines, written_failure};
 use crate::args::Commands;
 use crate::firmware::{build_rom_image, resolve_release};
 use crate::test_board::{
-    Files, IMAGE_2364, NoFetch, USB_URL, base_firmware, image_2364_sets, image_with_plugins,
-    image_with_usb,
+    Files, IMAGE_2364, NoFetch, USB_URL, base_firmware, image_2364_sets, image_2364_version,
+    image_with_plugins, image_with_usb,
 };
 use crate::update::{
-    Command, build_failure, check_recovered, clone_config, firmware_change, plugin_changes,
-    plugin_config, read_source, replace_rom, source_error,
+    Command, boot_slot_line, boot_slot_value, build_failure, check_recovered, clone_config,
+    firmware_change, plugin_changes, plugin_config, read_source, replace_rom, source_error,
 };
 
 async fn read_back() -> ReadBack {
@@ -45,7 +46,7 @@ async fn read_back() -> ReadBack {
 
 #[test]
 fn help() {
-    for command in ["firmware", "slot", "plugin"] {
+    for command in ["firmware", "slot", "plugin", "boot-slot"] {
         super::help(&["onerom", "update", command, "--help"]);
         println!();
     }
@@ -59,6 +60,8 @@ fn refused() {
         "onerom update slot --slot 0",
         "onerom update slot --image kernal.bin",
         "onerom update plugin",
+        "onerom update boot-slot",
+        "onerom update boot-slot --slot 2 --clear",
         "onerom clone --from E126C9F97C10ADAC",
     ]);
 }
@@ -183,6 +186,24 @@ fn a_slot_or_chip_it_doesnt_have() {
     println!();
     println!("$ onerom update slot --slot 2 --image char.bin");
     written_failure(&Error::ChipNeeded { slot: 2, chips: 2 });
+}
+
+/// Setting and clearing the boot slot, a slot the One ROM doesn't have and a
+/// One ROM whose firmware doesn't support a boot slot.
+#[tokio::test]
+async fn the_boot_slot() {
+    for (line, slot) in [("--slot 2", Some(2)), ("--clear", None)] {
+        println!("$ onerom update boot-slot {line}");
+        println!("~ Programming device - DO NOT DISCONNECT");
+        println!("~ {}", boot_slot_line(slot));
+        println!();
+    }
+    for patch in [2, 1] {
+        let image = image_2364_version(patch, Board::Fire24F, &["single"; 3], &[]).await;
+        println!("$ onerom update boot-slot --slot 7");
+        written_failure(&boot_slot_value(&parse_firmware(&image).await, Some(7)).unwrap_err());
+        println!();
+    }
 }
 
 #[test]

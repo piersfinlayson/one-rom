@@ -114,8 +114,8 @@ use save::SaveArgs;
 use scan::ScanArgs;
 use self_cmd::{SelfArgs, SelfCheckArgs, SelfCommands, SelfDownloadArgs};
 use update::{
-    CloneArgs, UpdateArgs, UpdateCommands, UpdateCommitArgs, UpdateFirmwareArgs, UpdatePluginArgs,
-    UpdateSlotArgs,
+    CloneArgs, UpdateArgs, UpdateBootSlotArgs, UpdateCommands, UpdateCommitArgs,
+    UpdateFirmwareArgs, UpdatePluginArgs, UpdateSlotArgs,
 };
 
 #[enum_dispatch]

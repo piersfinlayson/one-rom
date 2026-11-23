@@ -2,7 +2,8 @@
 //
 // MIT License
 
-//! ROM slot selection by the plugins' header overrides.
+//! ROM slot selection by the plugins' header overrides and the metadata's boot
+//! slot.
 //!
 //! - With `OVERRIDE1_BOOT_SLOT` the byte at the header's `boot_slot_addr`
 //!   selects the slot if it is a ROM slot number, counting from 0 at the first
@@ -14,13 +15,16 @@
 //! - The image select jumpers select the slot when the overrides don't.
 //! - The overrides apply only from the header of a plugin the firmware starts.
 //! - A boot serves the slot the overrides select.
+//! - The metadata's boot slot selects the slot if the plugins don't. It is an
+//!   index that includes plugins. The jumpers are still read. It is ignored if
+//!   it isn't a ROM slot, or if the metadata predates it.
 
 use onerom_config::hw::Board;
 use onerom_fw_emulator::{Emulator, ffi};
 use onerom_metadata::{
-    FLASH_CS1_BASE_ADDR, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE, OTP_BOOT_FLAGS0_ROW,
-    OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT, OTP_FLASH_DEVINFO_ROW, OVERRIDE1_BOOT_SLOT,
-    OVERRIDE1_IGNORE_IMAGE_SELECT, OneromFlashSize,
+    BOOT_SLOT_NOT_SET, FLASH_CS1_BASE_ADDR, OTP_BOOT_FLAGS0_FLASH_DEVINFO_ENABLE,
+    OTP_BOOT_FLAGS0_ROW, OTP_FLASH_DEVINFO_CS0_SIZE_SHIFT, OTP_FLASH_DEVINFO_ROW,
+    OVERRIDE1_BOOT_SLOT, OVERRIDE1_IGNORE_IMAGE_SELECT, OneromFlashSize,
 };
 
 use crate::flash_range::{PLUGINS, check_plugin_flash_slots};
@@ -56,6 +60,9 @@ pub fn run(board: Board, num_slots: usize, sel_values: usize, report: &mut TestR
             "boot slot: boots the chosen slot",
             check_boot(board, rom_slots),
         );
+    }
+    if rom_slots > 1 && sel_values > 1 {
+        report.add_check("boot slot: metadata", check_metadata(board, rom_slots));
     }
     report.add_check(
         "boot slot: flash slot calls on the plugin slots",
@@ -309,6 +316,122 @@ fn check_boot(board: Board, rom_slots: u8) -> Result<(), String> {
                  {want}"
             ));
         }
+    }
+    Ok(())
+}
+
+/// The metadata's boot slot and turbo boot, and the plugins' overrides.
+struct MetadataCase {
+    label: &'static str,
+    boot_slot: u8,
+    turbo: bool,
+    system: Overrides,
+    user: Overrides,
+    /// The slot that boots, numbered without plugins.
+    expected: u8,
+}
+
+fn check_metadata(board: Board, rom_slots: u8) -> Result<(), String> {
+    let sel = 1;
+    let by_jumpers = 1;
+    let last = rom_slots - 1;
+    let case = |label, boot_slot, expected| MetadataCase {
+        label,
+        boot_slot,
+        turbo: false,
+        system: NONE,
+        user: NONE,
+        expected,
+    };
+    let mut cases = vec![
+        case("not set", BOOT_SLOT_NOT_SET, by_jumpers),
+        case("the first ROM slot", NUM_PLUGINS, 0),
+        case("the last ROM slot", NUM_PLUGINS + last, last),
+        case(
+            "one past the last slot",
+            NUM_PLUGINS + rom_slots,
+            by_jumpers,
+        ),
+        case("the system plugin", 0, by_jumpers),
+        case("the user plugin", 1, by_jumpers),
+    ];
+    cases.push(MetadataCase {
+        user: (BOOT_SLOT, last),
+        ..case("the first ROM slot and user BOOT_SLOT", NUM_PLUGINS, last)
+    });
+    cases.push(MetadataCase {
+        system: (IGNORE, 0xFF),
+        ..case(
+            "the last ROM slot and system IGNORE_IMAGE_SELECT",
+            NUM_PLUGINS + last,
+            0,
+        )
+    });
+    cases.push(MetadataCase {
+        turbo: true,
+        ..case(
+            "the last ROM slot with turbo boot",
+            NUM_PLUGINS + last,
+            last,
+        )
+    });
+    cases.push(MetadataCase {
+        turbo: true,
+        ..case("not set with turbo boot", BOOT_SLOT_NOT_SET, 0)
+    });
+
+    let result = cases
+        .iter()
+        .try_for_each(|case| check_metadata_case(board, sel, case))
+        .and_then(|()| {
+            let generation = Emulator::metadata_generation();
+            Emulator::set_metadata_generation(generation - 1);
+            let result = check_metadata_case(
+                board,
+                sel,
+                &case(
+                    "the first ROM slot in metadata without a boot slot",
+                    NUM_PLUGINS,
+                    by_jumpers,
+                ),
+            );
+            Emulator::set_metadata_generation(generation);
+            result
+        });
+    Emulator::set_boot_slot(BOOT_SLOT_NOT_SET);
+    Emulator::set_turbo_boot(false);
+    result
+}
+
+fn check_metadata_case(board: Board, sel: u8, case: &MetadataCase) -> Result<(), String> {
+    let label = case.label;
+    place(case.system, case.user);
+    Emulator::set_boot_slot(case.boot_slot);
+    Emulator::set_turbo_boot(case.turbo);
+    Emulator::set_rp_variant(board.rp_variant());
+    Emulator::set_sel_image(sel);
+    let emulator = Emulator::boot();
+
+    if emulator.limp_mode() || !emulator.pios_enabled() {
+        return Err(format!(
+            "{label}: limp mode {} after boot",
+            emulator.limp_mode_pattern()
+        ));
+    }
+    let (r, index) =
+        emulator.get_metadata_uint(ffi::ora_metadata_key_t_ORA_METADATA_KEY_ROM_SLOT_INDEX);
+    let want = u32::from(case.expected + NUM_PLUGINS);
+    if !r.is_ok() || index != Some(want) {
+        return Err(format!(
+            "{label} with the jumpers at {sel}: ROM slot index {index:?} ({r:?}), not {want}"
+        ));
+    }
+    let image_sel = if case.turbo { 0xFF } else { sel };
+    if emulator.sel_image() != image_sel {
+        return Err(format!(
+            "{label}: image_sel {}, not {image_sel}",
+            emulator.sel_image()
+        ));
     }
     Ok(())
 }

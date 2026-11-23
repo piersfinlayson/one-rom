@@ -82,7 +82,8 @@ int firmware_main(void) {
     }
 
     if (METADATA->rom_slot_count > num_plugins) {
-        // Get the ROM slot from the plugin headers or the image select jumpers.
+        // Get the ROM slot from the plugin headers, the stored boot slot or the
+        // image select jumpers.
         uint8_t boot_slot;
         if (plugin_boot_slot(num_plugins, &boot_slot)) {
             RUNTIME->rom_slot_index = boot_slot + num_plugins;

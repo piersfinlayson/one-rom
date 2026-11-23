@@ -3,6 +3,7 @@
 ## v0.6.2 - unreleased
 
 - `hardware commission` includes existing commissioning instances in "Already present".
+- Add `update boot-slot`, and `--boot-slot` on `program` and `firmware build`, which set a ROM slot to boot from instead of using the image select jumpers.
 
 ## v0.6.1 - 2026-11-21
 

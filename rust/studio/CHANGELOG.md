@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.7 - unreleased
+
+- Supports `boot_slot` in ROM configs, which sets a ROM slot to boot from instead of using the image select jumpers.
+
 ## v0.2.6 - 2026-11-21
 
 - Published for 32-bit ARM Linux, including 32-bit Raspberry Pi OS.

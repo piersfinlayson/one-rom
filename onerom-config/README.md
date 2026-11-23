@@ -68,7 +68,8 @@ The format is defined by [schema.json](schema.json), also published at https://i
 | `categories` | Tags Studio groups and searches on. |
 | `instance_name` | A name for this One ROM. |
 | `serial_override` | Replaces the USB serial number. |
-| `turbo_boot` | Skip reading the jumpers and serve the first image. |
+| `turbo_boot` | Skip reading the jumpers and serve the first image, or the one `boot_slot` sets. |
+| `boot_slot` | The ROM slot to boot from instead of using the image select jumpers.  It is a position in `chip_sets`, numbered from 0 including plugins.  Requires firmware v0.8.2 or later. |
 | `boot_logging` | Log boot over USB (with the USB plugin) or RTT. |
 | `swd_enabled` | `false` shuts SWD off as ROM serving starts, so debug-port reads cannot steal cycles from the serving DMAs.  BOOTSEL and PICOBOOT are unaffected. |
 | `reserved_pins` | Pins reserved for another use, for example `["sel_c", "x1"]`.  Only image select pins and X pins can be reserved.  Added in v0.8.0 and requires firmware v0.8.0 or later.  See [Reserve a pin for another use](/docs/CLI-MANUAL.md#reserve-a-pin-for-another-use). |

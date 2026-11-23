@@ -817,14 +817,11 @@ pub fn inject_plugins_into_config(
     let mut sorted_plugins: Vec<&ResolvedPlugin> = plugins.iter().collect();
     sorted_plugins.sort_by_key(|p| p.plugin_type.slot_index());
 
-    let mut chip_sets: Vec<ChipSetConfig> = sorted_plugins
-        .iter()
-        .map(|p| plugin_to_chip_set_config(&p.file(), p.plugin_type, p.size))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Prepend the plugin slots ahead of the config's existing ROM slots.
-    chip_sets.append(&mut config.chip_sets);
-    config.chip_sets = chip_sets;
+    // Insert the plugin slots ahead of the config's existing ROM slots.
+    for (index, p) in sorted_plugins.iter().enumerate() {
+        let chip_set = plugin_to_chip_set_config(&p.file(), p.plugin_type, p.size)?;
+        config.insert_chip_set(index, chip_set);
+    }
 
     serde_json::to_string_pretty(&config).map_err(|e| Error::Other(e.to_string()))
 }
@@ -1433,6 +1430,25 @@ mod tests {
             chip_types(&out),
             vec![ChipType::SystemPlugin, ChipType::Chip23128]
         );
+    }
+
+    /// The config's boot slot is an index that includes plugins.
+    #[test]
+    fn the_boot_slot_stays_on_its_rom_when_plugins_are_injected() {
+        let mut config: Config = serde_json::from_str(ROM_ONLY).unwrap();
+        config.boot_slot = Some(0);
+        let json = serde_json::to_string(&config).unwrap();
+        for (plugins, expected) in [
+            (vec![plugin(PluginType::System)], 1),
+            (
+                vec![plugin(PluginType::User), plugin(PluginType::System)],
+                2,
+            ),
+        ] {
+            let out = inject_plugins_into_config(json.clone(), &plugins).unwrap();
+            let config: Config = serde_json::from_str(&out).unwrap();
+            assert_eq!(config.boot_slot, Some(expected));
+        }
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! Tests for splitting an image file into the flash operations that program
 //! it.
 
-use onerom_app::{FlashPlan, FlashPlanError, FlashStep};
+use onerom_app::{FlashPlan, FlashPlanError, FlashStep, SECTOR_SIZE};
 use onerom_config::hw::BoardSize;
 use onerom_config::mcu::Variant;
 use onerom_gen::FlashChips;
@@ -147,5 +147,28 @@ fn an_image_longer_than_both_chips_is_too_large() {
     assert_eq!(
         FlashPlan::new(&data, &chips(BoardSize::L)),
         Err(FlashPlanError::TooLarge)
+    );
+}
+
+#[test]
+fn a_sectors_first_page_is_written_last() {
+    let sector: [u8; SECTOR_SIZE as usize] = core::array::from_fn(|n| n as u8);
+    let plan = FlashPlan::sector(0x1000_c000, &sector);
+    assert_eq!(
+        plan.steps(),
+        [
+            FlashStep::Erase {
+                addr: 0x1000_c000,
+                len: SECTOR_SIZE,
+            },
+            FlashStep::Write {
+                addr: 0x1000_c100,
+                data: &sector[0x100..],
+            },
+            FlashStep::Write {
+                addr: 0x1000_c000,
+                data: &sector[..0x100],
+            },
+        ]
     );
 }

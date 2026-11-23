@@ -120,6 +120,11 @@ pub const MIN_ADDR_MON_MIN_CS_ACT_VERSION: FirmwareVersion = FirmwareVersion::ne
 pub const MAX_ADDR_MON_MIN_CS_ACT_NS: u16 =
     (ADDR_MON_MIN_CS_ACT_NOT_SET as u16 - 1) * ADDR_MON_MIN_CS_ACT_UNIT_NS as u16;
 
+/// The oldest firmware that supports [`Config::boot_slot`].
+///
+/// A config that sets it fails to build for older firmware.
+pub const MIN_BOOT_SLOT_VERSION: FirmwareVersion = FirmwareVersion::new(0, 8, 2, 0);
+
 const RESERVED_PINS_RULE: &str = "Only image select pins and X pins can be reserved.";
 
 /// Whether firmware `version` supports a `size` board.
@@ -396,6 +401,15 @@ pub enum Error {
     AddrMonMinCsActOnPlugin {
         /// The plugin's name from the config, or else from its URL or file name.
         plugin: String,
+    },
+    /// `boot_slot` isn't the index of a ROM chip set in the config.
+    BootSlotNotRomSlot {
+        /// The value.
+        boot_slot: u8,
+        /// The index of the first ROM chip set.
+        first: usize,
+        /// How many ROM chip sets there are.
+        slots: usize,
     },
     /// The board doesn't support a ROM slot.
     SlotUnsupported {
@@ -734,6 +748,18 @@ impl core::fmt::Display for Error {
                 f,
                 "Cannot set addr_mon_min_cs_act_ns on the {plugin} plugin."
             ),
+            Error::BootSlotNotRomSlot {
+                boot_slot,
+                first,
+                slots,
+            } => {
+                write!(f, "Invalid boot_slot: {boot_slot}\n  ")?;
+                match slots {
+                    0 => write!(f, "No ROM slots found"),
+                    1 => write!(f, "Valid value: {first}"),
+                    _ => write!(f, "Valid values: {first}-{}", first + slots - 1),
+                }
+            }
             Error::SlotUnsupported {
                 slot,
                 chip_type,
@@ -807,6 +833,12 @@ impl ChipSetConfig {
             serve_alg: None,
             firmware_overrides: None,
         }
+    }
+
+    pub(crate) fn is_plugin(&self) -> bool {
+        self.chips
+            .iter()
+            .any(|chip| chip.chip_type.resolved().is_plugin())
     }
 }
 
@@ -937,6 +969,12 @@ pub struct Config {
         schemars(range(max = MAX_ADDR_MON_MIN_CS_ACT_NS))
     )]
     pub addr_mon_min_cs_act_ns: Option<u16>,
+
+    /// The ROM slot to boot from instead of using the image select jumpers, as
+    /// a position in `chip_sets` including plugins.  Requires firmware v0.8.2
+    /// or later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_slot: Option<u8>,
 }
 
 impl Config {
@@ -963,7 +1001,34 @@ impl Config {
             turbo_boot: default_turbo_boot(),
             reserved_pins: Vec::new(),
             addr_mon_min_cs_act_ns: None,
+            boot_slot: None,
         }
+    }
+
+    /// Inserts `chip_set` at `index` in [`Config::chip_sets`], increasing
+    /// [`Config::boot_slot`] where that moves its chip set.
+    ///
+    /// Panics as [`Vec::insert`](alloc::vec::Vec::insert) does.
+    pub fn insert_chip_set(&mut self, index: usize, chip_set: ChipSetConfig) {
+        self.chip_sets.insert(index, chip_set);
+        self.boot_slot = self.boot_slot.map(|boot_slot| {
+            if usize::from(boot_slot) >= index {
+                boot_slot.saturating_add(1)
+            } else {
+                boot_slot
+            }
+        });
+    }
+
+    /// The index in [`Config::chip_sets`] of ROM slot `slot`, numbered from 0
+    /// without plugins.
+    pub fn chip_set_of_slot(&self, slot: usize) -> Option<usize> {
+        self.chip_sets
+            .iter()
+            .enumerate()
+            .filter(|(_, chip_set)| !chip_set.is_plugin())
+            .nth(slot)
+            .map(|(index, _)| index)
     }
 
     /// The pins reserved on `board` by [`Config::reserved_pins`].

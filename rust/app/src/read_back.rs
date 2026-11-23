@@ -493,13 +493,7 @@ impl ReadBack {
     /// The config's chip set holding ROM slot `slot`, numbered from 0 without
     /// plugins.
     pub fn chip_set_of_slot(&self, slot: usize) -> Option<usize> {
-        self.config
-            .chip_sets
-            .iter()
-            .enumerate()
-            .filter(|(_, chip_set)| !is_plugin_set(chip_set))
-            .nth(slot)
-            .map(|(index, _)| index)
+        self.config.chip_set_of_slot(slot)
     }
 
     /// `problem`'s subject, for example `Slot 3's chip-select settings` or

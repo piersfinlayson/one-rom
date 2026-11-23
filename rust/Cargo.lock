@@ -4975,7 +4975,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-gen"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "onerom-config",
  "onerom-metadata",
@@ -5153,7 +5153,7 @@ dependencies = [
 
 [[package]]
 name = "onerom-studio"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "airfrog-rpc",
  "arc-swap",

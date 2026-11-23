@@ -377,6 +377,8 @@ fn main() {
         // Plugin launch, the plugins' boot slot and exclusive serial IN mode.
         .allowlist_function("ffi_overlay_plugin_slots")
         .allowlist_function("ffi_set_plugin_boot_slot_addr")
+        .allowlist_function("ffi_set_boot_slot")
+        .allowlist_function("ffi_set_turbo_boot")
         .allowlist_function("ffi_set_plugin_usb_controller_dpram_size")
         .allowlist_function("ffi_set_plugin_channel_sizes")
         .allowlist_function("ffi_set_plugin_peer_data")

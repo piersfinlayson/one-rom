@@ -92,6 +92,28 @@ pub fn resolve_config_json(
     }
 }
 
+/// `json` with its boot slot replaced by ROM slot `slot`, numbered from 0
+/// without plugins. Without `slot`, `json` unchanged.
+pub fn set_boot_slot(json: String, slot: Option<u8>) -> Result<String, Error> {
+    let Some(slot) = slot else {
+        return Ok(json);
+    };
+    let parse_error = |e| Error::Other(format!("Failed to parse config JSON: {e}"));
+    let config: Config = serde_json::from_str(&json).map_err(parse_error)?;
+    let index = config
+        .chip_set_of_slot(slot.into())
+        .ok_or_else(|| Error::NoSlot {
+            slot: slot.into(),
+            slots: (0..config.chip_sets.len())
+                .take_while(|&slot| config.chip_set_of_slot(slot).is_some())
+                .count(),
+        })?;
+    let mut value: serde_json::Value = serde_json::from_str(&json).map_err(parse_error)?;
+    value["boot_slot"] = index.into();
+    serde_json::to_string(&value)
+        .map_err(|e| Error::Other(format!("Failed to re-serialize config JSON: {e}")))
+}
+
 fn apply_global_overrides(json: String, global_config: &GlobalConfig) -> Result<String, Error> {
     let mut value: serde_json::Value = serde_json::from_str(&json)
         .map_err(|e| Error::Other(format!("Failed to parse config JSON: {e}")))?;
@@ -397,13 +419,13 @@ pub async fn build_rom_image<F: LocalFetch<Error = onerom_fw::Error>>(
 /// jumpers.
 ///
 /// Slots are numbered from 0 excluding plugins, as in `inspect slots`. Turbo
-/// boot doesn't read the jumpers.
+/// boot and a boot slot don't use the jumpers.
 pub(crate) fn unselectable_slots(
     config: &Config,
     board: Board,
     reserved: ReservedPins,
 ) -> Option<String> {
-    if config.turbo_boot {
+    if config.turbo_boot || config.boot_slot.is_some() {
         return None;
     }
     let slots = config
@@ -597,6 +619,7 @@ pub async fn cmd_build(
         global_config.as_ref(),
         &plugins,
     )?;
+    let config_json = set_boot_slot(config_json, args.boot_slot)?;
 
     if let Some(path) = &args.save_config {
         save_config(path, &saved_config_json(&config_json, &specs, &plugins)?)?;
@@ -2076,6 +2099,68 @@ mod tests {
         assert_eq!(metadata.addr_mon_min_cs_act, 14);
         let overrides = metadata.rom_slots[0].firmware_overrides.as_ref().unwrap();
         assert_eq!(overrides.addr_mon_min_cs_act, 30);
+    }
+
+    // -- boot_slot ---------------------------------------------------------
+
+    /// `--boot-slot` excludes plugins and the config's `boot_slot` includes
+    /// them. The option replaces the config's value.
+    #[test]
+    fn the_boot_slot_option_is_numbered_without_plugins() {
+        let json = r#"{ "version": 1, "description": "d", "boot_slot": 2, "chip_sets": [
+            { "type": "single", "chips": [{ "file": "usb.bin", "type": "system_plugin" }] },
+            { "type": "single", "chips": [{ "file": "a.bin", "type": "2364", "cs1": "active_low" }] },
+            { "type": "single", "chips": [{ "file": "b.bin", "type": "2364", "cs1": "active_low" }] }
+        ] }"#;
+        let boot_slot = |slot| -> Option<u8> {
+            let json = set_boot_slot(json.to_string(), slot).unwrap();
+            serde_json::from_str::<Config>(&json).unwrap().boot_slot
+        };
+        assert_eq!(boot_slot(Some(0)), Some(1));
+        assert_eq!(boot_slot(Some(1)), Some(2));
+        assert_eq!(boot_slot(None), Some(2));
+        let e = set_boot_slot(json.to_string(), Some(2)).unwrap_err();
+        assert!(matches!(e, Error::NoSlot { slot: 2, slots: 2 }), "{e:?}");
+    }
+
+    #[tokio::test]
+    async fn the_boot_slot_option_reaches_the_image() {
+        use crate::test_board::{IMAGE_2364, base_firmware_patch};
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("base.bin");
+        let rom = dir.path().join("0.bin");
+        let out = dir.path().join("out.bin");
+        std::fs::write(&base, base_firmware_patch(8, 2)).unwrap();
+        std::fs::write(&rom, vec![0; IMAGE_2364]).unwrap();
+        let slot = format!("file={},type=2364,cs1=active-low", rom.display());
+
+        let args = build_args(&[
+            "onerom",
+            "firmware",
+            "build",
+            "--board",
+            "fire-24-f",
+            "--slot",
+            &slot,
+            "--slot",
+            &slot,
+            "--base-firmware",
+            base.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+            "--boot-slot",
+            "1",
+            "--no-plugin",
+        ]);
+        cmd_build(&options(), &args).await.unwrap();
+
+        let image = onerom_cli::image::parse_firmware(&std::fs::read(&out).unwrap()).await;
+        let metadata = image
+            .as_schema()
+            .and_then(|onerom| onerom.metadata())
+            .unwrap();
+        assert_eq!(metadata.boot_slot, 1);
     }
 
     // -- default plugin ----------------------------------------------------

@@ -19,6 +19,16 @@
             "type": "boolean",
             "default": false
         },
+        "boot_slot": {
+            "description": "The ROM slot to boot from instead of using the image select jumpers, as\na position in `chip_sets` including plugins.  Requires firmware v0.8.2\nor later.",
+            "type": [
+                "integer",
+                "null"
+            ],
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+        },
         "categories": {
             "description": "Optional categories for this configuration, to aid in grouping,\nsorting, and searching of configurations.",
             "type": [

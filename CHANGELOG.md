@@ -7,6 +7,7 @@ All notable changes between versions are documented in this file.
 Headline changes in this release:
 
 In detail:
+- A ROM slot can be set to boot from instead of using the image select jumpers. Use `onerom update boot-slot`, `--boot-slot` on `onerom program` and `onerom firmware build`, or `boot_slot` in a config.
 - CLI:
   - `hardware commission` includes existing commissioning instances in "Already present".
 - Plugins:
@@ -16,9 +17,11 @@ In detail:
 To publish:
 - Rust crates (in dependency order):
   - onerom-metadata 0.4.1
+  - onerom-gen 0.10.1
   - onerom-app 0.5.1
   - onerom-cli 0.6.2
 - CLI bin 0.6.2
+- Studio 0.2.7
 
 ## 2026-11-21
 

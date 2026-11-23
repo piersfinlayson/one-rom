@@ -978,6 +978,16 @@ impl Emulator {
         unsafe { ffi::ffi_overlay_plugin_slots() };
     }
 
+    /// Set the metadata's boot slot. Outlives a boot.
+    pub fn set_boot_slot(boot_slot: u8) {
+        unsafe { ffi::ffi_set_boot_slot(boot_slot) };
+    }
+
+    /// Outlives a boot.
+    pub fn set_turbo_boot(turbo_boot: bool) {
+        unsafe { ffi::ffi_set_turbo_boot(u8::from(turbo_boot)) };
+    }
+
     pub fn set_plugin_boot_slot_addr(index: u8, addr: u32) {
         unsafe { ffi::ffi_set_plugin_boot_slot_addr(index, addr) };
     }

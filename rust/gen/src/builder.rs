@@ -22,7 +22,6 @@ use onerom_metadata::{
 use crate::flash::{FlashChips, slot_addresses};
 use crate::image::requires_half_select_cs1;
 use crate::v2::addr_layout::{AddrLayout, LayoutError};
-use crate::v2::addr_mon;
 use crate::v2::cs_data_layout::CsDataLayout;
 use crate::v2::firmware_config::{
     build_firmware_config, build_firmware_overrides, build_override_states,
@@ -32,6 +31,7 @@ use crate::v2::hardware_info::build_hardware_info;
 use crate::v2::rom_image::build_rom_image;
 use crate::v2::rom_info::truncate_filename;
 use crate::v2::rom_slot::build_rom_slot;
+use crate::v2::{addr_mon, boot_slot};
 use crate::{
     Chip, ChipConfig, ChipSet, ChipSetConfig, ChipSetType, Config, ConfigOverrides, ConfigWarning,
     CsConfig, CsLogic, Error, FileData, FileSpec, FireServeMode, FirmwareConfig, License,
@@ -199,6 +199,7 @@ impl Builder {
         }
 
         addr_mon::check_config(version, &config)?;
+        boot_slot::check_config(version, &config)?;
 
         for overrides in config
             .chip_sets
@@ -421,6 +422,7 @@ impl Builder {
     pub fn build_validation(&self, props: &FirmwareProperties) -> Result<()> {
         // Also checked in from_json, which a deserialized builder skips.
         addr_mon::check_config(self.version, &self.config)?;
+        boot_slot::check_config(self.version, &self.config)?;
         check_plugins_set(&self.config)?;
         check_all_files_loaded(&self.files, self.total_file_count())?;
         check_all_licenses_validated(&self.licenses)?;
@@ -722,6 +724,7 @@ impl Builder {
         header.reserved_sel_pins = reserved.select_bits();
         header.reserved_x_pins = reserved.x_bits();
         header.addr_mon_min_cs_act = addr_mon::metadata_value(self.config.addr_mon_min_cs_act_ns);
+        header.boot_slot = boot_slot::metadata_value(self.config.boot_slot);
 
         let mut metadata_buf = alloc::vec![0u8; METADATA_SIZE];
         serialize(&header, METADATA_BASE, &mut metadata_buf)?;
@@ -1993,6 +1996,10 @@ pub(crate) fn description(
         none = false;
         desc.push_str(&format!("{ii:>width$}:"));
         let row = select.and_then(|select| select.row(ii, set));
+        let boot_slot = match config.boot_slot {
+            Some(boot_slot) if usize::from(boot_slot) == ii => " (boot slot)",
+            _ => "",
+        };
         if let Some((marks, _)) = &row
             && !marks.is_empty()
         {
@@ -2006,6 +2013,7 @@ pub(crate) fn description(
             if let Some((_, words)) = &row {
                 desc.push_str(&format!("  {words}"));
             }
+            desc.push_str(boot_slot);
             desc.push('\n');
         } else {
             desc.push(' ');
@@ -2022,6 +2030,9 @@ pub(crate) fn description(
             }
             if !multi_chip_sets && let Some((_, words)) = &row {
                 desc.push_str(&format!("  {words}"));
+            }
+            if !multi_chip_sets {
+                desc.push_str(boot_slot);
             }
             desc.push('\n');
         }
@@ -2056,13 +2067,16 @@ pub(crate) struct ImageSelect {
     plugins: usize,
     images: usize,
     turbo_boot: bool,
+    boot_slot: Option<u8>,
 }
 
 impl ImageSelect {
     fn new(config: &Config, board: Board, reserved: ReservedPins) -> Self {
-        let is_plugin =
-            |set: &ChipSetConfig| set.chips.iter().any(|c| c.chip_type.resolved().is_plugin());
-        let plugins = config.chip_sets.iter().filter(|set| is_plugin(set)).count();
+        let plugins = config
+            .chip_sets
+            .iter()
+            .filter(|set| set.is_plugin())
+            .count();
         Self {
             reserved,
             read: reserved.select_pins_read(&board).collect(),
@@ -2070,13 +2084,15 @@ impl ImageSelect {
             plugins,
             images: config.chip_sets.len() - plugins,
             turbo_boot: config.turbo_boot,
+            boot_slot: config.boot_slot,
         }
     }
 
-    /// Whether each image row shows its jumpers. The jumpers aren't read with
-    /// turbo boot, and a single image is served whatever they are.
+    /// Whether each image row shows its jumpers. The jumpers don't select the
+    /// image with turbo boot or a boot slot, and a single image is served
+    /// whatever they are.
     fn annotated(&self) -> bool {
-        !self.turbo_boot && self.images > 1
+        !self.turbo_boot && self.boot_slot.is_none() && self.images > 1
     }
 
     /// The header's columns by position, `None` where a column isn't
@@ -2136,7 +2152,7 @@ impl ImageSelect {
     /// The marks and words for set `index`, or `None` where its row has
     /// neither.
     fn row(&self, index: usize, set: &ChipSetConfig) -> Option<(String, String)> {
-        if !self.annotated() || set.chips.iter().any(|c| c.chip_type.resolved().is_plugin()) {
+        if !self.annotated() || set.is_plugin() {
             return None;
         }
         let image = index.checked_sub(self.plugins)?;
@@ -2186,7 +2202,7 @@ impl ImageSelect {
         if self.turbo_boot && self.images > 0 {
             Some(format!(
                 "Image select jumpers not read - turbo boot enabled. Image {} served.",
-                self.plugins
+                self.boot_slot.map_or(self.plugins, usize::from)
             ))
         } else if self.images == 1 {
             Some("Single image so any image select jumper may be in any position.".to_string())
@@ -2717,7 +2733,7 @@ fn validate_config_v2(
     // programmed and remain reachable at runtime, so this is refused rather
     // than impossible - the caller can accept it.
     let mut warnings = alloc::vec::Vec::new();
-    if config.turbo_boot && num_non_plugin_slots > 1 {
+    if config.turbo_boot && config.boot_slot.is_none() && num_non_plugin_slots > 1 {
         if overrides.turbo_boot_multi_slot {
             warnings.push(ConfigWarning::TurboBootMultiSlot {
                 slots: num_non_plugin_slots,

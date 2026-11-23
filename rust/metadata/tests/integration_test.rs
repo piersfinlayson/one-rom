@@ -14,11 +14,12 @@ use onerom_config::chip::ChipType;
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::mcu::{RP235X_BASE_FLASH, RP235X_BASE_SRAM, RP235X_END_SRAM};
 use onerom_metadata::{
-    ADDR_MON_MIN_CS_ACT_NOT_SET, BitModes, CURRENT_METADATA_VERSION, DeviceMemoryView, FireVreg,
-    GPIO_NONE, Generations, MaybeKnown, ONEROM_INFO_BUILD_DATE_OFFSET, ONEROM_INFO_MAGIC,
-    ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_MAJOR_VERSION_OFFSET, ONEROM_INFO_METADATA_OFFSET,
-    ONEROM_INFO_MINOR_VERSION_OFFSET, ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET,
-    ONEROM_INFO_SIZE, ONEROM_RUNTIME_INFO_SYSTEM_PLUGIN_CONTEXT_OFFSET,
+    ADDR_MON_MIN_CS_ACT_NOT_SET, BOOT_SLOT_NOT_SET, BitModes, CURRENT_METADATA_VERSION,
+    DeviceMemoryView, FireVreg, GPIO_NONE, Generations, MaybeKnown, ONEROM_INFO_BUILD_DATE_OFFSET,
+    ONEROM_INFO_MAGIC, ONEROM_INFO_MAGIC_OFFSET, ONEROM_INFO_MAJOR_VERSION_OFFSET,
+    ONEROM_INFO_METADATA_OFFSET, ONEROM_INFO_MINOR_VERSION_OFFSET,
+    ONEROM_INFO_PATCH_VERSION_OFFSET, ONEROM_INFO_RUNTIME_OFFSET, ONEROM_INFO_SIZE,
+    ONEROM_METADATA_HEADER_BOOT_SLOT_OFFSET, ONEROM_RUNTIME_INFO_SYSTEM_PLUGIN_CONTEXT_OFFSET,
     ONEROM_RUNTIME_INFO_USER_PLUGIN_CONTEXT_OFFSET, OneromAlgAddrConfig, OneromAlgConfig,
     OneromAlgCsConfig, OneromAlgDataConfig, OneromAlgDmaConfig, OneromAlgOverrideConfig,
     OneromAlgPullConfig, OneromFirmwareConfig, OneromFirmwareOverrides, OneromHardwareInfo,
@@ -538,7 +539,8 @@ fn a_set_addr_mon_min_cs_act_fails_in_older_metadata() {
 //  36      reserved_sel_pins u8
 //  37      reserved_x_pins u8
 //  38      addr_mon_min_cs_act u8
-//  39..256 reserved (217 bytes, must be 0xFF)
+//  39      boot_slot u8
+//  40..256 reserved (216 bytes, must be 0xFF)
 //
 // OneromRomSlot layout (32 bytes, offsets relative to slot start):
 //   0..4   data (opaque_ptr, u32)
@@ -635,22 +637,33 @@ fn byte_check_object_dedup() {
     );
 }
 
-/// 12. The 217-byte reserved region in OneromMetadataHeader (offsets 39–255)
+/// 12. The 216-byte reserved region in OneromMetadataHeader (offsets 40–255)
 ///     is all 0xFF after serialization.
 #[test]
 fn byte_check_header_padding_is_ff() {
     let mut header = minimal_header();
-    // Not 0xFF, so the check fails if the field lands in the padding.
+    // Not 0xFF, so the check fails if a field lands in the padding.
     header.addr_mon_min_cs_act = 0;
+    header.boot_slot = 0;
     let buf = do_serialize(&header);
     #[allow(clippy::needless_range_loop)]
-    for offset in 39..256 {
+    for offset in 40..256 {
         assert_eq!(
             buf[offset], 0xFF,
             "header reserved byte at offset {offset} should be 0xFF, got 0x{:02X}",
             buf[offset],
         );
     }
+}
+
+/// A header without a boot slot has BOOT_SLOT_NOT_SET.
+#[test]
+fn boot_slot_is_at_its_offset() {
+    let offset = ONEROM_METADATA_HEADER_BOOT_SLOT_OFFSET;
+    let mut header = minimal_header();
+    assert_eq!(do_serialize(&header)[offset], BOOT_SLOT_NOT_SET);
+    header.boot_slot = 3;
+    assert_eq!(do_serialize(&header)[offset], 3);
 }
 
 /// 13. Every non-null pointer stored in the buffer is 4-byte aligned.
