@@ -740,6 +740,12 @@ fn slot_to_firmware_overrides(slot: &SlotSpec) -> Option<FirmwareConfig> {
     Some(overrides)
 }
 
+pub fn slot_to_chip_set_config(slot: &SlotSpec) -> ChipSetConfig {
+    let mut chip_set = ChipSetConfig::new(ChipSetType::Single, vec![slot_to_chip_config(slot)]);
+    chip_set.firmware_overrides = slot_to_firmware_overrides(slot);
+    chip_set
+}
+
 /// Generate a One ROM JSON configuration string from resolved plugins and
 /// slot specs.
 ///
@@ -761,11 +767,7 @@ pub fn slots_to_config_json(
         .map(|p| plugin_to_chip_set_config(&p.file(), p.plugin_type, p.size))
         .collect::<Result<Vec<_>, _>>()?;
 
-    for slot in slots {
-        let mut chip_set = ChipSetConfig::new(ChipSetType::Single, vec![slot_to_chip_config(slot)]);
-        chip_set.firmware_overrides = slot_to_firmware_overrides(slot);
-        chip_sets.push(chip_set);
-    }
+    chip_sets.extend(slots.iter().map(slot_to_chip_set_config));
 
     let description = global_config
         .and_then(|c| c.config_description.clone())

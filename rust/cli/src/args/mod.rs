@@ -114,7 +114,7 @@ use save::SaveArgs;
 use scan::ScanArgs;
 use self_cmd::{SelfArgs, SelfCheckArgs, SelfCommands, SelfDownloadArgs};
 use update::{
-    CloneArgs, UpdateArgs, UpdateBootSlotArgs, UpdateCommands, UpdateCommitArgs,
+    CloneArgs, UpdateAddSlotArgs, UpdateArgs, UpdateBootSlotArgs, UpdateCommands, UpdateCommitArgs,
     UpdateFirmwareArgs, UpdatePluginArgs, UpdateSlotArgs,
 };
 
@@ -600,9 +600,9 @@ pub enum Commands {
     /// Make persistent modifications to a connected One ROM.
     ///
     /// Every One ROM is built from a combination of configuration and ROM
-    /// images. The firmware, slot and plugin commands retrieve the config and
-    /// ROM images used to build a One ROM's firmware, make one change and
-    /// program the One ROM with firmware built from the result.
+    /// images. The firmware, slot, add-slot and plugin commands retrieve the
+    /// config and ROM images used to build a One ROM's firmware, make one
+    /// change and program the One ROM with firmware built from the result.
     ///
     /// Each change is written to the One ROM's flash so it survives power
     /// cycles.

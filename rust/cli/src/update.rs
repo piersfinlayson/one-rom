@@ -16,6 +16,9 @@ use onerom_cli::plugin::{LocalFetch, ResolvedPlugin, parse_plugin, resolve_plugi
 use onerom_cli::read_back::{
     device_read_back_error, inline_files, problem_error, read_back, read_back_error,
 };
+use onerom_cli::slot::{
+    SlotSpec, check_confirmations, check_slot_chip_types, parse_slots, slot_to_chip_set_config,
+};
 use onerom_cli::usb::{RebootArgs, enumerate_devices, flash_program, flash_read};
 use onerom_cli::{Error, Options};
 use onerom_config::chip::ChipType;
@@ -30,10 +33,12 @@ use onerom_metadata::{
 };
 
 use crate::args::update::{
-    CloneArgs, RebuildArgs, UpdateBootSlotArgs, UpdateCommitArgs, UpdateFirmwareArgs,
-    UpdatePluginArgs, UpdateSlotArgs,
+    CloneArgs, RebuildArgs, UpdateAddSlotArgs, UpdateBootSlotArgs, UpdateCommitArgs,
+    UpdateFirmwareArgs, UpdatePluginArgs, UpdateSlotArgs,
 };
-use crate::firmware::{accept_image, acquire_firmware, build_rom_image, plugin_error};
+use crate::firmware::{
+    accept_image, acquire_firmware, build_rom_image, confirm_slot_overrides, plugin_error,
+};
 use crate::program::{
     flash_device, image_size, plan_lines, reboot_and_rescan, reboot_to_stopped, restart,
 };
@@ -61,6 +66,25 @@ pub async fn cmd_slot(options: &mut Options, args: &UpdateSlotArgs) -> Result<()
     check_device(options, args, false)?;
     let read_back = read_device(options).await?;
     let config = replace_rom(&read_back, args.slot, args.chip, &args.image)?;
+    rebuild(
+        options,
+        Command::Update,
+        &read_back,
+        config,
+        read_back.board,
+        reused_firmware(&read_back),
+        &args.rebuild,
+    )
+    .await
+}
+
+pub async fn cmd_add_slot(options: &mut Options, args: &UpdateAddSlotArgs) -> Result<(), Error> {
+    check_device(options, args, false)?;
+    let read_back = read_device(options).await?;
+    let slots = parse_slots(&args.slot, &read_back.board)?;
+    check_slot_chip_types(&slots, &read_back.board, &read_back.version)?;
+    confirm_slot_overrides(options, &check_confirmations(&slots)).await?;
+    let config = add_slots(&read_back, &slots)?;
     rebuild(
         options,
         Command::Update,
@@ -330,6 +354,24 @@ pub(crate) fn replace_rom(
     let chip = &mut chips[index];
     chip.file = image.to_string();
     chip.label = label;
+    Ok(config)
+}
+
+/// [`inline_slots`]'s config with `slots` added after the last ROM slot.
+pub(crate) fn add_slots(read_back: &ReadBack, slots: &[SlotSpec]) -> Result<Config, Error> {
+    if slots
+        .iter()
+        .any(|slot| slot.chip_type.resolved().is_plugin())
+    {
+        return Err(Error::InvalidArgument(
+            "--slot".to_string(),
+            "A plugin can't be added as a ROM slot. Use 'onerom update plugin'.".to_string(),
+        ));
+    }
+    let mut config = inline_slots(read_back);
+    config
+        .chip_sets
+        .extend(slots.iter().map(slot_to_chip_set_config));
     Ok(config)
 }
 
@@ -987,6 +1029,94 @@ mod tests {
             assert_eq!(names(&after), names(&before));
             assert_eq!(labels(&after), labels(&before));
         }
+    }
+
+    fn parsed(slots: &[String]) -> Vec<SlotSpec> {
+        parse_slots(slots, &Board::Fire24F).unwrap()
+    }
+
+    #[tokio::test]
+    async fn slots_are_added_after_the_others() {
+        let mut read_back = read_back().await;
+        read_back.config.boot_slot = Some(1);
+        let dir = tempfile::tempdir().unwrap();
+        let mut specs = Vec::new();
+        for (name, byte, settings) in [("basic.bin", 0xa5, ",led=off"), ("char.bin", 0x5a, "")] {
+            let file = dir.path().join(name);
+            std::fs::write(&file, [byte; IMAGE_2364]).unwrap();
+            specs.push(format!(
+                "file={},type=2364,cs1=active-high{settings}",
+                file.to_string_lossy()
+            ));
+        }
+
+        let mut config = add_slots(&read_back, &parsed(&specs)).unwrap();
+        assert_eq!(config.boot_slot, Some(1));
+        config.boot_slot = None;
+        let after = rebuilt(config).await;
+
+        for (slot, chip, byte) in [
+            (0, 0, 0),
+            (1, 0, 1),
+            (2, 0, 2),
+            (2, 1, 3),
+            (3, 0, 0xa5),
+            (4, 0, 0x5a),
+        ] {
+            assert_eq!(rom(&after, slot, chip), [byte; IMAGE_2364], "{slot} {chip}");
+        }
+        let sets = &after.config.chip_sets;
+        assert_eq!(sets.len(), 5);
+        for set in &sets[3..] {
+            assert_eq!(set.chips[0].cs1, Some(onerom_gen::CsLogic::ActiveHigh));
+        }
+        let led = |set: &ChipSetConfig| {
+            let overrides = set.firmware_overrides.as_ref()?;
+            Some(overrides.led.as_ref()?.enabled)
+        };
+        assert_eq!(led(&sets[3]), Some(false));
+        assert_eq!(led(&sets[4]), None);
+    }
+
+    #[tokio::test]
+    async fn adding_a_slot_keeps_each_plugin_slot() {
+        let image = image_with_plugins(&[USB_URL, HOST_CONTROL_URL]).await;
+        let read_back = read_back_file(&image).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let basic = dir.path().join("basic.bin");
+        std::fs::write(&basic, [0x5a; IMAGE_2364]).unwrap();
+        let spec = format!("file={},type=2364,cs1=active-low", basic.to_string_lossy());
+
+        let after = rebuilt_image(add_slots(&read_back, &parsed(&[spec])).unwrap()).await;
+
+        for slot in [0, 1] {
+            assert!(same_slot(&image, &after, slot).await, "{slot}");
+        }
+        let after = read_back_file(&after).await.unwrap();
+        assert_eq!(after.plugins, read_back.plugins);
+        assert_eq!(rom(&after, 0, 0), rom(&read_back, 0, 0));
+        assert_eq!(rom(&after, 1, 0), [0x5a; IMAGE_2364]);
+    }
+
+    #[tokio::test]
+    async fn a_plugin_isnt_added_as_a_slot() {
+        let spec = "file=usb.bin,type=SystemPlugin".to_string();
+        let e = add_slots(&read_back().await, &parsed(&[spec])).unwrap_err();
+        assert!(
+            matches!(&e, Error::InvalidArgument(option, _) if option == "--slot"),
+            "{e:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_slot_fails_with_turbo_boot() {
+        let image = image_2364(1, &[]).await;
+        let mut read_back = read_back_file(&image).await.unwrap();
+        read_back.config.turbo_boot = true;
+        let spec = "file=basic.bin,type=2364,cs1=active-low".to_string();
+        let config = add_slots(&read_back, &parsed(&[spec])).unwrap();
+        let e = build_failure(Command::Update, &config, VERSION, read_back.board).await;
+        assert!(matches!(&e, Error::TurboBootMultiSlot(_)), "{e:?}");
     }
 
     #[tokio::test]

@@ -10,6 +10,7 @@ In detail:
 - A ROM slot can be set to boot from instead of using the image select jumpers. Use `onerom update boot-slot`, `--boot-slot` on `onerom program` and `onerom firmware build`, or `boot_slot` in a config.
 - CLI:
   - `hardware commission` includes existing commissioning instances in "Already present".
+  - Add `onerom update add-slot` which adds ROM slots to a One ROM.
 - Plugins:
   - ext-flash 0.1.2
     - Displays how long the test took.

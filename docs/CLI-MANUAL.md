@@ -1943,6 +1943,7 @@ onerom update <COMMAND>
 |---|---|---|
 | [`firmware`](#update-firmware) | Change a One ROM's firmware version, keeping its configuration and ROM images | Yes |
 | [`slot`](#update-slot) | Replace a ROM image in a slot, keeping the configuration and the other ROM images | Yes |
+| [`add-slot`](#update-add-slot) | Add ROM slots after the existing slots | Yes |
 | [`plugin`](#update-plugin) | Add or replace a plugin keeping the rest of the configuration | Yes |
 | [`boot-slot`](#update-boot-slot) | Set a ROM slot to boot from | Yes |
 | [`commit`](#update-commit) | Commit the live ROM image to flash **(not yet supported)** | Yes |
@@ -1995,6 +1996,21 @@ onerom update slot --slot 3 --chip 1 --image char.bin
 | `--slot <INDEX>` | Slot being updated. For slot numbering see [`onerom inspect slots`](#inspect-slots). Required. |
 | `--chip <INDEX>` | Chip to replace in a slot with multiple chips. Chips are numbered from 0. |
 | `--image <FILE>` | ROM image file or http(s) URL. Required. |
+| `--force, -f` | Continue despite non-fatal problems. Each problem is printed as a warning. |
+
+### update add-slot
+
+Add ROM slots after the existing slots. The existing slots are unchanged.
+
+```
+onerom update add-slot --slot file=basic.bin,type=2364,cs1=active-low
+onerom update add-slot --slot file=basic.bin,type=2364,cs1=active-low \
+    --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high
+```
+
+| Option | Description |
+|---|---|
+| `--slot <SPEC>` | ROM slot specification. May be repeated for multiple slots. See [ROM slot specification](#rom-slot-specification). Required. |
 | `--force, -f` | Continue despite non-fatal problems. Each problem is printed as a warning. |
 
 ### update plugin
@@ -3032,7 +3048,8 @@ onerom reboot
 
 ## ROM slot specification
 
-Used by `--slot` in [`program`](#program) and [`firmware build`](#firmware-build).
+Used by `--slot` in [`program`](#program), [`firmware build`](#firmware-build)
+and [`update add-slot`](#update-add-slot).
 Repeat `--slot` once per slot. Comma-separated `key=value` pairs:
 
 ```

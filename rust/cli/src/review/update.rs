@@ -2,8 +2,8 @@
 //
 // MIT License
 
-//! `update firmware`, `update slot`, `update plugin`, `update boot-slot` and
-//! `clone`.
+//! `update firmware`, `update slot`, `update add-slot`, `update plugin`,
+//! `update boot-slot` and `clone`.
 //!
 //! Each reads a One ROM and programs it. The cases print the help, the
 //! command lines that fail to parse before a One ROM is looked for, and the
@@ -15,6 +15,7 @@ use onerom_app::{BoardSize, ReadBack, RecoveryProblem, published_plugins, read_b
 use onerom_cli::Error;
 use onerom_cli::image::parse_firmware;
 use onerom_cli::read_back::{device_read_back_error, inline_files};
+use onerom_cli::slot::{check_slot_chip_types, parse_slots};
 use onerom_cli::usb::{FLASH_BASE, RAM_BASE};
 use onerom_config::fw::FirmwareVersion;
 use onerom_config::hw::Board;
@@ -35,8 +36,9 @@ use crate::test_board::{
     image_with_plugins, image_with_usb,
 };
 use crate::update::{
-    Command, boot_slot_line, boot_slot_value, build_failure, check_recovered, clone_config,
-    firmware_change, plugin_changes, plugin_config, read_source, replace_rom, source_error,
+    Command, add_slots, boot_slot_line, boot_slot_value, build_failure, check_recovered,
+    clone_config, firmware_change, plugin_changes, plugin_config, read_source, replace_rom,
+    source_error,
 };
 
 async fn read_back() -> ReadBack {
@@ -46,7 +48,7 @@ async fn read_back() -> ReadBack {
 
 #[test]
 fn help() {
-    for command in ["firmware", "slot", "plugin", "boot-slot"] {
+    for command in ["firmware", "slot", "add-slot", "plugin", "boot-slot"] {
         super::help(&["onerom", "update", command, "--help"]);
         println!();
     }
@@ -59,6 +61,7 @@ fn refused() {
         "onerom update firmware --version 0.8.1 --base-firmware base.bin",
         "onerom update slot --slot 0",
         "onerom update slot --image kernal.bin",
+        "onerom update add-slot",
         "onerom update plugin",
         "onerom update boot-slot",
         "onerom update boot-slot --slot 2 --clear",
@@ -177,6 +180,40 @@ async fn clone_from(from: &Path, shown: &str) {
         Ok(_) => println!("~ reads"),
         Err(e) => failed(e.to_string().replace(&*from, shown)),
     }
+}
+
+/// A slot, an unsupported chip type, a plugin and a second slot with turbo boot.
+#[tokio::test]
+async fn adding_a_slot() {
+    let spec = "file=basic.bin,type=2364,cs1=active-low";
+    println!("$ onerom update add-slot --slot {spec}");
+    println!("~ Programming device - DO NOT DISCONNECT");
+    println!("~ Programming complete");
+    println!();
+
+    let read_back = read_back().await;
+    for spec in [
+        "file=basic.bin,type=27C400",
+        "file=usb.bin,type=SystemPlugin",
+    ] {
+        println!("$ onerom update add-slot --slot {spec}");
+        let (board, version) = (&read_back.board, &read_back.version);
+        let error = parse_slots(&[spec.to_string()], board).and_then(|slots| {
+            check_slot_chip_types(&slots, board, version)?;
+            add_slots(&read_back, &slots)
+        });
+        failed(error.unwrap_err());
+        println!();
+    }
+
+    println!("$ onerom update add-slot --slot {spec}");
+    let image = image_2364_sets(Board::Fire24F, &["single"], &[]).await;
+    let mut read_back = read_back_file(&image).await.unwrap();
+    read_back.config.turbo_boot = true;
+    let slots = parse_slots(&[spec.to_string()], &read_back.board).unwrap();
+    let config = add_slots(&read_back, &slots).unwrap();
+    let version = FirmwareVersion::new(0, 8, 0, 0);
+    failed(build_failure(Command::Update, &config, version, Board::Fire24F).await);
 }
 
 #[test]

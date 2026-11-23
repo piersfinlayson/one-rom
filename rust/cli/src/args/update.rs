@@ -65,6 +65,19 @@ pub enum UpdateCommands {
     ///   onerom update slot --slot 3 --chip 1 --image char.bin
     Slot(UpdateSlotArgs),
 
+    /// Add ROM slots after the existing slots.
+    ///
+    /// Every One ROM is built from a combination of configuration and ROM
+    /// images. This command retrieves the config and ROM images used to build
+    /// a One ROM's firmware, adds the new slots and reprograms One ROM.
+    ///
+    /// Examples:
+    ///
+    ///   onerom update add-slot --slot file=basic.bin,type=2364,cs1=active-low
+    ///
+    ///   onerom update add-slot --slot file=basic.bin,type=2364,cs1=active-low --slot file=char.bin,type=2332,cs1=active-low,cs2=active-high
+    AddSlot(UpdateAddSlotArgs),
+
     /// Add or replace a plugin keeping the rest of the configuration.
     ///
     /// Every One ROM is built from a combination of configuration and ROM
@@ -158,6 +171,24 @@ pub struct UpdateSlotArgs {
 }
 
 impl CommandTrait for UpdateSlotArgs {
+    fn requires_device(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct UpdateAddSlotArgs {
+    /// ROM slot specification. May be repeated for multiple slots.
+    ///
+    /// For the format see '--slot' in 'onerom program --help'.
+    #[arg(long, value_name = "SPEC", required = true)]
+    pub slot: Vec<String>,
+
+    #[command(flatten)]
+    pub rebuild: RebuildArgs,
+}
+
+impl CommandTrait for UpdateAddSlotArgs {
     fn requires_device(&self) -> bool {
         true
     }
