@@ -34,6 +34,7 @@ onerom-config/user/*
 !onerom-config/user/README.md
 hardware/pcb/panels/*
 !hardware/pcb/panels/README.md
+hardware/3d/shipping-tray/*.stl
 rust/config/src/rom
 plugins/system/usb/tinyusb
 plugins/system/usb/tinyusb-old
