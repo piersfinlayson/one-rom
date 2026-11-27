@@ -11,7 +11,7 @@ Before using any of the designs, review the hardware [LICENSE](/LICENSE.md#cern-
 
 ## Recommended Revisions
 
-Last Updated 8th September 2026.
+Last Updated 27th November 2026.
 
 The following table lists the recommended verified designs.  Each design has been manufactured and assembled using JLCPCB's PCB assembly service, and verified to work correctly.
 
@@ -19,7 +19,7 @@ The following table lists the recommended verified designs.  Each design has bee
 |-------|-----|------|-----|-----|-------------------|--------|-----|-------|
 | Fire  | RP2354A | 24 | C | ✓ | 4 | 2 | ✓ | [fire-24-f](./verified/fire-24-f/README.md) |
 | Fire  | RP2354A | 24 | C (upright) | ✓ | 4 | 2 | ✓ | [fire-24-g](./verified/fire-24-g/README.md) |
-| Fire  | RP2354B | 28 | C | ✓ | 4 | 2 | ✓ | [fire-28-c](./verified/fire-28-c/README.md) |
+| Fire  | RP2354B | 28 | C | ✓ | 4 | 2 | ✓ | [fire-28-c2](./verified/fire-28-c2/README.md) |
 | Fire  | RP2354B | 28 | C (upright) | ✓ | 4 | 2 | ✓ | [fire-28-d](./verified/fire-28-d/README.md) |
 | Fire  | RP2354B | 32 | C | ✓ | 4 | n/a | ✓ | [fire-32-b2](./verified/fire-32-b2/README.md) |
 | Fire  | RP2354B | 32 | C (upright) | ✓ | 4 | n/a | ✓ | [fire-32-c](./verified/fire-32-c/README.md) |
@@ -27,6 +27,8 @@ The following table lists the recommended verified designs.  Each design has bee
 | Fire  | RP2354B | 40 | C (upright) | ✓ | 4 | n/a | ✓ | [fire-40-c](./verified/fire-40-c/README.md) |
 
 **One ROM 28C onwards, 32 and 40 require components on the top and bottom of the PCB**
+
+**Some One ROM models require a 4-layer designs for noise suppression**
 
 To identify a board or see it looks like see [onerom.org/identify/](https://onerom.org/identify/).
 
